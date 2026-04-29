@@ -1,0 +1,14 @@
+from enum import Enum
+
+
+class ArtifactState(str, Enum):
+    DRAFT = "DRAFT"
+    VALIDATED = "VALIDATED"
+    REGISTERED = "REGISTERED"
+    EXECUTED = "EXECUTED"
+    ANALYZED = "ANALYZED"
+    REVIEWED = "REVIEWED"
+    IMPROVED = "IMPROVED"
+    VERSIONED = "VERSIONED"
+    PUBLISHED = "PUBLISHED"
+    ERROR = "ERROR"

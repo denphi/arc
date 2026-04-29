@@ -1,0 +1,44 @@
+methods:
+  dft:
+    full_name: Density Functional Theory
+    suitable_for:
+      - band_gap
+      - formation_energy
+      - magnetic_moment
+      - dielectric_constant
+    typical_codes: [VASP, Quantum ESPRESSO, ABINIT, FHI-aims]
+
+  md:
+    full_name: Molecular Dynamics
+    suitable_for:
+      - thermal_conductivity
+      - diffusion_coefficient
+      - melting_point
+    typical_codes: [LAMMPS, GROMACS, CP2K]
+
+  monte_carlo:
+    full_name: Monte Carlo
+    suitable_for:
+      - phase_diagram
+      - order_disorder
+    typical_codes: [ATAT, CASM]
+
+  gw:
+    full_name: GW Approximation
+    suitable_for:
+      - band_gap  # more accurate than DFT
+    typical_codes: [BerkeleyGW, ABINIT]
+
+  tight_binding:
+    full_name: Tight-Binding
+    suitable_for:
+      - band_structure
+      - transport
+    typical_codes: [TBFIT, Wannier90]
+
+  machine_learning_ff:
+    full_name: Machine Learning Force Field
+    suitable_for:
+      - large_scale_md
+      - thermal_properties
+    typical_codes: [MACE, CHGNet, M3GNet]

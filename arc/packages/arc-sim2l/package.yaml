@@ -1,0 +1,39 @@
+name: arc-sim2l
+version: 0.1.0
+type: artifact-package
+description: >
+  Sim2L artifact creation, validation, registration, and execution package.
+  Provides the full lifecycle for building and running Sim2L artifacts within ARC.
+
+provides:
+  agents:
+    - name: ideator
+      entrypoint: arc.packages.arc-sim2l.agents.ideator:IdeatorAgent
+    - name: planner
+      entrypoint: arc.packages.arc-sim2l.agents.planner:PlannerAgent
+    - name: builder
+      entrypoint: arc.packages.arc-sim2l.agents.builder:Sim2LBuilderAgent
+    - name: reviewer
+      entrypoint: arc.packages.arc-sim2l.agents.reviewer:ReviewerAgent
+    - name: reflector
+      entrypoint: arc.packages.arc-sim2l.agents.reflector:ReflectorAgent
+
+  skills:
+    - skills/create-sim2l.md
+    - skills/validate-sim2l.md
+    - skills/improve-artifact.md
+    - skills/review-results.md
+
+  workflows:
+    - name: research-loop
+      path: workflows/research-loop.yaml
+
+  runtime_adapters:
+    - name: sim2l
+      entrypoint: arc.runtime.sim2l_adapter:Sim2LRuntimeAdapter
+    - name: local
+      entrypoint: arc.runtime.local:LocalRuntimeAdapter
+
+requires:
+  runtime_adapter: any
+  artifact_type: sim2l

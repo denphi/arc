@@ -1,0 +1,40 @@
+name: arc-mars
+version: 0.1.0
+type: strategy-package
+description: >
+  MARS-inspired autonomous research loop for artifact-based experiments.
+  Provides cost-aware planning, reflective search, and iterative improvement
+  strategies. Artifact-agnostic and domain-agnostic.
+
+provides:
+  agents:
+    - name: mars_planner
+      entrypoint: arc.packages.arc-mars.agents.mars_planner:MARSPlannerAgent
+    - name: experiment_decomposer
+      entrypoint: arc.packages.arc-mars.agents.experiment_decomposer:ExperimentDecomposerAgent
+    - name: reflective_reviewer
+      entrypoint: arc.packages.arc-mars.agents.reflective_reviewer:ReflectiveReviewerAgent
+    - name: improvement_planner
+      entrypoint: arc.packages.arc-mars.agents.improvement_planner:ImprovementPlannerAgent
+
+  skills:
+    - skills/cost-aware-planning.md
+    - skills/reflective-search.md
+    - skills/compare-experiments.md
+    - skills/propose-next-iteration.md
+    - skills/failure-analysis.md
+
+  workflows:
+    - name: mars-research-loop
+      path: workflows/mars-research-loop.yaml
+    - name: mars-iterative-improvement
+      path: workflows/mars-iterative-improvement.yaml
+
+requires:
+  runtime_adapter: any
+  artifact_type: any
+
+optional:
+  memory:
+    - reflection_store
+    - experiment_history

@@ -1,0 +1,67 @@
+name: mars-iterative-improvement
+version: 0.1.0
+description: >
+  Focused improvement loop. Starts from an existing artifact and result,
+  and iterates until improvement criteria are met or max_iterations is reached.
+
+config:
+  max_iterations: 10
+  approval_checkpoints:
+    - review
+
+steps:
+  - id: reflect
+    agent: reflective_reviewer
+    input:
+      plan: context.current_plan
+      result: context.last_result
+      history: memory.experiment_history
+    on_error: fail
+
+  - id: improve
+    agent: improvement_planner
+    input:
+      reflection: reflect.output
+      history: memory.experiment_history
+      proposal: context.proposal
+    on_error: fail
+
+  - id: build
+    agent: builder
+    input: improve.output.plan
+    on_error: fail
+
+  - id: validate
+    skill: validate-sim2l
+    input: build.output
+    on_error: retry
+    retry_max: 2
+
+  - id: run
+    adapter: local
+    method: run
+    input:
+      artifact: validate.output
+      parameters: improve.output.next_parameters
+    on_error: retry
+    retry_max: 3
+
+  - id: compare
+    skill: compare-experiments
+    input:
+      results:
+        - context.last_result
+        - run.output
+
+  - id: review
+    agent: reflective_reviewer
+    input:
+      plan: improve.output.plan
+      result: run.output
+      history: memory.experiment_history
+    on_error: fail
+
+conditions:
+  - after: review
+    if: "review.output.review.approved == false"
+    goto: reflect

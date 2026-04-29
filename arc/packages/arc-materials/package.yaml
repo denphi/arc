@@ -1,0 +1,49 @@
+name: arc-materials
+version: 0.1.0
+type: domain-package
+description: >
+  Domain package for materials science research workflows.
+  Provides domain-specific prompts, evaluators, constraints, templates,
+  and vocabularies. Does not define research strategy or artifact creation.
+
+provides:
+  prompts:
+    - materials_hypothesis_generation
+    - materials_experiment_review
+    - materials_result_interpretation
+
+  evaluators:
+    - name: bandgap_evaluator
+      entrypoint: arc.packages.arc-materials.evaluators.bandgap:BandgapEvaluator
+    - name: formation_energy_evaluator
+      entrypoint: arc.packages.arc-materials.evaluators.formation_energy:FormationEnergyEvaluator
+    - name: structure_stability_evaluator
+      entrypoint: arc.packages.arc-materials.evaluators.stability:StructureStabilityEvaluator
+    - name: property_prediction_evaluator
+      entrypoint: arc.packages.arc-materials.evaluators.property_prediction:PropertyPredictionEvaluator
+
+  constraints:
+    - unit_consistency
+    - physically_valid_ranges
+    - known_material_property_bounds
+
+  templates:
+    - materials_sim2l_template
+    - parameter_sweep_template
+    - results_report_template
+
+  vocabularies:
+    - materials_properties
+    - simulation_methods
+    - units
+    - common_descriptors
+
+requires:
+  artifact_type:
+    - sim2l
+
+optional:
+  integrations:
+    - materials_project
+    - aflow
+    - oqmd

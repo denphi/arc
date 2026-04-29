@@ -1,0 +1,68 @@
+name: research-loop
+version: 0.1.0
+description: >
+  Full Sim2L research iteration: ideation → planning → artifact creation →
+  validation → execution → review → improvement.
+
+config:
+  max_iterations: 10
+  approval_checkpoints: []
+
+steps:
+  - id: ideate
+    agent: ideator
+    input: user_goal
+    on_error: fail
+
+  - id: plan
+    agent: planner
+    input: ideate.output
+    on_error: fail
+
+  - id: build
+    agent: builder
+    input: plan.output
+    on_error: fail
+
+  - id: validate
+    skill: validate-sim2l
+    input: build.output
+    on_error: retry
+    retry_max: 2
+
+  - id: register
+    skill: write-artifact
+    input: validate.output
+    on_error: fail
+
+  - id: run
+    adapter: local
+    method: run
+    input:
+      artifact: register.output
+      parameters: plan.output.parameters
+    on_error: retry
+    retry_max: 3
+
+  - id: review
+    agent: reviewer
+    input: run.output
+    on_error: fail
+
+  - id: reflect
+    agent: reflector
+    input: review.output
+    on_error: skip
+
+  - id: improve
+    skill: improve-artifact
+    input:
+      artifact: build.output
+      review: review.output
+      plan: plan.output
+    on_error: skip
+
+conditions:
+  - after: review
+    if: "review.output.approved == false"
+    goto: plan

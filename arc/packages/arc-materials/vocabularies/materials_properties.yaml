@@ -1,0 +1,57 @@
+properties:
+  band_gap:
+    description: Electronic band gap
+    unit: eV
+    range: [0.0, 14.0]
+    typical_range: [0.1, 6.0]
+
+  formation_energy:
+    description: Formation energy per atom
+    unit: eV/atom
+    range: [-5.0, 2.0]
+    stability_threshold: 0.0  # negative = stable
+
+  bulk_modulus:
+    description: Resistance to uniform compression
+    unit: GPa
+    range: [0.0, 600.0]
+
+  shear_modulus:
+    description: Resistance to shear deformation
+    unit: GPa
+    range: [0.0, 400.0]
+
+  youngs_modulus:
+    description: Tensile stiffness
+    unit: GPa
+    range: [0.0, 1200.0]
+
+  poisson_ratio:
+    description: Ratio of lateral to longitudinal strain
+    unit: dimensionless
+    range: [-1.0, 0.5]
+
+  density:
+    description: Mass per unit volume
+    unit: g/cm³
+    range: [0.5, 25.0]
+
+  thermal_conductivity:
+    description: Rate of heat transfer
+    unit: W/(m·K)
+    range: [0.01, 3000.0]
+
+  seebeck_coefficient:
+    description: Thermoelectric voltage per temperature difference
+    unit: µV/K
+    range: [-1000.0, 1000.0]
+
+  magnetic_moment:
+    description: Total magnetic moment per formula unit
+    unit: µB
+    range: [0.0, 20.0]
+
+  dielectric_constant:
+    description: Static dielectric constant
+    unit: dimensionless
+    range: [1.0, 1000.0]

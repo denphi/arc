@@ -1,0 +1,61 @@
+# Sim2L template for materials science experiments
+
+name: materials_experiment
+description: >
+  Template for a materials science computational experiment.
+  Replace placeholders with actual property name, simulation method,
+  and parameter ranges.
+
+inputs:
+  composition:
+    type: string
+    default: "Si"
+    description: Chemical formula or composition string (e.g. "Si", "GaAs", "Li0.5CoO2")
+
+  lattice_constant:
+    type: number
+    default: 5.43
+    unit: angstrom
+    description: Initial lattice constant in Ångströms.
+
+  simulation_method:
+    type: string
+    default: "dft"
+    allowed: ["dft", "md", "tight_binding", "monte_carlo"]
+    description: Computational method to use.
+
+  k_points:
+    type: integer
+    default: 4
+    description: K-point mesh density (NxNxN Monkhorst-Pack).
+
+  cutoff_energy:
+    type: number
+    default: 500.0
+    unit: eV
+    description: Plane-wave cutoff energy in eV.
+
+outputs:
+  band_gap:
+    type: number
+    unit: eV
+    description: Electronic band gap.
+
+  formation_energy:
+    type: number
+    unit: eV/atom
+    description: Formation energy per atom.
+
+  total_energy:
+    type: number
+    unit: eV
+    description: Total DFT energy.
+
+  converged:
+    type: boolean
+    description: Whether the calculation converged.
+
+  max_force:
+    type: number
+    unit: eV/angstrom
+    description: Maximum residual force on any atom.

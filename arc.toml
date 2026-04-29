@@ -1,0 +1,59 @@
+[arc]
+name = "ARC-Sim2L"
+version = "0.1.0"
+
+[packages]
+paths = [
+  "arc/packages/arc-sim2l",
+  "arc/packages/arc-mars",
+  "arc/packages/arc-materials",
+]
+
+[runtime]
+adapter = "local"   # local | docker | slurm | kubernetes
+workspace = "workspace"
+
+[provider]
+# Uncomment and fill one block. Token/model can also be passed per-request.
+
+# name = "anthropic"
+# model = "claude-opus-4-7"
+
+# name = "openai"
+# model = "gpt-4.1"
+
+# Open-weight models via OpenWebUI / Purdue GenAI gateway:
+name = "openwebui"
+base_url = "https://genai.rcac.purdue.edu/api"
+model = ""        # leave blank to auto-select, or e.g. "llama3.3:70b"
+# token is read from OPENWEBUI_KEY env var (do not put tokens in this file)
+
+[memory]
+artifact_registry = "workspace/artifacts"
+results_store = "workspace/runs"
+provenance_log = "workspace/memory/provenance.jsonl"
+
+[api]
+host = "0.0.0.0"
+port = 8000
+reload = false
+
+[extensions]
+# All extensions disabled by default. Enable individually below.
+
+[extensions.vector-memory]
+enabled = false
+backend = "chroma"
+persist_path = "workspace/memory/vectors"
+
+[extensions.docker-runtime]
+enabled = false
+image = "sim2l/runner:latest"
+
+[extensions.slurm-runtime]
+enabled = false
+partition = "general"
+
+[extensions.web-ui]
+enabled = false
+port = 8501

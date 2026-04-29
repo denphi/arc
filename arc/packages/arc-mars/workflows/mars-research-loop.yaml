@@ -1,0 +1,69 @@
+name: mars-research-loop
+version: 0.1.0
+description: >
+  MARS-inspired full research loop with cost-aware planning and reflective search.
+  Combines arc-mars strategy with arc-sim2l artifact execution.
+
+config:
+  max_iterations: 20
+  approval_checkpoints: []
+
+steps:
+  - id: decompose
+    agent: experiment_decomposer
+    input: user_goal
+    on_error: fail
+
+  - id: plan
+    agent: mars_planner
+    input:
+      proposal: decompose.output.primary_proposal
+      history: memory.experiment_history
+      budget: config.budget
+    on_error: fail
+
+  - id: build
+    agent: builder
+    input: plan.output
+    on_error: fail
+
+  - id: validate
+    skill: validate-sim2l
+    input: build.output
+    on_error: retry
+    retry_max: 2
+
+  - id: run
+    adapter: local
+    method: run
+    input:
+      artifact: validate.output
+      parameters: plan.output.parameters
+    on_error: retry
+    retry_max: 3
+
+  - id: reflect
+    agent: reflective_reviewer
+    input:
+      plan: plan.output
+      result: run.output
+      history: memory.experiment_history
+    on_error: skip
+
+  - id: improve
+    agent: improvement_planner
+    input:
+      reflection: reflect.output
+      history: memory.experiment_history
+      proposal: decompose.output.primary_proposal
+    on_error: fail
+
+  - id: review
+    agent: reviewer
+    input: run.output
+    on_error: fail
+
+conditions:
+  - after: review
+    if: "review.output.approved == false"
+    goto: plan
