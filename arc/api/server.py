@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from arc.api.routes import router
 from arc.core.kernel import Kernel
+from arc.version import __version__
 
 _kernel: Kernel | None = None
 
@@ -30,14 +31,14 @@ def create_app(config_path: str = "arc.toml") -> FastAPI:
     app = FastAPI(
         title="ARC-Sim2L",
         description="Agentic research framework using Sim2L artifacts",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
     app.include_router(router)
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": __version__}
 
     return app
 

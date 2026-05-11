@@ -12,7 +12,10 @@ from arc.schemas.research import ResearchGoal
 @pytest.mark.asyncio
 async def test_run_once_completes():
     workflow = ResearchWorkflow()
-    goal = ResearchGoal(goal="Test that input_parameter doubles to produce result")
+    goal = ResearchGoal(
+        goal="Test that input_parameter doubles to produce result",
+        target={"result": 2.0},
+    )
     result = await workflow.run_once(goal)
 
     assert result["status"] == "completed"
@@ -28,7 +31,7 @@ async def test_run_once_completes():
 @pytest.mark.asyncio
 async def test_run_once_execution_produces_output():
     workflow = ResearchWorkflow()
-    goal = ResearchGoal(goal="Verify parameter doubling", domain="test")
+    goal = ResearchGoal(goal="Verify parameter doubling", domain="test", target={"result": 2.0})
     result = await workflow.run_once(goal)
 
     execution = result["execution"]
@@ -37,13 +40,15 @@ async def test_run_once_execution_produces_output():
 
 
 @pytest.mark.asyncio
-async def test_review_approved_on_valid_output():
+async def test_review_not_approved_without_target():
     workflow = ResearchWorkflow()
     goal = ResearchGoal(goal="Simple computation test")
     result = await workflow.run_once(goal)
 
+    assert result["status"] == "iteration_limit"
     review = result["review"]
-    assert review["approved"] is True
+    assert review["approved"] is False
+    assert review["iteration_complete"] is False
 
 
 class MarkerAdapter(LocalRuntimeAdapter):
@@ -79,7 +84,9 @@ async def test_workflow_uses_declared_adapter():
     workflow.registry.register_workflow("marker-loop", definition)
     workflow.workflow_name = "marker-loop"
 
-    result = await workflow.run_once(ResearchGoal(goal="Use marker adapter"))
+    result = await workflow.run_once(
+        ResearchGoal(goal="Use marker adapter", target={"result": 42})
+    )
     assert result["execution"]["outputs"]["result"] == 42
     assert result["execution"]["metrics"]["marker_adapter"] is True
 
@@ -99,7 +106,9 @@ async def test_workflow_retries_retry_steps():
     workflow.registry.register_workflow("flaky-loop", definition)
     workflow.workflow_name = "flaky-loop"
 
-    result = await workflow.run_once(ResearchGoal(goal="Retry adapter"))
+    result = await workflow.run_once(
+        ResearchGoal(goal="Retry adapter", target={"result": 2.0})
+    )
     assert result["execution"]["status"] == "completed"
     assert FlakyAdapter.attempts == 2
 

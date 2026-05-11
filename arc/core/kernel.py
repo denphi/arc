@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
+from typing import Any
 
+from arc.core.config import load_arc_toml, resolve_package_paths
 from arc.core.events import EventBus
 from arc.core.loader import load_packages
 from arc.core.registry import ComponentRegistry
@@ -13,47 +15,44 @@ class Kernel:
     """Central ARC kernel. Owns the registry, event bus, and session manager."""
 
     def __init__(self, config_path: str = "arc.toml"):
-        self.config_path = self._resolve_config_path(config_path)
-        self.config = self._load_config(self.config_path)
+        self.config_path, self.config = load_arc_toml(config_path)
+        if not self.config_path.exists():
+            logger.warning("arc.toml not found — using defaults")
         self.registry = ComponentRegistry()
         self.events = EventBus()
         self.sessions = SessionManager()
         self._extensions: list = []
 
-    def _resolve_config_path(self, path: str) -> Path:
-        config_file = Path(path)
-        if config_file.exists():
-            return config_file
-        for bundled in (
-            Path(__file__).resolve().parents[2] / "arc.toml",
-            Path(__file__).resolve().parents[1] / "arc.toml",
-        ):
-            if bundled.exists():
-                return bundled
-        return config_file
-
-    def _load_config(self, path: Path) -> dict:
-        config_file = path
-        if not config_file.exists():
-            logger.warning("arc.toml not found — using defaults")
-            return {}
-        try:
-            import tomllib  # Python 3.11+
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-reattr]
-        with config_file.open("rb") as f:
-            return tomllib.load(f)
-
     async def startup(self) -> None:
-        package_paths = self.config.get("packages", {}).get("paths", [])
-        base = self.config_path.parent if self.config_path.exists() else Path.cwd()
-        resolved_paths = [
-            str((base / path).resolve()) if not Path(path).is_absolute() else path
-            for path in package_paths
-        ]
-        load_packages(resolved_paths, self.registry)
+        package_config = self.config.get("packages", {})
+        resolved_paths = resolve_package_paths(self.config, self.config_path)
+        load_packages(self._filter_package_paths(resolved_paths, package_config), self.registry)
         await self._load_extensions()
         logger.info("ARC kernel started. Agents: %s", self.registry.list_agents())
+
+    def _filter_package_paths(self, package_paths: list[str], package_config: dict[str, Any]) -> list[str]:
+        enabled = set(package_config.get("enabled", []) or [])
+        disabled = set(package_config.get("disabled", []) or [])
+        filtered = []
+        for path_str in package_paths:
+            package_name = self._package_name_for_path(Path(path_str))
+            if enabled and package_name not in enabled:
+                continue
+            if package_name in disabled:
+                continue
+            filtered.append(path_str)
+        return filtered
+
+    def _package_name_for_path(self, package_dir: Path) -> str:
+        manifest = package_dir / "package.yaml"
+        if not manifest.exists():
+            return package_dir.name
+        try:
+            import yaml
+            data = yaml.safe_load(manifest.read_text()) or {}
+            return data.get("name") or package_dir.name
+        except Exception:
+            return package_dir.name
 
     async def _load_extensions(self) -> None:
         ext_config = self.config.get("extensions", {})

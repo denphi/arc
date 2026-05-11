@@ -2,6 +2,23 @@
 """
 ARC interactive chat — runs in the terminal like Claude Code.
 
+NOTE — this file is ~1.8k lines and is on the cleanup TODO (review item #20).
+Suggested split for a follow-up PR:
+
+    chat/cli.py            — argparse / main() entrypoint, banner
+    chat/repl.py           — chat_loop, SIGINT handling
+    chat/research.py       — run_research, _run_with_continuation
+    chat/plan_review.py    — _review_plan_with_user, _post_approval_menu
+    chat/session.py        — _save_session / _restore_session
+    chat/ui.py             — terminal colour helpers (c, header, step, ok…)
+    chat/input.py          — prompt-toolkit history + key bindings
+    chat/callbacks.py      — _make_*_callback factories for coder agents
+    chat/parsing.py        — _parse_target, _parse_refinement_target,
+                              _is_related_refinement, _normalize_chat_command
+
+Keep behavior unchanged; just relocate. Any split is best done with humans
+in the loop because state-management is intertwined with the REPL.
+
 Usage
 -----
 python3 examples/chat.py \
@@ -33,7 +50,9 @@ Commands inside the chat:
 
 import argparse
 import asyncio
+import builtins
 import json
+import os
 import sys
 import textwrap
 from datetime import datetime, timezone
@@ -42,6 +61,12 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+except Exception:
+    pass
+
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.schemas.research import ResearchGoal
 from arc.session import (
@@ -49,6 +74,52 @@ from arc.session import (
     save_session_meta, load_session_meta,
     delete_session, delete_all_sessions,
 )
+
+
+_PROMPT_SESSION = None
+_PROMPT_RENDER = None
+
+
+def _chat_history_path() -> Path:
+    root = Path(os.environ.get("SIM2L_HOME", Path.home() / ".sim2l" / "code"))
+    root.mkdir(parents=True, exist_ok=True)
+    return root / ".arc_chat_history"
+
+
+def chat_input(prompt: str) -> str:
+    """Read terminal input with history and Emacs-style editing when available."""
+    session = _prompt_session()
+    if session is False:
+        return builtins.input(prompt)
+    return session.prompt(_PROMPT_RENDER(prompt))
+
+
+async def chat_input_async(prompt: str) -> str:
+    """Async terminal input for use inside the chat event loop."""
+    session = _prompt_session()
+    if session is False:
+        return await asyncio.to_thread(builtins.input, prompt)
+    return await session.prompt_async(_PROMPT_RENDER(prompt))
+
+
+def _prompt_session():
+    """Create the shared prompt session lazily."""
+    global _PROMPT_SESSION, _PROMPT_RENDER
+    if _PROMPT_SESSION is None:
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.enums import EditingMode
+            from prompt_toolkit.formatted_text import ANSI
+            from prompt_toolkit.history import FileHistory
+
+            _PROMPT_SESSION = PromptSession(
+                history=FileHistory(str(_chat_history_path())),
+                editing_mode=EditingMode.EMACS,
+            )
+            _PROMPT_RENDER = ANSI
+        except Exception:
+            _PROMPT_SESSION = False
+    return _PROMPT_SESSION
 
 
 def _pct_off(outputs: dict, target: dict, registry: dict | None = None) -> str:
@@ -119,10 +190,94 @@ def hr():
     print(c("  " + "─" * 56, DIM))
 
 
+def _make_permission_callback():
+    """Return an async callback that surfaces Claude Code permission requests in the arc chat UI."""
+
+    async def _callback(request_id: str, tool_name: str, description: str, input_preview: str) -> bool:
+        print()
+        print(f"  {c('◆ Claude Code permission request', BOLD, YELLOW)}")
+        print(f"    {c('Tool:', DIM)}    {tool_name}")
+        print(f"    {c('Action:', DIM)}  {description}")
+        if input_preview:
+            preview = input_preview[:200] + ("…" if len(input_preview) > 200 else "")
+            print(f"    {c('Input:', DIM)}   {c(preview, DIM)}")
+        raw = (await chat_input_async(c("    Allow? [y/N] ", BOLD))).strip().lower()
+        allowed = raw in {"y", "yes"}
+        if allowed:
+            ok(f"Permitted  {c(tool_name, DIM)}")
+        else:
+            warn(f"Denied  {c(tool_name, DIM)}")
+        return allowed
+
+    return _callback
+
+
+def _make_codex_approval_callback():
+    """Return an async callback that surfaces Codex approval requests in the arc chat UI."""
+
+    async def _callback(approval_id: str, command: str, reason: str) -> str:
+        print()
+        print(f"  {c('◆ Codex approval request', BOLD, YELLOW)}")
+        print(f"    {c('Command:', DIM)}  {command}")
+        if reason:
+            print(f"    {c('Reason:', DIM)}   {reason}")
+        print(f"    {c('y', BOLD)} allow  "
+              f"  {c('a', BOLD)} allow for session  "
+              f"  {c('n', BOLD)} deny  "
+              f"  {c('q', BOLD)} abort")
+        raw = (await chat_input_async(c("    Decision [y/a/n/q] ", BOLD))).strip().lower()
+        decision_map = {
+            "y": "accept",
+            "yes": "accept",
+            "a": "acceptForSession",
+            "n": "decline",
+            "no": "decline",
+            "q": "abort",
+        }
+        decision = decision_map.get(raw, "decline")
+        label = {"accept": "Allowed", "acceptForSession": "Allowed for session",
+                 "decline": "Denied", "abort": "Aborted"}[decision]
+        color = GREEN if decision.startswith("accept") else YELLOW
+        print(f"  {c(label, color)}  {c(command[:80], DIM)}")
+        return decision
+
+    return _callback
+
+
+def _make_codex_progress_callback():
+    """Return a callback that surfaces Codex JSON progress in the arc chat UI."""
+
+    def _callback(message: str) -> None:
+        print(" " * 40, end="\r")
+        print(f"  {c('codex', DIM)}  {message}")
+
+    return _callback
+
+
+def _make_claude_progress_callback():
+    """Return a callback that surfaces Claude Code progress in the arc chat UI."""
+
+    def _callback(message: str) -> None:
+        print(" " * 40, end="\r")
+        print(f"  {c('claude', DIM)}  {message}")
+
+    return _callback
+
+
+def _is_codex_approval_stop(exc: Exception) -> bool:
+    return getattr(exc, "codex_approval_decision", None) in {"decline", "abort"}
+
+
 _PLAN_ACCEPT = {"ok", "yes", "y", "accept", "looks good", "good", "done", "go", "proceed", ""}
 
 
-async def _review_plan_with_user(planner, plan, target: dict, max_rounds: int = 5):
+async def _review_plan_with_user(
+    planner,
+    plan,
+    target: dict,
+    max_rounds: int = 5,
+    required_outputs: list[str] | None = None,
+):
     """Show the plan and loop until the user accepts or max_rounds reached.
 
     On the first round, warns if the plan's required_outputs don't cover target
@@ -134,13 +289,21 @@ async def _review_plan_with_user(planner, plan, target: dict, max_rounds: int = 
 
     # Derive which output key names the builder will be asked to produce.
     # These come from the target (canonical keys) + schema registry if available.
-    required_outputs: list[str] = list(target.keys()) if target else []
+    required_outputs = list(dict.fromkeys(
+        list(target.keys() if target else []) + list(required_outputs or [])
+    ))
 
     for round_num in range(max_rounds):
         # Display current plan.
         print()
         print(f"  {c('Parameters', BOLD)}     {plan.parameters}")
+        if getattr(plan, "parameter_constraints", None):
+            print(f"  {c('Constraints', BOLD)}    {plan.parameter_constraints}")
         print(f"  {c('Sweep', BOLD)}          {plan.parameter_sweep}")
+        if getattr(plan, "experimental_design", None):
+            print(f"  {c('Design', BOLD)}")
+            for item in plan.experimental_design:
+                print(f"    - {item}")
         print(f"  {c('Criteria', BOLD)}       {plan.success_criteria}")
         if required_outputs:
             print(f"  {c('Must output', BOLD)}   {c(required_outputs, YELLOW)}")
@@ -156,7 +319,7 @@ async def _review_plan_with_user(planner, plan, target: dict, max_rounds: int = 
             print(f"  {c('Type ok/yes/enter to accept, or describe what to change.', DIM)}")
 
         try:
-            raw = input(c("  plan> ", BOLD, CYAN)).strip()
+            raw = (await chat_input_async(c("  plan> ", BOLD, CYAN))).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -226,7 +389,7 @@ async def _post_approval_menu(workflow, artifact, result, target: dict):
     print(f"  {c('Enter', DIM)}  Continue to prompt")
 
     try:
-        choice = input(c("  explore> ", BOLD, GREEN)).strip()
+        choice = (await chat_input_async(c("  explore> ", BOLD, GREEN))).strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return
@@ -309,7 +472,7 @@ async def _post_approval_menu(workflow, artifact, result, target: dict):
 
     elif choice == "4":
         # Custom params.
-        raw = input(c("  Params (key=val ...) > ", BOLD)).strip()
+        raw = (await chat_input_async(c("  Params (key=val ...) > ", BOLD))).strip()
         params = {}
         for kv in raw.split():
             if "=" in kv:
@@ -400,6 +563,8 @@ def _save_session(workflow: ResearchWorkflow, current_goal: str | None) -> None:
         schema_registry=ctx.memory.get("schema_registry", {}),
         primary_goal=ctx.memory.get("primary_goal"),
         refinements=ctx.memory.get("refinements", []),
+        packages=ctx.memory.get("packages", {}),
+        agent_overrides=ctx.memory.get("agent_overrides", {}),
     )
 
 
@@ -418,6 +583,8 @@ def _restore_session(workflow: ResearchWorkflow) -> str | None:
     ctx.memory["schema_registry"] = meta.get("schema_registry", {})
     ctx.memory["primary_goal"] = meta.get("primary_goal")
     ctx.memory["refinements"] = meta.get("refinements", [])
+    ctx.memory["packages"] = meta.get("packages", {})
+    ctx.memory["agent_overrides"] = meta.get("agent_overrides", {})
 
     # Try to reload the current artifact object.
     artifact_id = meta.get("current_artifact_id")
@@ -430,6 +597,90 @@ def _restore_session(workflow: ResearchWorkflow) -> str | None:
             pass
 
     return meta.get("goal")
+
+
+def _available_coding_backends(workflow: ResearchWorkflow) -> list[str]:
+    backends = ["builder"]
+    for package_name in workflow.registry.list_agent_sources("coder"):
+        backends.append(f"{package_name}:coder")
+    return backends
+
+
+def _selected_coder(workflow: ResearchWorkflow) -> str:
+    overrides = workflow._context.memory.get("agent_overrides", {})
+    return overrides.get("coder", "builder")
+
+
+def _set_selected_coder(workflow: ResearchWorkflow, backend: str) -> str:
+    aliases = {
+        "builtin": "builder",
+        "built-in": "builder",
+        "sim2l": "builder",
+        "codex": "arc-codex:coder",
+        "claude": "arc-claude-code:coder",
+        "claude-code": "arc-claude-code:coder",
+    }
+    backend = aliases.get(backend, backend)
+    if backend not in _available_coding_backends(workflow):
+        raise ValueError(
+            f"Unknown coder backend '{backend}'. Available: {', '.join(_available_coding_backends(workflow))}"
+        )
+    overrides = workflow._context.memory.setdefault("agent_overrides", {})
+    if backend == "builder":
+        overrides.pop("coder", None)
+    else:
+        overrides["coder"] = backend
+    return backend
+
+
+def _coder_agent_class(workflow: ResearchWorkflow):
+    backend = _selected_coder(workflow)
+    if backend == "builder":
+        from arc.packages import load_builder
+        return "builder", load_builder().Sim2LBuilderAgent
+    return backend, workflow.registry.get_agent(backend)
+
+
+async def _register_artifact_with_sim2l(workflow: ResearchWorkflow, artifact) -> dict | None:
+    """Best-effort deployment of an ARC artifact into the Sim2L registry."""
+    registrar = getattr(workflow.adapter, "register_artifact", None)
+    if registrar is None:
+        # Adapter is not sim2l-backed (e.g. LocalRuntimeAdapter). Try to
+        # create a Sim2LRuntimeAdapter using the same db_path so the artifact
+        # lands in the same database the workflow would use for execution.
+        try:
+            from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+            db_path = getattr(workflow, "_db_path", None)
+            adapter = Sim2LRuntimeAdapter(db_path=db_path, session_id=workflow.session_id)
+            registrar = getattr(adapter, "register_artifact", None)
+        except Exception as exc:
+            return {"registered": False, "error": str(exc)}
+
+    if registrar is None:
+        return {"registered": False, "error": "sim2l not available"}
+
+    result = registrar(artifact)
+    if hasattr(result, "__await__"):
+        result = await result
+    return result
+
+
+def _set_session_package_state(workflow: ResearchWorkflow, package_name: str, enabled: bool) -> None:
+    state = workflow._context.memory.setdefault("packages", {})
+    enabled_set = set(state.get("enabled", []))
+    disabled_set = set(state.get("disabled", []))
+    if enabled:
+        enabled_set.add(package_name)
+        disabled_set.discard(package_name)
+    else:
+        disabled_set.add(package_name)
+        enabled_set.discard(package_name)
+        overrides = workflow._context.memory.setdefault("agent_overrides", {})
+        for role, backend in list(overrides.items()):
+            if str(backend).startswith(f"{package_name}:"):
+                overrides.pop(role, None)
+    state["enabled"] = sorted(enabled_set)
+    state["disabled"] = sorted(disabled_set)
 
 
 def _parse_target(goal_text: str) -> dict:
@@ -471,17 +722,147 @@ def _parse_target(goal_text: str) -> dict:
         r"([0-9]+\.?[0-9]*)\s*(eV|meV|GPa|MPa|K|nm|%|GHz|THz|angstrom)?",
         re.IGNORECASE
     )
+    STRONG_TARGET_CONTEXT = re.compile(
+        r"(?<![a-z0-9_])(?:target|goal|set|change|update|near|around|approximately|approx|within|close to)(?![a-z0-9_])",
+        re.IGNORECASE,
+    )
     for nm in NUM_UNIT.finditer(text):
         val = float(nm.group(1))
         unit = (nm.group(2) or "").lower()
         start, end = nm.start(), nm.end()
         window = text[max(0, start - 30): end + 30]
+        if not unit and not STRONG_TARGET_CONTEXT.search(window):
+            continue
         pm = PHYSICS.search(window)
         if pm:
             key = re.sub(r"[\s\-]", "_", pm.group(0).lower())
             targets[f"{key}_{unit}" if unit else key] = val
 
+    if targets:
+        return targets
+
+    # Common shorthand: "target 1.1 eV" or "near 1.1 eV". In ARC's current
+    # materials workflows an eV goal is almost always a bandgap/energy target.
+    for nm in NUM_UNIT.finditer(text):
+        val = float(nm.group(1))
+        unit = (nm.group(2) or "").lower()
+        if unit not in {"ev", "mev"}:
+            continue
+        start, end = nm.start(), nm.end()
+        window = text[max(0, start - 30): end + 30].lower()
+        if re.search(r"\b(target|near|around|approximately|approx|within|close to|as close as possible)\b", window):
+            targets[f"bandgap_{unit}"] = val
+            break
+
     return targets
+
+
+def _parse_refinement_target(refinement: str) -> dict:
+    """Return target updates only when a refinement explicitly changes target."""
+    import re
+
+    if re.search(r"\w+\s*[=:]\s*[0-9]+\.?[0-9]*", refinement):
+        return _parse_target(refinement)
+
+    if re.search(
+        r"(?<![a-z0-9_])(?:set|change|update|new)\s+(?:the\s+)?target(?![a-z0-9_])",
+        refinement,
+        re.IGNORECASE,
+    ):
+        return _parse_target(refinement)
+
+    if re.search(
+        r"(?<![a-z0-9_])target(?![a-z0-9_])\s+(?:to|near|around|approximately|approx|within|close to)\b",
+        refinement,
+        re.IGNORECASE,
+    ):
+        return _parse_target(refinement)
+
+    return {}
+
+
+def _refinement_needs_artifact_rebuild(refinement: str) -> bool:
+    """Return True when a refinement describes broken generated artifact logic."""
+    import re
+
+    text = refinement.lower()
+    if re.search(r"\b(parameter|input|thickness|temperature|mass|offset)\b", text):
+        if not re.search(r"\b(output|return|metric|score|compliance|formula|calculation|schema|workflow|artifact|bug|wrong|broken|missing|always)\b", text):
+            return False
+    return bool(re.search(
+        r"\b(output|return|metric|score|compliance|formula|calculation|schema|workflow|artifact|bug|wrong|broken|missing|always)\b",
+        text,
+    ))
+
+
+def _normalize_chat_command(raw: str) -> str:
+    """Accept slash commands and common backslash typos like \\help."""
+    stripped = raw.strip()
+    if stripped.startswith("\\"):
+        return "/" + stripped[1:]
+    return stripped
+
+
+def _tokens_for_relevance(text: str) -> set[str]:
+    import re
+
+    stop = {
+        "the", "and", "for", "with", "that", "this", "what", "when", "where",
+        "why", "how", "can", "could", "would", "should", "want", "need",
+        "help", "please", "about", "from", "into", "then", "than", "your",
+        "model", "question", "answer", "explain",
+    }
+    return {
+        part
+        for part in re.split(r"[^a-z0-9]+", text.lower())
+        if len(part) >= 3 and part not in stop
+    }
+
+
+def _is_related_refinement(text: str, primary_goal: str, artifact, ctx) -> bool:
+    """Decide whether free text should be treated as a refinement of this goal."""
+    lowered = text.lower()
+    if lowered.startswith(("/", "\\")):
+        return False
+
+    context_texts = [primary_goal or ""]
+    target = ctx.memory.get("target", {})
+    context_texts.extend(target.keys())
+    registry = ctx.memory.get("schema_registry", {})
+    context_texts.extend(registry.keys())
+
+    if artifact is not None:
+        context_texts.extend([
+            getattr(artifact, "name", ""),
+            getattr(artifact, "description", None)
+            or (getattr(artifact, "metadata", {}) or {}).get("description", "")
+            or (getattr(artifact, "metadata", {}) or {}).get("hypothesis", ""),
+        ])
+        artifact_metadata = getattr(artifact, "metadata", {}) or {}
+        context_texts.extend((artifact_metadata.get("sim2l_inputs", {}) or {}).keys())
+        context_texts.extend((artifact_metadata.get("sim2l_outputs", {}) or {}).keys())
+
+    # Exact key/name references are strong evidence, especially for schema keys
+    # like target_bandgap_compliance.
+    for value in context_texts:
+        value = str(value).lower()
+        if value and len(value) >= 3 and value in lowered:
+            return True
+
+    context_tokens: set[str] = set()
+    for value in context_texts:
+        context_tokens.update(_tokens_for_relevance(str(value)))
+    text_tokens = _tokens_for_relevance(text)
+    if len(text_tokens & context_tokens) >= 2:
+        return True
+
+    refinement_words = {
+        "target", "output", "input", "parameter", "schema", "workflow",
+        "artifact", "metric", "score", "compliance", "formula", "calculation",
+        "bug", "wrong", "broken", "missing", "always", "increase", "decrease",
+        "smaller", "larger", "higher", "lower", "adjust", "fix", "address",
+    }
+    return bool(text_tokens & refinement_words and text_tokens & context_tokens)
 
 
 def _build_refined_goal(primary_goal: str, refinements: list[str]) -> str:
@@ -505,14 +886,13 @@ async def run_research(
     from arc.schemas.artifact import ArtifactRecord as _AR  # noqa: F401
 
     from arc.packages import (
-        load_ideator, load_planner, load_builder, load_reviewer, load_reflector, load_curator
+        load_ideator, load_planner, load_reviewer, load_reflector, load_curator
     )
 
     ctx = workflow._context
 
     IdeatorAgent   = load_ideator().IdeatorAgent
     PlannerAgent   = load_planner().PlannerAgent
-    BuilderAgent   = load_builder().Sim2LBuilderAgent
     ReviewerAgent  = load_reviewer().ReviewerAgent
     ReflectorAgent = load_reflector().ReflectorAgent
     CuratorAgent   = load_curator().CuratorAgent
@@ -527,7 +907,10 @@ async def run_research(
         ctx.memory["refinements"] = refinements
         goal_text = _build_refined_goal(ctx.memory.get("primary_goal", goal_text), refinements)
 
-    target = _parse_target(goal_text) or ctx.memory.get("target", {})
+    if refinement:
+        target = _parse_refinement_target(refinement) or ctx.memory.get("target", {})
+    else:
+        target = _parse_target(goal_text) or ctx.memory.get("target", {})
     goal = ResearchGoal(
         goal=goal_text,
         domain=domain or "computational science",
@@ -535,6 +918,17 @@ async def run_research(
     )
     if target:
         ctx.memory["target"] = target
+
+    preserved_output_keys: list[str] = []
+    rebuild_for_refinement = bool(refinement and artifact and _refinement_needs_artifact_rebuild(refinement))
+    if rebuild_for_refinement:
+        preserved_output_keys = list((artifact.metadata.get("sim2l_outputs", {}) or {}).keys())
+        if preserved_output_keys:
+            ctx.memory["required_outputs"] = preserved_output_keys
+        ctx.memory.pop("current_artifact", None)
+        ctx.memory.pop("current_plan", None)
+        artifact = None
+        warn("Refinement affects artifact logic — rebuilding workflow.")
 
     is_new_artifact = artifact is None
 
@@ -552,7 +946,7 @@ async def run_research(
         prior_results = ctx.memory.pop("catalog_prior_results", [])
         catalog_artifact = None
 
-        if catalog_hits:
+        if catalog_hits and not rebuild_for_refinement:
             best = catalog_hits[0]
             best_name = best.get("name", "")
             best_desc = (best.get("description") or "")[:80]
@@ -564,9 +958,9 @@ async def run_research(
                           f"{c('outputs', DIM)}={r.get('output_params', {})}")
 
             # Ask user whether to reuse the catalog artifact.
-            raw = input(
+            raw = (await chat_input_async(
                 c(f"  Reuse catalog artifact '{best_name}'? [Y / n] > ", BOLD)
-            ).strip().lower()
+            )).strip().lower()
             if raw not in ("n", "no"):
                 # Wrap the catalog hit as a local artifact so the rest of the
                 # pipeline (validate → execute → review) works unchanged.
@@ -639,16 +1033,44 @@ async def run_research(
             print(" " * 40, end="\r")
             if target:
                 step("Target", target)
-            plan = await _review_plan_with_user(agent(PlannerAgent), plan, target=target)
+            plan = await _review_plan_with_user(
+                agent(PlannerAgent),
+                plan,
+                target=target,
+                required_outputs=preserved_output_keys,
+            )
             # Inject confirmed required outputs into context for the builder.
             required_outputs = getattr(plan, '_required_outputs', list(target.keys()) if target else [])
             if required_outputs:
                 ctx.memory["required_outputs"] = required_outputs
 
             # ── Building artifact ──────────────────────────────────────────
-            header("Building artifact")
+            coder_backend, CoderAgent = _coder_agent_class(workflow)
+            header(f"Building artifact  {c(f'[{coder_backend}]', DIM)}")
             print(f"  {c('generating workflow...', DIM)}", end="\r")
-            draft = await agent(BuilderAgent).run(plan)
+            try:
+                _coder_agent = CoderAgent(context=ctx)
+                if "arc-codex" in coder_backend:
+                    _coder_agent.context.config["permission_callback"] = _make_codex_approval_callback()
+                    _coder_agent.context.config["progress_callback"] = _make_codex_progress_callback()
+                elif "arc-claude-code" in coder_backend:
+                    _coder_agent.context.config["permission_callback"] = _make_permission_callback()
+                    _coder_agent.context.config["progress_callback"] = _make_claude_progress_callback()
+                draft = await _coder_agent.run(plan)
+            except Exception as _coder_exc:
+                print(" " * 40, end="\r")
+                if _is_codex_approval_stop(_coder_exc):
+                    raise
+                if coder_backend != "builder":
+                    warn(f"Coder [{coder_backend}] failed: {_coder_exc}")
+                    warn("Falling back to built-in builder.")
+                    from arc.packages import load_builder as _load_builder
+                    _FallbackAgent = _load_builder().Sim2LBuilderAgent
+                    header(f"Building artifact  {c('[builder]', DIM)}")
+                    print(f"  {c('generating workflow...', DIM)}", end="\r")
+                    draft = await agent(_FallbackAgent).run(plan)
+                else:
+                    raise
             print(" " * 40, end="\r")
             artifact = workflow.artifacts.register(draft)
             ok(f"Artifact registered  {c(artifact.artifact_id[:8] + '...', DIM)}")
@@ -661,6 +1083,16 @@ async def run_research(
             registry = ctx.memory.get("schema_registry", {})
             if registry:
                 ok(f"Schema registry: {c(list(registry.keys()), DIM)}")
+
+            sim2l_registration = await _register_artifact_with_sim2l(workflow, artifact)
+            if sim2l_registration and sim2l_registration.get("registered"):
+                name = sim2l_registration.get("sim_name", artifact.name)
+                version = sim2l_registration.get("sim_version", artifact.version)
+                ok(f"Sim2L registered  {c(f'{name}/{version}', DIM)}")
+                if not sim2l_registration.get("catalog_persisted"):
+                    warn("Catalog service not updated; artifact is deployed in the local Sim2L repository.")
+            elif sim2l_registration:
+                warn(f"Sim2L registration skipped: {sim2l_registration.get('error', 'unknown error')}")
 
             # Save for later iterations
             ctx.memory["current_artifact"] = artifact
@@ -681,11 +1113,19 @@ async def run_research(
             _proposal = ResearchProposal(
                 hypothesis=artifact.metadata.get("hypothesis", goal_text),
                 objective=goal_text,
-                approach=artifact.metadata.get("approach", ""),
                 variables=list(artifact.metadata.get("sim2l_inputs", {}).keys()),
-                expected_outputs=list(artifact.metadata.get("sim2l_outputs", {}).keys()),
-                success_criteria="",
-                computational_requirements="",
+                methodology=artifact.metadata.get(
+                    "methodology",
+                    "Reuse the current Sim2L artifact and adjust its input parameters.",
+                ),
+                expected_outcomes=(
+                    "Refined outputs should move closer to the requested target."
+                    if target else
+                    "Refined outputs should remain valid and scientifically interpretable."
+                ),
+                evaluation_metrics=list(artifact.metadata.get("sim2l_outputs", {}).keys())
+                or list(target.keys())
+                or ["outputs"],
             )
             plan = await agent(_PlannerCls).run(_proposal)
             print(" " * 40, end="\r")
@@ -848,7 +1288,12 @@ async def _run_with_continuation(
             break  # validation failed
 
         review = result["review"]
+        execution = result["execution"]
         artifact = result["artifact"]  # reuse on next pass
+
+        if execution.status != "completed":
+            warn("Execution failed; stopping continuation so the artifact can be repaired before optimization.")
+            break
 
         if review.approved:
             ok(c("Goal achieved — approved by reviewer.", GREEN, BOLD))
@@ -874,14 +1319,14 @@ async def _run_with_continuation(
                 print(f"\n{c('●', BOLD, CYAN)} {c('Reviewer suggests:', BOLD)} broad GA exploration")
                 print(f"   {c(review.summary, DIM)}")
                 print(f"   {c(f'Default: 10 generations × pop 8  |  or type N to change  |  n to stop', DIM)}")
-                raw = input(c("  Confirm? [Y / N / <gens> <pop>] > ", BOLD)).strip()
+                raw = (await chat_input_async(c("  Confirm? [Y / N / <gens> <pop>] > ", BOLD))).strip()
             else:
                 print(f"\n{c('●', BOLD, CYAN)} {c('Reviewer suggests:', BOLD)} continue iterating")
                 print(f"   {c(review.summary, DIM)}")
                 if next_p:
                     print(f"   Next params: {c(str(next_p), YELLOW)}")
                 print(f"   {c(f'Will run up to {remaining_display} more iterations automatically', DIM)}")
-                raw = input(c("  Confirm? [Y / N / <iterations> / explore] > ", BOLD)).strip()
+                raw = (await chat_input_async(c("  Confirm? [Y / N / <iterations> / explore] > ", BOLD))).strip()
 
             rl = raw.lower()
             if rl in ("n", "no"):
@@ -914,7 +1359,7 @@ async def _run_with_continuation(
                 print(f"    {c('2', CYAN)} Switch to genetic algorithm")
                 print(f"    {c('3', CYAN)} Stop")
                 print(f"    {c('4', CYAN)} Custom params  (key=val ...)")
-                raw = input(c("  Choice > ", BOLD)).strip()
+                raw = (await chat_input_async(c("  Choice > ", BOLD))).strip()
                 if raw == "2":
                     strategy = "explore"
                 elif raw == "3" or raw.lower() in ("n", "no"):
@@ -998,7 +1443,7 @@ async def _run_with_continuation(
 
 # ── Chat loop ────────────────────────────────────────────────────────────────
 
-def print_banner(provider, model, base_url, session_id):
+def print_banner(provider, model, base_url, session_id, coder_backend="builder"):
     print(f"""
 {c('ARC', BOLD, CYAN)} {c('Autonomous Research Coder', DIM)}
 {c('━' * 60, CYAN)}
@@ -1008,9 +1453,11 @@ def print_banner(provider, model, base_url, session_id):
   Provider : {c(provider or 'stub (no LLM)', YELLOW)}
   Model    : {c(model or 'auto', YELLOW)}
   Endpoint : {c(base_url or 'n/a', DIM)}
+  Coder    : {c(coder_backend, YELLOW)}
 {c('─' * 60, DIM)}
 Type your research goal — subsequent inputs refine it (add constraints, boundaries, etc.)
 Use /run <new goal> to start a completely fresh goal.
+Input supports history with Up/Down and Emacs editing keys such as Ctrl+A, Ctrl+E, Ctrl+K.
 """)
 
 
@@ -1034,7 +1481,7 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
 
     # Restore any previously saved session state.
     saved_goal = _restore_session(workflow)
-    print_banner(provider, model, base_url, workflow.session_id)
+    print_banner(provider, model, base_url, workflow.session_id, _selected_coder(workflow))
     current_goal = None
 
     if saved_goal:
@@ -1053,13 +1500,14 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
 
     while True:
         try:
-            raw = input(c("you> ", BOLD, CYAN)).strip()
+            raw = (await chat_input_async(c("you> ", BOLD, CYAN))).strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n{c('Goodbye.', DIM)}")
             break
 
         if not raw:
             continue
+        raw = _normalize_chat_command(raw)
 
         # ── Commands ──────────────────────────────────────────────────────
         if raw.lower() in ("/quit", "/exit", "/q"):
@@ -1075,21 +1523,29 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
   {c('<goal text>', BOLD)}        Set primary goal (or refine it if one already exists)
   {c('/run [goal]', BOLD)}        Run fresh with a new primary goal (resets everything)
   {c('/iterate [N]', BOLD)}       Continue iterating on current goal (default: 3 steps)
+  {c('continue', BOLD)}           Resume the saved session goal for one iteration
   {c('/optimize [G] [P]', BOLD)}  Genetic algorithm: G generations, P population (defaults: 10 8)
   {c('/exec <id> [k=v]', BOLD)}   Run artifact directly with given parameters
   {c('/sweep [id]', BOLD)}        Run the parameter sweep for current or named artifact
   {c('/artifacts', BOLD)}         List registered artifacts in this session
   {c('/results', BOLD)}           List saved runs in this session
+  {c('/packages', BOLD)}          List loaded packages and session package state
+  {c('/package enable <name>', BOLD)}   Enable package for this session
+  {c('/package disable <name>', BOLD)}  Disable package for this session
+  {c('/coder [backend]', BOLD)}   Show/set artifact coder: builder, codex, arc-codex:coder
   {c('/sessions', BOLD)}          List all past sessions
   {c('/clear', BOLD)}             Forget current goal (keeps artifact and history)
   {c('/help', BOLD)}              Show this help
   {c('/quit', BOLD)}              Exit
 {c('─' * 56, DIM)}
+{c('Input keys:', BOLD)} Up/Down history, Ctrl+A start, Ctrl+E end, Ctrl+K kill line, Ctrl+U clear before cursor
+{c('─' * 56, DIM)}
 {c('Current session:', BOLD)} {c(workflow.session_id, CYAN)}
 {c('Primary goal:   ', BOLD)} {c(ctx.memory.get('primary_goal') or current_goal or 'none', DIM)}
 {c('Refinements:    ', BOLD)} {c(str(len(ctx.memory.get('refinements', []))) + ' constraint(s)', DIM)}
 {c('Current artifact:', BOLD)} {c(f"{artifact.name}  ({artifact.artifact_id[:8]}...)" if artifact else 'none', DIM)}
-{c('Iteration:      ', BOLD)} {c(ctx.iteration, DIM)}
+{c('Coder:           ', BOLD)} {c(_selected_coder(workflow), DIM)}
+  {c('Iteration:      ', BOLD)} {c(ctx.iteration, DIM)}
 """)
             continue
 
@@ -1130,9 +1586,83 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
                 print(f"  {c(r.run_id[:8], CYAN)}  {c(r.status, status_col)}  outputs={r.outputs}")
             continue
 
+        if raw.lower() == "/packages":
+            state = workflow._context.memory.get("packages", {})
+            enabled = set(state.get("enabled", []))
+            disabled = set(state.get("disabled", []))
+            print(c("  Loaded packages:", BOLD))
+            for name in workflow.registry.list_packages():
+                marker = ""
+                if name in enabled:
+                    marker = c(" enabled", GREEN)
+                if name in disabled:
+                    marker = c(" disabled", YELLOW)
+                print(f"    {c(name, CYAN)}{marker}")
+            print(c(f"  Coder: {_selected_coder(workflow)}", DIM))
+            print(c("  Use: /coder codex | /coder builder | /package enable arc-codex", DIM))
+            continue
+
+        if raw.lower().startswith("/package "):
+            parts = raw.split()
+            if len(parts) != 3 or parts[1] not in {"enable", "disable"}:
+                err("Usage: /package enable <name>  or  /package disable <name>")
+                continue
+            package_name = parts[2]
+            if package_name not in workflow.registry.list_packages():
+                err(f"Package '{package_name}' is not loaded. Add it to arc.toml and restart chat.")
+                continue
+            _set_session_package_state(workflow, package_name, enabled=(parts[1] == "enable"))
+            _save_session(workflow, current_goal)
+            ok(f"{'Enabled' if parts[1] == 'enable' else 'Disabled'} package {package_name} for this session.")
+            continue
+
+        if raw.lower().startswith("/coder"):
+            parts = raw.split()
+            if len(parts) == 1:
+                step("Coder", _selected_coder(workflow))
+                available = _available_coding_backends(workflow)
+                step("Available", available)
+                _aliases = {"builtin": "builder", "built-in": "builder", "sim2l": "builder",
+                            "codex": "arc-codex:coder", "claude": "arc-claude-code:coder",
+                            "claude-code": "arc-claude-code:coder"}
+                _seen: dict[str, str] = {}
+                for alias, resolved in _aliases.items():
+                    if resolved in available and (resolved not in _seen or len(alias) < len(_seen[resolved])):
+                        _seen[resolved] = alias
+                if _seen:
+                    print(c("  Examples:", BOLD))
+                    for resolved, alias in _seen.items():
+                        print(f"    /coder {alias:<16} {c(f'→ {resolved}', DIM)}")
+                continue
+            try:
+                selected = _set_selected_coder(workflow, parts[1])
+                package_name = selected.split(":", 1)[0] if ":" in selected else None
+                if package_name:
+                    _set_session_package_state(workflow, package_name, enabled=True)
+                _save_session(workflow, current_goal)
+                ok(f"Coder backend set to {selected}")
+            except ValueError as exc:
+                err(str(exc))
+            continue
+
         # ── Long-running commands — wrap with Ctrl+C handling ──────────────
         try:
-            if raw.lower().startswith("/exec"):
+            if raw.lower() in {"continue", "resume"}:
+                ctx = workflow._context
+                goal_text = ctx.memory.get("primary_goal") or current_goal or saved_goal
+                if not goal_text:
+                    err("No saved goal to continue. Type a goal first, or use /run <goal>.")
+                    continue
+                current_goal = goal_text
+                current_artifact = ctx.memory.get("current_artifact")
+                await _run_with_continuation(
+                    workflow,
+                    goal_text,
+                    max_iterations=1,
+                    start_artifact=current_artifact,
+                )
+
+            elif raw.lower().startswith("/exec"):
                 parts = raw.split()
                 if len(parts) < 2:
                     err("Usage: /exec <artifact_id_or_name> [key=value ...]")
@@ -1273,6 +1803,11 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
                 ctx.memory["primary_goal"] = goal_text
                 await _run_with_continuation(workflow, current_goal, max_iterations=max_iterations)
 
+            elif raw.startswith("/"):
+                err(f"Unknown command: {raw}")
+                print(c("  Type /help for available commands, or /run <goal> to start a new goal.", DIM))
+                continue
+
             else:
                 # ── Free text: first input sets primary goal; subsequent inputs
                 # ── are treated as refinements that constrain the primary goal.
@@ -1291,6 +1826,10 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
                     ctx.memory.pop("next_parameters", None)
                     await _run_with_continuation(workflow, current_goal, max_iterations=max_iterations)
                 else:
+                    if not _is_related_refinement(raw, primary_goal, current_artifact, ctx):
+                        warn("Ignoring unrelated input; it was not added as a refinement.")
+                        print(c("  Use /help for commands, /run <goal> for a new goal, or mention the current model/output/parameter to refine it.", DIM))
+                        continue
                     # Primary goal exists — treat this input as a refinement.
                     refinement = raw
                     print(f"  {c('Refining goal:', DIM)} {c(primary_goal[:60], DIM)}")
@@ -1313,9 +1852,14 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
 
 def main():
     parser = argparse.ArgumentParser(description="ARC interactive chat")
-    parser.add_argument("--token",    default=None)
-    parser.add_argument("--model",    default=None)
-    parser.add_argument("--url",      default="https://genai.rcac.purdue.edu/api")
+    parser.add_argument("--provider", default=None,
+                        help="Provider name. Defaults to ARC_PROVIDER or openwebui.")
+    parser.add_argument("--token",    default=None,
+                        help="Provider token. Defaults to OPENWEBUI_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.")
+    parser.add_argument("--model",    default=None,
+                        help="Model name. Defaults to ARC_MODEL or provider-specific model env.")
+    parser.add_argument("--url",      default=None,
+                        help="Provider base URL. Defaults to OPENWEBUI_URL for openwebui.")
     parser.add_argument("--stub",     action="store_true")
     parser.add_argument("--session",  default=None,
                         help="Resume an existing session ID, or omit to start a new one.")
@@ -1343,7 +1887,7 @@ def main():
         if not meta:
             print(f"ERROR: session '{sid}' not found.", file=sys.stderr)
             sys.exit(1)
-        confirm = input(f"Delete session '{sid}' and all its data? [y/N] ").strip().lower()
+        confirm = chat_input(f"Delete session '{sid}' and all its data? [y/N] ").strip().lower()
         if confirm in ("y", "yes"):
             if delete_session(sid):
                 print(f"Deleted session '{sid}'.")
@@ -1362,7 +1906,7 @@ def main():
         print(f"Found {len(sessions)} session(s):")
         for s in sessions:
             print(f"  {s['session_id']}  iter={s['iteration']}  {(s['goal'] or '')[:50]}")
-        confirm = input("Delete ALL sessions and their data? [y/N] ").strip().lower()
+        confirm = chat_input("Delete ALL sessions and their data? [y/N] ").strip().lower()
         if confirm in ("y", "yes"):
             deleted = delete_all_sessions()
             print(f"Deleted {len(deleted)} session(s).")
@@ -1373,13 +1917,33 @@ def main():
     if args.stub:
         provider = token = model = base_url = None
     else:
-        if not args.token:
-            print("ERROR: --token required (or use --stub)", file=sys.stderr)
+        provider = args.provider or os.environ.get("ARC_PROVIDER") or "openwebui"
+        model = (
+            args.model
+            or os.environ.get("ARC_MODEL")
+            or os.environ.get("OPENWEBUI_MODEL")
+            or os.environ.get("OPENAI_MODEL")
+            or os.environ.get("ANTHROPIC_MODEL")
+        )
+        if provider == "openwebui":
+            token = args.token or os.environ.get("OPENWEBUI_KEY")
+            base_url = args.url or os.environ.get("OPENWEBUI_URL") or "https://genai.rcac.purdue.edu/api"
+        elif provider == "openai":
+            token = args.token or os.environ.get("OPENAI_API_KEY")
+            base_url = args.url
+        elif provider == "anthropic":
+            token = args.token or os.environ.get("ANTHROPIC_API_KEY")
+            base_url = args.url
+        else:
+            token = args.token
+            base_url = args.url
+        if not token:
+            print(
+                f"ERROR: token required for provider '{provider}'. "
+                "Set it in .env or pass --token, or use --stub.",
+                file=sys.stderr,
+            )
             sys.exit(1)
-        provider = "openwebui"
-        token    = args.token
-        model    = args.model
-        base_url = args.url
 
     # Always use an explicit session ID — resume with --session, otherwise create fresh.
     if args.session:
@@ -1399,6 +1963,8 @@ def main():
             run_history=[],
             target={},
             next_parameters={},
+            packages={},
+            agent_overrides={},
             created=datetime.now(timezone.utc).isoformat(),
         )
 

@@ -26,4 +26,6 @@ class ExperimentPlan(BaseModel):
     artifact_strategy: str
     parameters: dict[str, Any]
     parameter_sweep: dict[str, list[Any]] = Field(default_factory=dict)
+    parameter_constraints: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    experimental_design: list[str] = Field(default_factory=list)
     success_criteria: list[str]

@@ -43,6 +43,42 @@ python3 -m arc.cli.main serve
 
 ---
 
+## Chat
+
+```bash
+# Built-in lightweight artifact builder
+python3 examples/chat.py --stub
+
+# LLM-backed chat via OpenWebUI
+python3 examples/chat.py \
+  --token "$OPENWEBUI_KEY" \
+  --model "gpt-oss:120b" \
+  --url "https://genai.rcac.purdue.edu/api"
+```
+
+Inside chat:
+
+```text
+/packages
+/coder
+/coder codex
+/coder claude
+/coder builder
+/package enable arc-codex
+/package enable arc-claude-code
+/package disable arc-codex
+```
+
+The chat prompt supports persistent history and common Emacs-style editing keys:
+Up/Down for history, `Ctrl+A` start of line, `Ctrl+E` end of line, `Ctrl+K`
+delete to end of line, and `Ctrl+U` delete before cursor.
+
+`/coder codex` selects `arc-codex:coder`. The Codex package shells out to the Codex CLI. Configure it with `ARC_CODEX_COMMAND`, `ARC_CODEX_MODEL`, `ARC_CODEX_SANDBOX`, `ARC_CODEX_APPROVAL_POLICY`, `ARC_CODEX_INTERACTIVE_APPROVAL_POLICY`, and `ARC_CODEX_EXTRA_ARGS`. Non-chat Codex runs require an approval callback by default; set `ARC_CODEX_ALLOW_NON_INTERACTIVE=true` only when the caller is intentionally running without user approval prompts.
+
+`/coder claude` selects `arc-claude-code:coder`. The Claude Code package shells out to the Claude Code CLI. Configure it with `ARC_CLAUDE_CODE_COMMAND`, `ARC_CLAUDE_CODE_MODEL`, `ARC_CLAUDE_CODE_PERMISSION_MODE`, `ARC_CLAUDE_CODE_EFFORT`, and `ARC_CLAUDE_CODE_EXTRA_ARGS`.
+
+---
+
 ## API
 
 ```
@@ -68,6 +104,8 @@ GET  /health                 Health check
 | [arc-sim2l](arc/packages/arc-sim2l/) | artifact | Sim2L artifact lifecycle |
 | [arc-mars](arc/packages/arc-mars/) | strategy | MARS-inspired iteration and search |
 | [arc-materials](arc/packages/arc-materials/) | domain | Materials science evaluators and prompts |
+| [arc-codex](arc/packages/arc-codex/) | coding | Codex-backed artifact generation |
+| [arc-claude-code](arc/packages/arc-claude-code/) | coding | Claude Code-backed artifact generation |
 
 ---
 
@@ -109,6 +147,7 @@ python3 -m pytest tests/ -v
 | [design/architecture.md](design/architecture.md) | System architecture and component roles |
 | [design/requirements.md](design/requirements.md) | Functional and non-functional requirements |
 | [design/packages.md](design/packages.md) | Package system and composition model |
+| [design/coding-agents.md](design/coding-agents.md) | Codex/Claude Code package design and session selection |
 | [design/contracts.md](design/contracts.md) | Agent, skill, adapter, and provider interfaces |
 | [design/workflows.md](design/workflows.md) | Workflow YAML format and execution model |
 | [design/extensions.md](design/extensions.md) | Available extensions and how to add new ones |

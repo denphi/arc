@@ -1,4 +1,5 @@
 import importlib
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,9 +40,17 @@ class MarkdownSkill:
                 "reason": "No provider configured for markdown skill execution",
                 "inputs": inputs,
             }
+        # Render inputs as JSON so quoting / None / nested values stay stable
+        # in the prompt. `default=str` lets us handle objects that are not
+        # natively JSON-serialisable (Pydantic models, dataclasses, etc.)
+        # without crashing the skill mid-execution.
+        try:
+            inputs_block = json.dumps(inputs, indent=2, default=str)
+        except (TypeError, ValueError):
+            inputs_block = repr(inputs)
         prompt = (
-            f"Execute the following ARC skill using the provided inputs.\n\n"
-            f"{self.content}\n\nInputs:\n{inputs}\n\n"
+            "Execute the following ARC skill using the provided inputs.\n\n"
+            f"{self.content}\n\nInputs:\n{inputs_block}\n\n"
             "Return a concise JSON-compatible result."
         )
         return {"skill": self.name, "result": await provider.complete(prompt)}
@@ -110,9 +119,46 @@ def _load_resource(
 
 
 def _import_class(entrypoint: str):
-    """Import a class from a dotted entrypoint string like 'module.path:ClassName'."""
+    """Import a class from a dotted entrypoint string like 'module.path:ClassName'.
+
+    Package manifests historically use distribution-style names with hyphens
+    (e.g. ``arc.packages.arc-sim2l.agents.ideator``). ``importlib`` accepts
+    these on CPython today because the directories exist, but the resulting
+    modules are not importable through normal ``import`` statements. To keep
+    the manifest format stable while making the modules first-class
+    importables, this helper falls back to a filesystem-based loader that
+    registers the module under an underscored alias (``arc_sim2l.agents.…``)
+    when the dotted path contains hyphens.
+    """
+    import sys
+    from importlib.util import spec_from_file_location, module_from_spec
+
     module_path, class_name = entrypoint.rsplit(":", 1)
-    module = importlib.import_module(module_path)
+
+    if "-" not in module_path:
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)
+
+    # Hyphenated path: resolve via the filesystem.
+    underscored = module_path.replace("-", "_")
+    if underscored in sys.modules:
+        return getattr(sys.modules[underscored], class_name)
+
+    # Walk the path components to find the .py file.
+    parts = module_path.split(".")
+    here = Path(__file__).resolve().parents[2]  # arc/ repo root
+    candidate = here / "/".join(parts[:-1]) / f"{parts[-1]}.py"
+    if not candidate.exists():
+        # Last resort — try CPython's behaviour for compatibility.
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)
+
+    spec = spec_from_file_location(underscored, candidate)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module from {candidate}")
+    module = module_from_spec(spec)
+    sys.modules[underscored] = module
+    spec.loader.exec_module(module)
     return getattr(module, class_name)
 
 
@@ -127,11 +173,12 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
 
     pkg_name = manifest.get("name", package_dir.name)
     logger.info("Loading package: %s", pkg_name)
+    registry.register_package(pkg_name, manifest)
 
     for agent_def in manifest.get("provides", {}).get("agents", []):
         try:
             agent_class = _import_class(agent_def["entrypoint"])
-            registry.register_agent(agent_def["name"], agent_class)
+            registry.register_agent(agent_def["name"], agent_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load agent '%s': %s", agent_def.get("name"), exc)
 

@@ -1,12 +1,12 @@
-import ast
-import cmath
-import itertools
 import json
-import math
-import multiprocessing as mp
 import re
 
 from arc.contracts.agent import AgentContract
+from arc.providers.utils import strip_code_fences as _strip_fences
+from arc.runtime.workflow_safety import (
+    check_workflow_source_safe,
+    run_simulate_with_timeout,
+)
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 
@@ -91,117 +91,26 @@ Rules:
 """
 
 
-_ALLOWED_IMPORTS = {"math", "cmath", "itertools"}
-_BLOCKED_CALLS = {
-    "__import__", "eval", "exec", "compile", "open", "input", "breakpoint",
-    "globals", "locals", "vars", "dir", "getattr", "setattr", "delattr",
-}
-
-
-def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-    root = name.split(".", 1)[0]
-    if root not in _ALLOWED_IMPORTS:
-        raise ImportError(f"Import not allowed in ARC workflow: {name}")
-    return __import__(name, globals, locals, fromlist, level)
-
-
-_SAFE_GLOBALS = {
-    "__builtins__": {
-        "abs": abs,
-        "all": all,
-        "any": any,
-        "bool": bool,
-        "dict": dict,
-        "enumerate": enumerate,
-        "float": float,
-        "int": int,
-        "isinstance": isinstance,
-        "len": len,
-        "list": list,
-        "max": max,
-        "min": min,
-        "pow": pow,
-        "range": range,
-        "round": round,
-        "set": set,
-        "sorted": sorted,
-        "sum": sum,
-        "tuple": tuple,
-        "zip": zip,
-        "ValueError": ValueError,
-        "__import__": _guarded_import,
-    },
-    "math": math,
-    "cmath": cmath,
-    "itertools": itertools,
-}
-
-_SIMULATE_TIMEOUT_SECONDS = 2.0
-
+# Static-analysis safety + the safe-eval globals used by the in-process probe
+# of generated simulate() now live in arc.runtime.workflow_safety so that
+# `multiprocessing.get_context("spawn")` can pickle the worker globals (which
+# requires every callable inside them to live in an importable module — this
+# package directory has a hyphen and cannot be imported via the dotted form).
 
 def _check_code_safety(code: str) -> tuple[bool, str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return False, f"SyntaxError: {exc}"
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = [alias.name for alias in getattr(node, "names", [])]
-            if isinstance(node, ast.ImportFrom) and node.module:
-                names.append(node.module)
-            for name in names:
-                if name.split(".", 1)[0] not in _ALLOWED_IMPORTS:
-                    return False, f"Import not allowed: {name}"
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _BLOCKED_CALLS:
-                return False, f"Call not allowed: {node.func.id}()"
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            return False, f"Dunder attribute not allowed: {node.attr}"
-    return True, "ok"
-
-
-def _simulate_worker(code: str, calls: list[dict], queue) -> None:
-    """Execute generated simulate() in a subprocess and return observed outputs."""
-    try:
-        ns: dict = {}
-        exec(compile(code, "<workflow>", "exec"), dict(_SAFE_GLOBALS), ns)  # noqa: S102
-        func = ns.get("simulate")
-        if not callable(func):
-            queue.put({"ok": False, "reason": "simulate() function not defined"})
-            return
-
-        last_exc = None
-        for kwargs in calls:
-            try:
-                result = func(**kwargs)
-                if isinstance(result, dict) and result:
-                    queue.put({"ok": True, "result": result})
-                    return
-                if isinstance(result, dict) and not result:
-                    last_exc = "returned empty dict {}"
-            except Exception as exc:
-                last_exc = str(exc)
-        queue.put({"ok": False, "reason": last_exc or "returned empty dict {}"})
-    except Exception as exc:
-        queue.put({"ok": False, "reason": f"exec error: {exc}"})
+    """Static safety check delegated to the shared workflow checker."""
+    return check_workflow_source_safe(code)
 
 
 def _run_simulate_with_timeout(code: str, calls: list[dict]) -> dict:
-    ctx = mp.get_context("fork")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=_simulate_worker, args=(code, calls, queue))
-    proc.start()
-    proc.join(_SIMULATE_TIMEOUT_SECONDS)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-        return {"ok": False, "reason": "simulate() timed out during validation"}
-    if not queue.empty():
-        return queue.get()
-    if proc.exitcode:
-        return {"ok": False, "reason": f"simulate() validation process exited {proc.exitcode}"}
-    return {"ok": False, "reason": "simulate() validation returned no result"}
+    """Run generated simulate() in a spawned subprocess.
+
+    Delegates to ``arc.runtime.workflow_safety.run_simulate_with_timeout``
+    which uses ``multiprocessing.get_context("spawn")`` (fork is unsafe on
+    macOS and being phased out). The default allow-list (BUILDER_ALLOWED_IMPORTS)
+    matches the static-safety check used by the builder agent.
+    """
+    return run_simulate_with_timeout(code, calls)
 
 
 def _validate_simulate(code: str) -> tuple[bool, str]:
@@ -222,16 +131,6 @@ def _validate_simulate(code: str) -> tuple[bool, str]:
 
     result = _run_simulate_with_timeout(code, calls)
     return (True, "ok") if result.get("ok") else (False, result.get("reason", "invalid simulate()"))
-
-
-def _strip_fences(code: str) -> str:
-    code = code.strip()
-    if code.startswith("```"):
-        code = code.split("```", 2)[1]
-        if code.startswith("python"):
-            code = code[6:]
-        code = code.rsplit("```", 1)[0].strip()
-    return code
 
 
 def _probe_simulate(code: str) -> tuple[dict, dict] | None:
@@ -374,6 +273,22 @@ def _default_outputs() -> dict:
     return {"result": {"type": "Number", "description": "Computed result"}}
 
 
+def _artifact_description(plan: ExperimentPlan, inputs_spec: dict, outputs_spec: dict) -> str:
+    objective = " ".join(plan.proposal.objective.split())
+    methodology = " ".join(plan.proposal.methodology.split())
+    inputs = list((inputs_spec or {}).keys())
+    outputs = list((outputs_spec or {}).keys())
+
+    parts = [objective[:180]]
+    if inputs:
+        parts.append("Inputs: " + ", ".join(inputs[:6]))
+    if outputs:
+        parts.append("Outputs: " + ", ".join(outputs[:8]))
+    elif methodology:
+        parts.append(methodology[:120])
+    return " | ".join(part for part in parts if part)[:500]
+
+
 class Sim2LBuilderAgent(AgentContract):
     name = "builder"
     description = "Creates a Sim2L artifact with a real simulate() workflow function."
@@ -454,19 +369,24 @@ class Sim2LBuilderAgent(AgentContract):
             inputs_yaml=_build_yaml_section(inputs_spec),
             outputs_yaml=_build_yaml_section(outputs_spec),
         )
+        description = _artifact_description(plan, inputs_spec, outputs_spec)
 
         return ArtifactDraft(
             name=artifact_name,
-            description=plan.proposal.objective[:200],
+            description=description,
             files={
                 "workflow.py": code,
                 "sim2l.yaml": sim2l_yaml,
             },
             metadata={
                 "created_by": self.name,
+                "description": description,
                 "strategy": "create_new_sim2l",
                 "hypothesis": plan.proposal.hypothesis[:200],
+                "methodology": plan.proposal.methodology[:500],
                 "success_criteria": plan.success_criteria,
+                "parameter_constraints": plan.parameter_constraints,
+                "experimental_design": plan.experimental_design,
                 "sim2l_inputs": inputs_spec,
                 "sim2l_outputs": outputs_spec,
             },

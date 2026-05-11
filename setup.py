@@ -43,6 +43,7 @@ setup(
         "uvicorn[standard]>=0.29.0",
         "pydantic>=2.0.0",
         "python-dotenv>=1.0.0",
+        "prompt-toolkit>=3.0.0",
         "httpx>=0.27.0",
         "pyyaml>=6.0.0",
     ],

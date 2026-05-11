@@ -4,9 +4,7 @@ Bridges the ARC RuntimeAdapterContract to the real sim2l library.
 Uses sim2l's LocalExecutor, SimulationDefinition, and repository APIs.
 """
 
-import ast
 import logging
-import multiprocessing as mp
 import os
 import sys
 import types
@@ -16,62 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from arc.contracts.adapter import RuntimeAdapterContract
+from arc.runtime.workflow_safety import (
+    check_workflow_source,
+    validate_workflow_import_timeout,
+)
 from arc.schemas.artifact import ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
 
 logger = logging.getLogger(__name__)
-
-_ALLOWED_WORKFLOW_IMPORTS = {"math", "cmath", "itertools"}
-_BLOCKED_WORKFLOW_CALLS = {
-    "__import__", "eval", "exec", "compile", "open", "input", "breakpoint",
-    "globals", "locals", "vars", "dir", "getattr", "setattr", "delattr",
-}
-_WORKFLOW_IMPORT_TIMEOUT_SECONDS = 2.0
-
-
-def _check_workflow_source_safe(source: str) -> None:
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = [alias.name for alias in getattr(node, "names", [])]
-            if isinstance(node, ast.ImportFrom) and node.module:
-                names.append(node.module)
-            for name in names:
-                if name.split(".", 1)[0] not in _ALLOWED_WORKFLOW_IMPORTS:
-                    raise ValueError(f"Import not allowed in workflow.py: {name}")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _BLOCKED_WORKFLOW_CALLS:
-                raise ValueError(f"Call not allowed in workflow.py: {node.func.id}()")
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-                raise ValueError(f"Dunder attribute not allowed in workflow.py: {node.attr}")
-
-
-def _workflow_import_worker(source: str, module_name: str, filename: str, queue) -> None:
-    try:
-        module = types.ModuleType(module_name)
-        module.__file__ = filename
-        exec(compile(source, filename, "exec"), module.__dict__)  # noqa: S102
-        if not callable(getattr(module, "simulate", None)):
-            queue.put({"ok": False, "error": "workflow.py must define simulate(**inputs) -> dict"})
-            return
-        queue.put({"ok": True})
-    except Exception as exc:
-        queue.put({"ok": False, "error": str(exc)})
-
-
-def _validate_workflow_import_timeout(source: str, module_name: str, filename: str) -> None:
-    ctx = mp.get_context("fork")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=_workflow_import_worker, args=(source, module_name, filename, queue))
-    proc.start()
-    proc.join(_WORKFLOW_IMPORT_TIMEOUT_SECONDS)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-        raise TimeoutError("workflow.py import timed out")
-    result = queue.get() if not queue.empty() else {"ok": proc.exitcode == 0}
-    if not result.get("ok"):
-        raise ValueError(result.get("error", "workflow.py import failed"))
 
 
 def _import_workflow_func(artifact_path: str, artifact_id: str):
@@ -86,11 +36,11 @@ def _import_workflow_func(artifact_path: str, artifact_id: str):
     if not wf_path.exists():
         raise FileNotFoundError(f"workflow.py not found at {wf_path}")
     source = wf_path.read_text()
-    _check_workflow_source_safe(source)
+    check_workflow_source(source)
 
     # Use the artifact_id to create a unique, stable module name.
     module_name = f"arc_artifact_{artifact_id.replace('-', '_')}"
-    _validate_workflow_import_timeout(source, module_name, str(wf_path))
+    validate_workflow_import_timeout(source, module_name, str(wf_path))
 
     # Add the artifact directory to sys.path so Python can import it.
     artifact_dir_str = str(artifact_dir)
@@ -133,6 +83,11 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         self._session_id = session_id
         self._storage_mode = os.environ.get("ARC_STORAGE_MODE", "local").lower()
         self._sim2l_ok = self._check_sim2l()
+        # Cache of deployed simulations keyed by (artifact_id, version):
+        #   (workflow_hash, sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted)
+        # Reused across iterations of the research loop so we don't redeploy +
+        # catalog-push on every run() — only when the workflow source changes.
+        self._deploy_cache: dict[tuple[str, str], tuple] = {}
 
     @property
     def _services_required(self) -> bool:
@@ -274,6 +229,167 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
     ) -> dict[str, Any]:
         return parameters
 
+    def _schemas_for_artifact(self, artifact: ArtifactRecord, inputs: dict[str, Any] | None = None):
+        from sim2l.schema import InputSchema, OutputSchema
+
+        sim2l_yaml = Path(artifact.path) / "sim2l.yaml"
+        if sim2l_yaml.exists():
+            import yaml
+            spec = yaml.safe_load(sim2l_yaml.read_text()) or {}
+            in_schema = InputSchema.from_yaml(
+                "\n".join(
+                    f"{k}:\n  type: Number\n  default: {v.get('default', 1.0)}"
+                    for k, v in spec.get("inputs", {}).items()
+                )
+            )
+            out_schema = OutputSchema.from_yaml(
+                "\n".join(
+                    f"{k}:\n  type: Number"
+                    for k in spec.get("outputs", {})
+                )
+            )
+            return in_schema, out_schema
+
+        input_values = inputs or {}
+        in_fields = "\n".join(
+            f"{k}:\n  type: Number\n  default: {v}"
+            for k, v in input_values.items()
+        )
+        in_schema = InputSchema.from_yaml(in_fields or "x:\n  type: Number\n  default: 1.0")
+        out_schema = OutputSchema.from_yaml("result:\n  type: Number")
+        return in_schema, out_schema
+
+    def _workflow_source(self, artifact: ArtifactRecord) -> str | None:
+        try:
+            return (Path(artifact.path) / "workflow.py").read_text()
+        except Exception:
+            return None
+
+    def _simulation_definition_for_artifact(
+        self,
+        artifact: ArtifactRecord,
+        inputs: dict[str, Any] | None = None,
+    ):
+        import sim2l
+
+        func = _import_workflow_func(artifact.path, artifact.artifact_id)
+        in_schema, out_schema = self._schemas_for_artifact(artifact, inputs)
+        sim_name = artifact.name[:50]
+        sim_version = artifact.version
+        sim_def = sim2l.SimulationDefinition.from_function(
+            func=func,
+            name=sim_name,
+            version=sim_version,
+            inputs=in_schema,
+            outputs=out_schema,
+            description=(
+                getattr(artifact, "description", "")
+                or artifact.metadata.get("description")
+                or artifact.metadata.get("hypothesis")
+                or artifact.name
+            ),
+        )
+        return sim_def, sim_name, sim_version, in_schema, out_schema
+
+    def _deploy_simulation_definition(
+        self,
+        sim_def,
+        sim_name: str,
+        sim_version: str,
+        workflow_source: str | None,
+    ) -> bool:
+        repo = self._get_repo()
+        try:
+            repo.deploy(sim_def)
+        except ValueError:
+            repo.delete(sim_name, version=sim_version)
+            repo.deploy(sim_def)
+        return self._push_to_catalog(sim_def, sim_name, sim_version, workflow_source)
+
+    def _ensure_deployed(
+        self,
+        artifact: ArtifactRecord,
+        inputs: dict[str, Any] | None = None,
+    ) -> tuple[Any, str, str, Any, Any, bool]:
+        """Return a deployed ``(sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted)``.
+
+        Reuses a previously deployed definition for the same ``(artifact_id,
+        version)`` as long as ``workflow.py`` source has not changed. This
+        avoids the per-iteration ``repo.delete + repo.deploy + catalog push``
+        storm that otherwise occurs across a research loop's N runs.
+        """
+        import hashlib
+
+        source = self._workflow_source(artifact) or ""
+        source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        key = (artifact.artifact_id, artifact.version)
+
+        cached = self._deploy_cache.get(key)
+        if cached is not None and cached[0] == source_hash:
+            (
+                _,
+                sim_def,
+                sim_name,
+                sim_version,
+                in_schema,
+                out_schema,
+                catalog_persisted,
+            ) = cached
+            # If the schemas are sensitive to caller inputs (legacy behavior
+            # when sim2l.yaml is missing), rebuild only the schemas — the
+            # underlying simulate() callable is unchanged.
+            if inputs is not None and not (Path(artifact.path) / "sim2l.yaml").exists():
+                in_schema, out_schema = self._schemas_for_artifact(artifact, inputs)
+            return sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted
+
+        sim_def, sim_name, sim_version, in_schema, out_schema = (
+            self._simulation_definition_for_artifact(artifact, inputs)
+        )
+        try:
+            catalog_persisted = self._deploy_simulation_definition(
+                sim_def, sim_name, sim_version, source or None
+            )
+        except Exception as exc:
+            logger.debug(f"deploy failed (non-fatal): {exc}")
+            catalog_persisted = False
+
+        self._deploy_cache[key] = (
+            source_hash,
+            sim_def,
+            sim_name,
+            sim_version,
+            in_schema,
+            out_schema,
+            catalog_persisted,
+        )
+        return sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted
+
+    async def register_artifact(self, artifact: ArtifactRecord) -> dict[str, Any]:
+        """Deploy an ARC artifact into Sim2L and best-effort sync it to catalog."""
+        if not self._sim2l_ok:
+            return {"registered": False, "error": "sim2l not installed"}
+        try:
+            deployed = self._ensure_deployed(artifact)
+            sim_name = deployed[1]
+            sim_version = deployed[2]
+            catalog_persisted = deployed[5]
+            if self._services_required and not catalog_persisted:
+                return {
+                    "registered": False,
+                    "sim_name": sim_name,
+                    "sim_version": sim_version,
+                    "catalog_persisted": False,
+                    "error": "Catalog service persistence failed",
+                }
+            return {
+                "registered": True,
+                "sim_name": sim_name,
+                "sim_version": sim_version,
+                "catalog_persisted": catalog_persisted,
+            }
+        except Exception as exc:
+            return {"registered": False, "error": str(exc)}
+
     async def run(
         self,
         artifact: ArtifactRecord,
@@ -286,75 +402,11 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
                 logs=["sim2l not installed"],
             )
         try:
-            import sim2l
-            from sim2l.schema import InputSchema, OutputSchema
             from sim2l.executor import LocalExecutor
 
-            # Load the workflow function from the artifact.
-            func = _import_workflow_func(artifact.path, artifact.artifact_id)
-
-            # Build schemas from sim2l.yaml if present, otherwise auto-detect.
-            sim2l_yaml = Path(artifact.path) / "sim2l.yaml"
-            if sim2l_yaml.exists():
-                import yaml
-                spec = yaml.safe_load(sim2l_yaml.read_text())
-                in_schema = InputSchema.from_yaml(
-                    "\n".join(
-                        f"{k}:\n  type: Number\n  default: {v.get('default', 1.0)}"
-                        for k, v in spec.get("inputs", {}).items()
-                    )
-                )
-                out_schema = OutputSchema.from_yaml(
-                    "\n".join(
-                        f"{k}:\n  type: Number"
-                        for k in spec.get("outputs", {})
-                    )
-                )
-            else:
-                # Infer from inputs dict — all Numbers.
-                in_fields = "\n".join(
-                    f"{k}:\n  type: Number\n  default: {v}"
-                    for k, v in inputs.items()
-                )
-                in_schema = InputSchema.from_yaml(in_fields or "x:\n  type: Number\n  default: 1.0")
-                out_schema = OutputSchema.from_yaml("result:\n  type: Number")
-
-            sim_name = artifact.name[:50]
-            sim_version = artifact.version
-
-            # Read workflow source for catalog display (best-effort).
-            workflow_source: str | None = None
-            try:
-                workflow_source = (Path(artifact.path) / "workflow.py").read_text()
-            except Exception:
-                pass
-
-            repo = self._get_repo()
-
-            # Deploy (idempotent — redeploy if already exists).
-            sim_def = sim2l.SimulationDefinition.from_function(
-                func=func,
-                name=sim_name,
-                version=sim_version,
-                inputs=in_schema,
-                outputs=out_schema,
-                description=artifact.metadata.get("hypothesis", artifact.name),
+            sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted = (
+                self._ensure_deployed(artifact, inputs)
             )
-            try:
-                repo.deploy(sim_def)
-                catalog_persisted = self._push_to_catalog(
-                    sim_def, sim_name, sim_version, workflow_source
-                )
-            except ValueError:
-                # Already exists — delete and redeploy so the pickle is fresh.
-                try:
-                    repo.delete(sim_name, version=sim_version)
-                    repo.deploy(sim_def)
-                    catalog_persisted = self._push_to_catalog(
-                        sim_def, sim_name, sim_version, workflow_source
-                    )
-                except Exception:
-                    catalog_persisted = False
             if self._services_required and not catalog_persisted:
                 return ExecutionResult(
                     run_id=str(uuid.uuid4()),
@@ -373,10 +425,11 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             }
             reconciled = {**schema_defaults, **{k: v for k, v in inputs.items() if k in in_schema.fields}}
 
-            # Execute via sim2l (with caching).
-            sim = sim2l.load_simulation(sim_name, version=sim_version)
+            # Execute the fresh callable-backed definition. The repository stores
+            # function workflows as source bytes in current sim2l, and reloading
+            # them makes LocalExecutor try to unpickle source text.
             executor = LocalExecutor(cache=True)
-            sim2l_result = sim.run(**reconciled, executor=executor)
+            sim2l_result = sim_def.run(**reconciled, executor=executor)
 
             outputs = {
                 k: getattr(sim2l_result.outputs, k, None)

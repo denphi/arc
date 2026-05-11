@@ -14,6 +14,17 @@ def adapter():
 
 @pytest.fixture
 def artifact(tmp_path):
+    """An artifact with a real workflow.py that doubles input_parameter.
+
+    LocalRuntimeAdapter requires a workflow.py — the old "silent value*2"
+    fallback was removed in review item #21 because it let downstream
+    reviewers think the artifact ran successfully when it had not.
+    """
+    (tmp_path / "workflow.py").write_text(
+        "def simulate(**inputs):\n"
+        "    x = inputs.get('input_parameter', 1.0)\n"
+        "    return {'result': x * 2}\n"
+    )
     return ArtifactRecord(
         artifact_id="test-id",
         name="test",
@@ -50,6 +61,22 @@ async def test_run_sweep_uses_cartesian_product(adapter, artifact):
     )
     assert len(results) == 6
     assert all("other" in r.logs[1] for r in results)
+
+
+@pytest.mark.asyncio
+async def test_run_errors_when_workflow_missing(adapter, tmp_path):
+    """No workflow.py -> explicit error result, not a fake demo output."""
+    bare = ArtifactRecord(
+        artifact_id="bare",
+        name="bare",
+        version="0.1.0",
+        state="REGISTERED",
+        path=str(tmp_path),
+    )
+    result = await adapter.run(bare, {"input_parameter": 1.0})
+    assert result.status == "error"
+    assert result.outputs == {}
+    assert any("workflow.py" in line for line in result.logs)
 
 
 @pytest.mark.asyncio

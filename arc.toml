@@ -7,6 +7,8 @@ paths = [
   "arc/packages/arc-sim2l",
   "arc/packages/arc-mars",
   "arc/packages/arc-materials",
+  "arc/packages/arc-codex",
+  "arc/packages/arc-claude-code",
 ]
 
 [runtime]

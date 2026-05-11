@@ -6,9 +6,10 @@ The provider is optional — without it, agents use deterministic stub logic.
 
 import logging
 import os
-from pathlib import Path
+from typing import Any
 
 from arc.contracts.agent import AgentContext
+from arc.core.config import load_arc_toml, resolve_package_paths
 from arc.core.loader import load_packages
 from arc.core.registry import ComponentRegistry
 from arc.memory.artifact_registry import ArtifactRegistry
@@ -22,15 +23,46 @@ from arc.session import session_paths
 
 
 def _build_adapter(db_path: str | None = None, session_id: str | None = None):
-    """Use Sim2LRuntimeAdapter when sim2l is installed, otherwise fall back to local stub."""
-    try:
-        import sim2l  # noqa: F401
+    """Build the runtime adapter requested by ARC_RUNTIME_ADAPTER."""
+    adapter_name = os.environ.get("ARC_RUNTIME_ADAPTER", "local").lower()
+    if adapter_name in {"local", "python"}:
+        from arc.runtime.local import LocalRuntimeAdapter
+        logger.info("Using LocalRuntimeAdapter")
+        return LocalRuntimeAdapter()
+    if adapter_name in {"sim2l", "sim2l-local"}:
         from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
         logger.info("Using Sim2LRuntimeAdapter")
         return Sim2LRuntimeAdapter(db_path=db_path, session_id=session_id)
+    if adapter_name in {"service", "services", "sim2l-service", "sim2l-services"}:
+        os.environ.setdefault("ARC_STORAGE_MODE", "required")
+        from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+        logger.info("Using Sim2LRuntimeAdapter with required service persistence")
+        return Sim2LRuntimeAdapter(db_path=db_path, session_id=session_id)
+
+    if adapter_name in {"auto"}:
+        return _build_auto_adapter(db_path=db_path, session_id=session_id)
+
+    logger.warning("Unknown ARC_RUNTIME_ADAPTER=%s; falling back to local", adapter_name)
+    from arc.runtime.local import LocalRuntimeAdapter
+    return LocalRuntimeAdapter()
+
+
+def _build_auto_adapter(db_path: str | None = None, session_id: str | None = None):
+    """Auto-select Sim2LRuntimeAdapter when sim2l is importable, else fall back to local.
+
+    Used by ``ARC_RUNTIME_ADAPTER=auto``. Useful for environments where the
+    same code runs both with and without sim2l installed (CI, test fixtures,
+    light demos). Prefer an explicit ``local``/``sim2l``/``service`` value
+    in production deployments so the chosen runtime is unambiguous.
+    """
+    try:
+        import sim2l  # noqa: F401
+        from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+        logger.info("Using Sim2LRuntimeAdapter (auto-detected)")
+        return Sim2LRuntimeAdapter(db_path=db_path, session_id=session_id)
     except ImportError:
         from arc.runtime.local import LocalRuntimeAdapter
-        logger.info("sim2l not found — using LocalRuntimeAdapter (stub)")
+        logger.info("sim2l not found — using LocalRuntimeAdapter (auto fallback)")
         return LocalRuntimeAdapter()
 
 
@@ -48,23 +80,16 @@ logger = logging.getLogger(__name__)
 
 
 def _default_registry() -> ComponentRegistry:
+    """Build the registry used when a caller doesn't inject one.
+
+    Loads the same ``arc.toml`` the kernel uses (cached via
+    ``arc.core.config.load_arc_toml``), resolves its package paths, and
+    loads them. The orchestrator does NOT apply enabled/disabled filtering —
+    it loads everything declared in the config.
+    """
     registry = ComponentRegistry()
-    root_config = Path(__file__).resolve().parents[2] / "arc.toml"
-    package_config = Path(__file__).resolve().parents[1] / "arc.toml"
-    config_path = root_config if root_config.exists() else package_config
-    package_paths: list[str] = []
-    if config_path.exists():
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
-        with config_path.open("rb") as f:
-            config = tomllib.load(f)
-        base = config_path.parent
-        package_paths = [
-            str((base / path).resolve()) if not Path(path).is_absolute() else path
-            for path in config.get("packages", {}).get("paths", [])
-        ]
+    config_path, config = load_arc_toml()
+    package_paths = resolve_package_paths(config, config_path) if config else []
     load_packages(package_paths, registry)
     return registry
 
@@ -188,15 +213,93 @@ class ResearchWorkflow:
             return value.get(field)
         return getattr(value, field, None)
 
-    def _condition_matches(self, expression: str, state: dict) -> bool:
-        if "==" not in expression:
+    # Operators must be ordered longest-first so two-character forms (>=, <=, !=, ==)
+    # are matched before single-character (>, <).
+    _CONDITION_OPERATORS = ("==", "!=", ">=", "<=", ">", "<")
+
+    @staticmethod
+    def _parse_condition_literal(text: str) -> Any:
+        """Parse the right-hand side of a workflow condition into a Python value.
+
+        Accepts: ``true``/``false`` (case-insensitive), integers, floats, and
+        single- or double-quoted strings. Bare identifiers are returned as
+        strings so legacy ``foo == bar`` style still works.
+        """
+        text = text.strip()
+        lower = text.lower()
+        if lower == "true":
+            return True
+        if lower == "false":
             return False
-        left, right = [part.strip() for part in expression.split("==", 1)]
-        value = self._resolve_ref(left, state, {})
-        expected = right.lower()
-        if expected in {"false", "true"}:
-            return bool(value) is (expected == "true")
-        return str(value) == right.strip('"\'')
+        if (text.startswith("'") and text.endswith("'")) or (
+            text.startswith('"') and text.endswith('"')
+        ):
+            return text[1:-1]
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        return text  # bare identifier — treat as string literal
+
+    def _condition_matches(self, expression: str, state: dict) -> bool:
+        """Evaluate a workflow ``if:`` expression like ``review.output.approved == false``.
+
+        Supports the operators listed in ``_CONDITION_OPERATORS``. Raises
+        ``ValueError`` on unsupported syntax rather than silently returning
+        False, so workflow authors get a clear error instead of a confusing
+        no-op.
+        """
+        expression = (expression or "").strip()
+        if not expression:
+            return False
+
+        # Pick the first operator that appears. Longer operators come first in
+        # _CONDITION_OPERATORS so ``>=`` is matched before ``>``.
+        for op in self._CONDITION_OPERATORS:
+            idx = expression.find(op)
+            if idx >= 0:
+                left = expression[:idx].strip()
+                right = expression[idx + len(op):].strip()
+                break
+        else:
+            raise ValueError(
+                f"Unsupported workflow condition: {expression!r}. "
+                f"Use one of {', '.join(self._CONDITION_OPERATORS)}."
+            )
+
+        lhs = self._resolve_ref(left, state, {})
+        rhs = self._parse_condition_literal(right)
+
+        # Booleans need identity-style comparison so e.g. ``approved == false``
+        # behaves the same when the resolved value is None vs. False.
+        if isinstance(rhs, bool):
+            lhs_bool = bool(lhs)
+            return (op == "==") == (lhs_bool is rhs)
+        if op == "==":
+            return lhs == rhs or str(lhs) == str(rhs)
+        if op == "!=":
+            return not (lhs == rhs or str(lhs) == str(rhs))
+        # Ordering operators require numeric LHS — fall back to False on
+        # type mismatch rather than raising, since workflows may legitimately
+        # have a step that doesn't run yet.
+        try:
+            lhs_num = float(lhs)  # type: ignore[arg-type]
+            rhs_num = float(rhs)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        if op == ">":
+            return lhs_num > rhs_num
+        if op == "<":
+            return lhs_num < rhs_num
+        if op == ">=":
+            return lhs_num >= rhs_num
+        if op == "<=":
+            return lhs_num <= rhs_num
+        return False
 
     async def _execute_skill(self, name: str, input_data, state: dict):
         if name == "validate-sim2l":
@@ -297,12 +400,14 @@ class ResearchWorkflow:
         step_index = {step["id"]: idx for idx, step in enumerate(steps)}
         conditions = workflow.get("conditions", [])
         state = {"user_goal": goal, "steps": {}, "prepared_inputs": {}, "result_path": None}
+        status = "completed"
 
         idx = 0
         transitions = 0
         while idx < len(steps):
-            if transitions > len(steps) * max_iterations:
-                raise RuntimeError("Workflow exceeded max_iterations")
+            if transitions >= len(steps) * max_iterations:
+                status = "iteration_limit"
+                break
             step = steps[idx]
             step_id = step["id"]
             output = await self._execute_step_with_policy(step, state, workflow_config)
@@ -338,7 +443,7 @@ class ResearchWorkflow:
             validation = await self.adapter.validate_artifact(artifact)
         self._context.iteration += 1
         return {
-            "status": "completed",
+            "status": status,
             "session_id": session_id,
             "iteration": self._context.iteration,
             "proposal": self._dump(self._get_field(state["steps"].get("ideate", {}), "output")),
@@ -363,75 +468,18 @@ class ResearchWorkflow:
 
         try:
             workflow = self.registry.get_workflow(self.workflow_name)
-            return await self._run_workflow_definition(workflow, goal)
-        except KeyError:
-            pass
+        except KeyError as exc:
+            # Previously this path fell through to a 60-line hard-coded
+            # pipeline that duplicated the YAML workflow. That hid real
+            # registration bugs (eg. a missing arc.toml or a package that
+            # failed to load). Surface the error instead — the available
+            # workflows are listed so users can pick a registered name.
+            available = self.registry.list_workflows()
+            raise KeyError(
+                f"Workflow {self.workflow_name!r} is not registered. "
+                f"Available workflows: {available}. "
+                f"Check arc.toml [packages].paths and any errors during "
+                f"package loading."
+            ) from exc
 
-        from arc.packages import (
-            load_ideator, load_planner, load_builder, load_reviewer, load_reflector
-        )
-        IdeatorAgent = load_ideator().IdeatorAgent
-        PlannerAgent = load_planner().PlannerAgent
-        Sim2LBuilderAgent = load_builder().Sim2LBuilderAgent
-        ReviewerAgent = load_reviewer().ReviewerAgent
-        ReflectorAgent = load_reflector().ReflectorAgent
-
-        proposal = await self._agent(IdeatorAgent).run(goal)
-        self.provenance.record(session_id, "ideate", "ideator", outputs=proposal.model_dump())
-
-        plan = await self._agent(PlannerAgent).run(proposal)
-        self._context.memory["current_plan"] = plan
-        self.provenance.record(session_id, "plan", "planner", outputs=plan.model_dump())
-
-        draft = await self._agent(Sim2LBuilderAgent).run(plan)
-        artifact = self.artifacts.register(draft)
-        self._context.memory["current_artifact"] = artifact
-        self.provenance.record(session_id, "build", "builder", artifact_id=artifact.artifact_id)
-
-        validation = await self.adapter.validate_artifact(artifact)
-        if not validation.valid:
-            self.provenance.record(session_id, "validate", "adapter", outputs={"valid": False})
-            return {
-                "status": "failed_validation",
-                "proposal": proposal.model_dump(),
-                "plan": plan.model_dump(),
-                "artifact": artifact.model_dump(),
-                "validation": validation.model_dump(),
-            }
-
-        prepared_inputs = await self.adapter.prepare_inputs(artifact, plan.parameters)
-        execution = await self.adapter.run(artifact, prepared_inputs)
-        result_path = self.results.save(execution)
-        self._context.memory.setdefault("run_history", []).append({
-            "run_id": execution.run_id,
-            "inputs": prepared_inputs,
-            "outputs": execution.outputs,
-            "metrics": execution.metrics,
-        })
-        self.provenance.record(
-            session_id, "execute", "adapter",
-            artifact_id=artifact.artifact_id,
-            run_id=execution.run_id,
-            outputs=execution.model_dump(),
-        )
-
-        review = await self._agent(ReviewerAgent).run(execution)
-        self.provenance.record(session_id, "review", "reviewer", outputs=review.model_dump())
-
-        reflection = await self._agent(ReflectorAgent).run(review, execution=execution)
-
-        self._context.iteration += 1
-
-        return {
-            "status": "completed",
-            "session_id": session_id,
-            "iteration": self._context.iteration,
-            "proposal": proposal.model_dump(),
-            "plan": plan.model_dump(),
-            "artifact": artifact.model_dump(),
-            "validation": validation.model_dump(),
-            "execution": execution.model_dump(),
-            "result_path": result_path,
-            "review": review.model_dump(),
-            "reflection": reflection,
-        }
+        return await self._run_workflow_definition(workflow, goal)

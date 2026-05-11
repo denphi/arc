@@ -1,0 +1,21 @@
+name: arc-claude-code
+version: 0.1.0
+type: coding-package
+description: >
+  Claude Code-backed coding agents for creating and repairing ARC artifacts.
+
+provides:
+  agents:
+    - name: coder
+      entrypoint: arc.packages.arc-claude-code.agents.coder:ClaudeCodeCoderAgent
+
+  skills:
+    - skills/write-artifact-with-claude-code.md
+
+requires:
+  runtime_adapter: any
+  artifact_type: sim2l
+
+optional:
+  integrations:
+    - claude-code-cli

@@ -1,0 +1,21 @@
+name: arc-codex
+version: 0.1.0
+type: coding-package
+description: >
+  Codex-backed coding agents for creating and repairing ARC artifacts.
+
+provides:
+  agents:
+    - name: coder
+      entrypoint: arc.packages.arc-codex.agents.coder:CodexCoderAgent
+
+  skills:
+    - skills/write-artifact-with-codex.md
+
+requires:
+  runtime_adapter: any
+  artifact_type: sim2l
+
+optional:
+  integrations:
+    - codex-cli

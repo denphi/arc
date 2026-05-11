@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore
@@ -27,8 +27,14 @@ class ResearchRequest(BaseModel):
     goal: ResearchGoal
     llm: LLMConfig = LLMConfig()
     session_id: str | None = None
-    iterations: int = 1
+    iterations: int = Field(default=1, ge=1)
     workflow: str = "research-loop"
+
+
+class ReviewRequest(BaseModel):
+    result: ExecutionResult
+    target: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = None
 
 
 def _optional_session_id(session_id: str | None) -> str | None:
@@ -182,12 +188,25 @@ async def list_results(session_id: str | None = None):
 # --- Review ---
 
 @router.post("/review/run")
-async def run_review(result: ExecutionResult) -> ReviewResult:
+async def run_review(req: ReviewRequest) -> ReviewResult:
     from arc.contracts.agent import AgentContext
     from arc.packages import load_reviewer
+    from arc.session import load_session_meta
+
+    target = dict(req.target)
+    session_id = _optional_session_id(req.session_id) or "api"
+    if req.session_id and not target:
+        meta = load_session_meta(session_id)
+        target = meta.get("target", {}) if meta else {}
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="review target is required unless session_id has a saved target",
+        )
+
     ReviewerAgent = load_reviewer().ReviewerAgent
-    agent = ReviewerAgent(context=AgentContext(session_id="api"))
-    return await agent.run(result)
+    agent = ReviewerAgent(context=AgentContext(session_id=session_id, memory={"target": target}))
+    return await agent.run(req.result)
 
 
 # --- Provider utilities ---

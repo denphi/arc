@@ -39,16 +39,21 @@ async def test_planner_returns_experiment_plan(context):
     agent = PlannerAgent(context=context)
     proposal = ResearchProposal(
         hypothesis="Test hypothesis",
-        objective="Test objective",
-        variables=["x", "y"],
-        methodology="simulate",
-        expected_outcomes="y > 0",
-        evaluation_metrics=["output_quality"],
+        objective="Tune a semiconductor bandgap near the target value",
+        variables=["effective_mass", "temperature", "strain"],
+        methodology="simulate bandgap response across material and environmental variables",
+        expected_outcomes="bandgap changes with mass, temperature, and strain",
+        evaluation_metrics=["bandgap_ev"],
     )
     result = await agent.run(proposal)
     assert isinstance(result, ExperimentPlan)
-    assert result.parameters
+    assert len(result.parameters) >= 3
     assert result.success_criteria
+    assert result.parameter_constraints
+    assert result.experimental_design
+    assert set(result.parameters) <= set(result.parameter_sweep)
+    assert set(result.parameters) <= set(result.parameter_constraints)
+    assert "input_parameter" not in result.parameters
 
 
 @pytest.mark.asyncio
@@ -69,10 +74,30 @@ async def test_builder_generates_files(context):
     draft = await builder.run(plan)
     assert "workflow.py" in draft.files
     assert "sim2l.yaml" in draft.files
+    assert "Inputs:" in draft.description
+    assert "Outputs:" in draft.description
+    assert draft.metadata["description"] == draft.description
 
 
 @pytest.mark.asyncio
-async def test_reviewer_approves_good_result(context):
+async def test_reviewer_requires_target_before_approval(context):
+    ReviewerAgent = load_reviewer().ReviewerAgent
+    agent = ReviewerAgent(context=context)
+    result = ExecutionResult(
+        run_id="test-run",
+        status="completed",
+        outputs={"result": 2.0},
+        metrics={"execution_success": True},
+    )
+    review = await agent.run(result)
+    assert review.approved is False
+    assert review.iteration_complete is False
+    assert review.strategy == "explore"
+
+
+@pytest.mark.asyncio
+async def test_reviewer_approves_good_result_with_target(context):
+    context.memory["target"] = {"result": 2.0}
     ReviewerAgent = load_reviewer().ReviewerAgent
     agent = ReviewerAgent(context=context)
     result = ExecutionResult(
@@ -83,6 +108,7 @@ async def test_reviewer_approves_good_result(context):
     )
     review = await agent.run(result)
     assert review.approved is True
+    assert review.iteration_complete is True
 
 
 @pytest.mark.asyncio

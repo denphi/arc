@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from arc.contracts.provider import ProviderContract
+from arc.providers.utils import strip_code_fences
 
 DEFAULT_URL = "https://genai.rcac.purdue.edu/api"
 DEFAULT_TIMEOUT = 120.0
@@ -93,7 +94,7 @@ class OpenWebUIProvider(ProviderContract):
                 temperature=temperature,
             )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             response = await loop.run_in_executor(None, _call)
         except asyncio.CancelledError:
@@ -115,14 +116,7 @@ class OpenWebUIProvider(ProviderContract):
             "Output only the JSON object, no markdown, no other text."
         )
         text = await self.complete(structured_prompt, system=system, **kwargs)
-        text = text.strip()
-        # Strip markdown fences if the model wraps its output.
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.rsplit("```", 1)[0].strip()
-        return schema.model_validate_json(text)
+        return schema.model_validate_json(strip_code_fences(text))
 
     def list_models(self) -> list[str]:
         """Return available model IDs from the endpoint."""

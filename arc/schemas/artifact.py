@@ -13,6 +13,7 @@ class ArtifactDraft(BaseModel):
 class ArtifactRecord(BaseModel):
     artifact_id: str
     name: str
+    description: str = ""
     version: str
     state: str
     path: str

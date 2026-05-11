@@ -14,39 +14,8 @@ import random
 from typing import Any
 
 from arc.contracts.agent import AgentContract
+from arc.runtime.key_matching import keys_match as _keys_match
 from arc.schemas.artifact import ArtifactRecord
-
-
-# ── Key matching (shared logic with reviewer) ─────────────────────────────────
-
-def _keys_match(tk: str, ok: str, registry: dict | None = None) -> bool:
-    """Return True when target key and output key name the same physical quantity.
-
-    Checks registry canonical lookup first, then flat exact/substring match.
-    """
-    # Registry tier: both keys resolve to the same canonical entry.
-    if registry:
-        tk_flat = tk.replace("_", "").lower()
-        ok_flat = ok.replace("_", "").lower()
-        for canon, entry in registry.items():
-            canon_flat = canon.replace("_", "").lower()
-            aliases_flat = [a.replace("_", "").lower() for a in entry.get("aliases", [])]
-            all_forms = [canon_flat] + aliases_flat
-            if tk_flat in all_forms and ok_flat in all_forms:
-                return True
-
-    # Flat exact match (case-insensitive, underscores ignored).
-    tk_flat = tk.replace("_", "").lower()
-    ok_flat = ok.replace("_", "").lower()
-    if tk_flat == ok_flat:
-        return True
-
-    # Substring match — require length ≥ 5 to avoid unit-suffix false positives.
-    if len(tk_flat) >= 5 and len(ok_flat) >= 5:
-        if tk_flat in ok_flat or ok_flat in tk_flat:
-            return True
-
-    return False
 
 
 # ── Fitness ───────────────────────────────────────────────────────────────────
@@ -177,6 +146,14 @@ class GeneticOptimizerAgent(AgentContract):
             raise RuntimeError("GeneticOptimizerAgent requires 'adapter' in context.memory")
 
         schema: dict = artifact.metadata.get("sim2l_inputs", {})
+        if not schema:
+            try:
+                from arc.sim2l_schema import load_sim2l_schema
+                schema, _ = load_sim2l_schema(artifact.path)
+                if schema:
+                    artifact.metadata["sim2l_inputs"] = schema
+            except Exception:
+                schema = {}
         if not schema:
             raise ValueError("Artifact has no sim2l_inputs schema — cannot initialise population")
 

@@ -20,10 +20,13 @@ def test_artifact_registry_register_and_get(tmp_path):
     record = registry.register(draft)
     assert record.artifact_id
     assert record.state == "REGISTERED"
+    assert record.description == "A test"
+    assert record.metadata["description"] == "A test"
 
     retrieved = registry.get(record.artifact_id, record.version)
     assert retrieved.artifact_id == record.artifact_id
     assert retrieved.name == "test-artifact"
+    assert retrieved.description == "A test"
 
 
 def test_artifact_registry_rejects_path_traversal(tmp_path):

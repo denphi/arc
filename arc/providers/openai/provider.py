@@ -6,6 +6,7 @@ import os
 from pydantic import BaseModel
 
 from arc.contracts.provider import ProviderContract
+from arc.providers.utils import strip_code_fences
 
 
 class OpenAIProvider(ProviderContract):
@@ -23,16 +24,23 @@ class OpenAIProvider(ProviderContract):
         return self._client
 
     async def complete(self, prompt: str, system: str = "", **kwargs) -> str:
+        import asyncio
+
         client = self._get_client()
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 4096),
-        )
+
+        def _call():
+            return client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=kwargs.get("max_tokens", 4096),
+            )
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, _call)
         return response.choices[0].message.content
 
     async def complete_structured(
@@ -49,10 +57,4 @@ class OpenAIProvider(ProviderContract):
             "Output only the JSON object, no other text."
         )
         text = await self.complete(structured_prompt, system=system, **kwargs)
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.rsplit("```", 1)[0].strip()
-        return schema.model_validate_json(text)
+        return schema.model_validate_json(strip_code_fences(text))

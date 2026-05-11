@@ -101,6 +101,8 @@ def save_session_meta(
     schema_registry: dict | None = None,
     primary_goal: str | None = None,
     refinements: list | None = None,
+    packages: dict | None = None,
+    agent_overrides: dict | None = None,
 ) -> None:
     p = _meta_path(session_id)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +119,8 @@ def save_session_meta(
         "schema_registry": schema_registry if schema_registry is not None else existing.get("schema_registry", {}),
         "primary_goal": primary_goal if primary_goal is not None else existing.get("primary_goal"),
         "refinements": refinements if refinements is not None else existing.get("refinements", []),
+        "packages": packages if packages is not None else existing.get("packages", {}),
+        "agent_overrides": agent_overrides if agent_overrides is not None else existing.get("agent_overrides", {}),
         "created": created or existing.get("created", ""),
     }
     p.write_text(json.dumps(meta, indent=2))

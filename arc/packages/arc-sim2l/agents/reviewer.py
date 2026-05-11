@@ -1,4 +1,8 @@
 from arc.contracts.agent import AgentContract
+from arc.runtime.key_matching import (
+    fuzzy_keys_match as _keys_match,
+    registry_keys_match as _registry_keys_match,
+)
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
 
@@ -37,88 +41,6 @@ Return a JSON object with exactly these fields:
 
 Keep all string values concise. No extra keys. next_parameters keys must appear in the "Inputs used" list.
 """
-
-
-import re as _re
-
-# Each entry is a frozenset of tokens that all name the *same physical quantity*.
-# A match requires BOTH keys to share tokens from the SAME group.
-# Units (eV, nm, etc.) are intentionally excluded — they appear in many
-# unrelated quantities and would cause false matches.
-_PHYSICS_SYNONYMS: list[frozenset] = [
-    frozenset({"bandgap", "band_gap", "bg", "gap"}),  # "eg" removed — too short/ambiguous
-    frozenset({"strain", "eps", "epsilon", "deformation"}),
-    frozenset({"temperature", "temp", "kelvin"}),
-    frozenset({"effective_mass", "effectivemass", "ema"}),
-    frozenset({"doping", "dopant", "carrier", "concentration"}),
-    frozenset({"pressure", "stress"}),
-    frozenset({"mobility", "mu"}),
-    frozenset({"wavelength", "lambda"}),
-    frozenset({"frequency", "freq"}),
-]
-
-# Short tokens to ignore during matching (units, articles, common suffixes).
-_STOP_TOKENS: frozenset = frozenset({
-    "ev", "mev", "gpa", "mpa", "nm", "pm", "cm", "k", "hz", "ghz", "thz",
-    "per", "total", "avg", "mean", "min", "max", "value", "val",
-    "the", "a", "an", "of", "in",
-})
-
-
-def _key_tokens(key: str) -> frozenset:
-    """Normalised, stop-word-free token set for a key."""
-    raw = _re.sub(r"[0-9]", "", key.lower())
-    parts = frozenset(_re.split(r"[_\-\s]+", raw)) - {""} - _STOP_TOKENS
-    return parts
-
-
-def _keys_match(tk: str, ok: str) -> bool:
-    """Return True when target key and output key name the same physical quantity.
-
-    Tiers (in order):
-    1. Flat exact match (case-insensitive, underscores ignored).
-    2. One flat form is a substring of the other AND both are at least 5 chars
-       (avoids spurious single-token matches like 'ev' in 'sensitivity_ev_per_nm').
-    3. Both keys share a token from the same physics-synonym group.
-    """
-    tk_flat = tk.replace("_", "").lower()
-    ok_flat = ok.replace("_", "").lower()
-
-    # Tier 1
-    if tk_flat == ok_flat:
-        return True
-
-    # Tier 2 — require meaningful length to avoid unit-suffix false positives
-    min_len = 5
-    if len(tk_flat) >= min_len and len(ok_flat) >= min_len:
-        if tk_flat in ok_flat or ok_flat in tk_flat:
-            return True
-
-    # Tier 3 — physics synonyms (unit tokens already excluded)
-    tk_toks = _key_tokens(tk)
-    ok_toks = _key_tokens(ok)
-    if tk_toks and ok_toks:
-        for group in _PHYSICS_SYNONYMS:
-            if tk_toks & group and ok_toks & group:
-                return True
-
-    return False
-
-
-def _registry_keys_match(tk: str, ok: str, registry: dict) -> bool:
-    """Return True if tk and ok both resolve to the same canonical key via the registry."""
-    if not registry:
-        return False
-    tk_flat = tk.replace("_", "").lower()
-    ok_flat = ok.replace("_", "").lower()
-    for canon, entry in registry.items():
-        canon_flat = canon.replace("_", "").lower()
-        aliases_flat = [a.replace("_", "").lower() for a in entry.get("aliases", [])]
-        tk_in = tk_flat in [canon_flat] + aliases_flat
-        ok_in = ok_flat in [canon_flat] + aliases_flat
-        if tk_in and ok_in:
-            return True
-    return False
 
 
 def _check_target(
@@ -185,10 +107,12 @@ class ReviewerAgent(AgentContract):
             approved, target_errors = _check_target(outputs, target, registry=registry)
             iteration_complete = approved
         else:
-            # No target: treat a completed, non-empty execution as a successful iteration.
-            approved = True
+            # A completed run without a target is useful evidence, but it is not
+            # a goal-achievement condition. Keep the loop alive so ARC can ask
+            # for/derive a target or continue exploration.
+            approved = False
             target_errors = {}
-            iteration_complete = True
+            iteration_complete = False
 
         provider = self.context.memory.get("provider")
         if provider:
@@ -228,9 +152,12 @@ class ReviewerAgent(AgentContract):
                 # Override the LLM's verdict with our computed one
                 llm_review.approved = approved
                 llm_review.iteration_complete = iteration_complete
-                # If approved, force strategy to "stop"
+                # If approved, force strategy to "stop"; otherwise never let a
+                # no-target review stop the loop as if the goal were achieved.
                 if approved:
                     llm_review.strategy = "stop"
+                elif not target and llm_review.strategy == "stop":
+                    llm_review.strategy = "explore"
                 return llm_review
             except Exception:
                 pass
@@ -247,7 +174,7 @@ class ReviewerAgent(AgentContract):
         elif target:
             summary = "No output matched target keys — check parameter names"
         else:
-            summary = "Execution completed with non-empty outputs"
+            summary = "Execution completed but no target was specified"
 
         return ReviewResult(
             approved=approved,
@@ -255,10 +182,13 @@ class ReviewerAgent(AgentContract):
             strengths=["Execution completed"] if result.status == "completed" else [],
             weaknesses=(
                 [f"{k}: {v:.1f}% off" for k, v in target_errors.items() if v > APPROVAL_THRESHOLD * 100]
-                if target_errors else (["No target output match"] if target else [])
+                if target_errors else (["No target output match"] if target else ["No target specified"])
             ),
-            recommendations=["Adjust parameters to reduce target error"] if not approved else [],
+            recommendations=(
+                ["Adjust parameters to reduce target error"]
+                if target else ["Define a numeric target before approving the goal"]
+            ) if not approved else [],
             next_parameters={},
             iteration_complete=iteration_complete,
-            strategy="stop" if approved else ("step" if target else "stop"),
+            strategy="stop" if approved else ("step" if target else "explore"),
         )

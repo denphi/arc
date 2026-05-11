@@ -6,6 +6,7 @@ from typing import Any
 from arc.contracts.adapter import RuntimeAdapterContract
 from arc.schemas.artifact import ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
+from arc.sim2l_schema import load_sim2l_schema
 
 
 class LocalRuntimeAdapter(RuntimeAdapterContract):
@@ -28,6 +29,13 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
             if not (artifact_path / fname).exists():
                 warnings.append(f"Expected file not found: {fname}")
 
+        if (artifact_path / "workflow.py").exists():
+            try:
+                from arc.runtime.sim2l_adapter import _import_workflow_func
+                _import_workflow_func(str(artifact_path), artifact.artifact_id)
+            except Exception as exc:
+                errors.append(f"workflow.py import error: {exc}")
+
         return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     async def prepare_inputs(
@@ -43,18 +51,60 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
         inputs: dict[str, Any],
     ) -> ExecutionResult:
         run_id = str(uuid.uuid4())
-        value = inputs.get("input_parameter", 1.0)
+        workflow_path = Path(artifact.path) / "workflow.py"
+        if workflow_path.exists():
+            try:
+                from arc.runtime.sim2l_adapter import _import_workflow_func
 
+                input_schema, output_schema = load_sim2l_schema(artifact.path)
+                defaults = {
+                    key: field.get("default", 1.0)
+                    for key, field in input_schema.items()
+                }
+                reconciled = {
+                    **defaults,
+                    **{key: value for key, value in inputs.items() if not input_schema or key in input_schema},
+                }
+                func = _import_workflow_func(artifact.path, artifact.artifact_id)
+                raw_outputs = func(**reconciled) or {}
+                if not isinstance(raw_outputs, dict):
+                    raise ValueError(f"simulate() must return dict, got {type(raw_outputs).__name__}")
+                outputs = {
+                    key: raw_outputs.get(key)
+                    for key in output_schema
+                } if output_schema else raw_outputs
+                return ExecutionResult(
+                    run_id=run_id,
+                    status="completed",
+                    outputs=outputs,
+                    logs=[
+                        f"Run {run_id} started.",
+                        f"Inputs: {reconciled}",
+                        "Execution completed via LocalRuntimeAdapter.",
+                    ],
+                    metrics={"execution_success": True, **reconciled},
+                )
+            except Exception as exc:
+                normalized = await self.normalize_errors(exc)
+                return ExecutionResult(
+                    run_id=run_id,
+                    status="error",
+                    logs=[normalized["message"]],
+                )
+
+        # No workflow.py — return an explicit error rather than a misleading
+        # "value * 2" demo result, which would let downstream reviewers think
+        # the artifact ran successfully and pollute caches with bogus outputs.
         return ExecutionResult(
             run_id=run_id,
-            status="completed",
-            outputs={"result": value * 2},
+            status="error",
+            outputs={},
             logs=[
-                f"Run {run_id} started.",
-                f"Inputs: {inputs}",
-                "Execution completed via LocalRuntimeAdapter.",
+                f"Run {run_id}: artifact has no workflow.py at "
+                f"{artifact.path}. LocalRuntimeAdapter requires a "
+                "workflow.py defining simulate(**inputs) -> dict.",
             ],
-            metrics={"execution_success": True, "input_parameter": value},
+            metrics={"execution_success": False, "reason": "missing_workflow_py"},
         )
 
     async def run_sweep(

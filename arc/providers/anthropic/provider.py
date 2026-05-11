@@ -10,6 +10,7 @@ import os
 from pydantic import BaseModel
 
 from arc.contracts.provider import ProviderContract
+from arc.providers.utils import strip_code_fences
 
 
 class AnthropicProvider(ProviderContract):
@@ -27,6 +28,8 @@ class AnthropicProvider(ProviderContract):
         return self._client
 
     async def complete(self, prompt: str, system: str = "", **kwargs) -> str:
+        import asyncio
+
         client = self._get_client()
         messages = [{"role": "user", "content": prompt}]
         create_kwargs: dict = {
@@ -42,8 +45,16 @@ class AnthropicProvider(ProviderContract):
                     "cache_control": {"type": "ephemeral"},
                 }
             ]
-        response = client.messages.create(**create_kwargs)
-        return response.content[0].text
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, lambda: client.messages.create(**create_kwargs))
+        # Anthropic responses can contain tool_use / thinking / empty blocks
+        # in addition to text. Walk the list and return the first text block;
+        # falling back to "" when no text was produced (rather than crashing
+        # with IndexError on response.content[0].text).
+        for block in getattr(response, "content", None) or []:
+            if getattr(block, "type", None) == "text":
+                return block.text
+        return ""
 
     async def complete_structured(
         self,
@@ -59,11 +70,4 @@ class AnthropicProvider(ProviderContract):
             "Output only the JSON object, no other text."
         )
         text = await self.complete(structured_prompt, system=system, **kwargs)
-        # Strip markdown fences if present
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.rsplit("```", 1)[0].strip()
-        return schema.model_validate_json(text)
+        return schema.model_validate_json(strip_code_fences(text))
