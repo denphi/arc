@@ -8,9 +8,11 @@ been installed (e.g. when running tests directly without ``pip install -e``).
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
+# Literal kept here so setup.py's read_version() regex can find it during
+# the editable-install bootstrap (before the package is registered).
+__version__ = "0.1.0"
+
 try:
     __version__ = _pkg_version("arc")
 except PackageNotFoundError:
-    # Editable / source-tree fallback; keep this in sync with pyproject.toml
-    # only when the package is not installed.
-    __version__ = "0.1.0"
+    pass

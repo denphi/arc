@@ -139,6 +139,54 @@ def _constraints_for(name: str, default: float) -> dict:
         return {"min": 0.0, "max": 1.0, "units": "dimensionless", "role": "loss parameter", "rationale": "Covers no damping through strong damping."}
     if name == "activation_energy":
         return {"min": 0.01, "max": 5.0, "units": "eV", "role": "energy scale", "rationale": "Covers small barriers through strongly activated processes."}
+    # Lattice parameters from Materials Project: bound around the
+    # reference value so the sweep stays inside a physically plausible
+    # neighbourhood. ±10% on lengths is the standard "small-strain"
+    # band; ±5° on angles keeps us in the same crystal system without
+    # forcing collinearity.
+    if name in ("lattice_a", "lattice_b", "lattice_c"):
+        span = max(abs(default) * 0.1, 1e-3)
+        return {"min": default - span, "max": default + span,
+                "units": "angstrom", "role": "lattice length",
+                "rationale": "±10% around the Materials Project reference length."}
+    if name in ("lattice_alpha", "lattice_beta", "lattice_gamma"):
+        return {"min": max(default - 5.0, 1.0), "max": min(default + 5.0, 179.0),
+                "units": "degrees", "role": "lattice angle",
+                "rationale": "±5° around the Materials Project reference angle."}
+    if name == "lattice_volume":
+        span = max(abs(default) * 0.2, 1e-3)
+        return {"min": default - span, "max": default + span,
+                "units": "angstrom^3", "role": "cell volume",
+                "rationale": "±20% around the Materials Project reference volume."}
+    # ── MP thermodynamics ─────────────────────────────────────────────
+    if name == "energy_above_hull":
+        # The reference is on-hull (0) or just above; allow a small
+        # exploration window into clearly metastable territory.
+        return {"min": max(default - 0.1, 0.0), "max": default + 0.2,
+                "units": "eV/atom", "role": "thermodynamic stability margin",
+                "rationale": "Probes from on-hull through clearly metastable "
+                             "(≈ 0.2 eV/atom above the convex hull)."}
+    if name == "decomposition_enthalpy":
+        span = max(abs(default) * 0.5, 0.05)
+        return {"min": default - span, "max": default + span,
+                "units": "eV/atom", "role": "decomposition cost",
+                "rationale": "±50% around the Materials Project reference "
+                             "decomposition enthalpy."}
+    # ── MP elasticity (GPa) ───────────────────────────────────────────
+    if name in ("bulk_modulus", "shear_modulus"):
+        span = max(abs(default) * 0.3, 1.0)
+        # Moduli are non-negative; clamp the lower bound at 0.
+        return {"min": max(default - span, 0.0), "max": default + span,
+                "units": "GPa", "role": "elastic modulus",
+                "rationale": "±30% around the Materials Project Voigt-Reuss-Hill "
+                             "average; lower bound clamped at 0 GPa."}
+    # ── MP electronic structure (eV) ──────────────────────────────────
+    if name in ("efermi", "dos_energy_up", "dos_energy_down"):
+        span = max(abs(default) * 0.1, 0.5)
+        return {"min": default - span, "max": default + span,
+                "units": "eV", "role": "electronic-structure energy",
+                "rationale": "±10% (≥ 0.5 eV) around the Materials Project "
+                             "reference Fermi level / DOS edge."}
     span = abs(default) or 1.0
     return {"min": default - 2 * span, "max": default + 2 * span, "units": "dimensionless", "role": "model input", "rationale": "Broad local range around the nominal value."}
 
@@ -150,6 +198,95 @@ def _sweep_for(default: float, constraint: dict) -> list[float]:
         return [lo]
     points = [lo, (lo + default) / 2, default, (default + hi) / 2, hi]
     return [float(f"{p:.6g}") for p in points]
+
+
+def _top_mp_hit(context) -> dict | None:
+    """Return the top ``materials_project``-sourced hit, if any.
+
+    Walks ``context.memory['catalog_hits']`` in catalogue order and
+    picks the first one whose ``metadata.source == 'materials_project'``.
+    Returns ``None`` when no MP-sourced hit is present so callers can
+    short-circuit cleanly.
+    """
+    if context is None:
+        return None
+    hits = (context.memory or {}).get("catalog_hits") or []
+    if not isinstance(hits, list):
+        return None
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        meta = hit.get("metadata") or {}
+        if isinstance(meta, dict) and meta.get("source") == "materials_project":
+            return hit
+    return None
+
+
+# Metadata blocks (under ``hit['metadata']``) that the planner reads
+# for builder defaults. Adding a new MP axis is one line here plus
+# matching ``_constraints_for`` entries.
+_MP_PROPERTY_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("lattice",    "Lattice"),
+    ("thermo",     "Thermodynamic"),
+    ("elasticity", "Elastic"),
+    ("dos",        "Electronic-structure"),
+)
+
+
+def _apply_mp_property_defaults(plan: ExperimentPlan, context) -> None:
+    """Splice MP reference values from the top hit into ``plan.parameters``.
+
+    Walks every metadata block the searcher attaches (lattice / thermo
+    / elasticity / DOS) and inserts each numeric value as a builder
+    default. Constraints + sweeps are minted via the existing helpers
+    so downstream sweep/optimisation code never sees a parameter
+    without bounds.
+
+    Conservative on conflicts: never overwrites an existing parameter
+    (the LLM's plan wins on collision), only adds new keys. Each block
+    that contributes at least one new parameter logs an attribution
+    line in ``plan.experimental_design`` so the user can see which MP
+    record seeded which defaults.
+    """
+    hit = _top_mp_hit(context)
+    if hit is None:
+        return
+    meta = hit.get("metadata") or {}
+    formula = meta.get("formula") or meta.get("mp_id") or ""
+
+    notes: list[str] = []
+    for block_key, label in _MP_PROPERTY_BLOCKS:
+        block = meta.get(block_key)
+        if not isinstance(block, dict) or not block:
+            continue
+        added: list[str] = []
+        for name, value in block.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            if name in plan.parameters:
+                continue
+            plan.parameters[name] = float(value)
+            plan.parameter_constraints.setdefault(
+                name, _constraints_for(name, float(value)),
+            )
+            plan.parameter_sweep.setdefault(
+                name,
+                _sweep_for(float(value), plan.parameter_constraints[name]),
+            )
+            added.append(name)
+        if added:
+            notes.append(
+                f"{label} defaults sourced from Materials Project {formula} "
+                f"(parameters: {', '.join(added)})."
+            )
+
+    if notes:
+        plan.experimental_design = list(plan.experimental_design) + notes
+
+
+# Backwards-compatible alias: the chat layer and tests reference the
+# original name. New code should call ``_apply_mp_property_defaults``.
+_apply_mp_lattice_defaults = _apply_mp_property_defaults
 
 
 def _fallback_plan(proposal: ResearchProposal) -> ExperimentPlan:
@@ -209,11 +346,14 @@ class PlannerAgent(AgentContract):
                 # Ensure artifact_strategy is always a short safe string.
                 plan.artifact_strategy = "create_new_sim2l"
                 self._complete_plan(plan)
+                _apply_mp_lattice_defaults(plan, self.context)
                 return plan
             except Exception:
                 pass  # fall through to stub
 
-        return _fallback_plan(proposal)
+        plan = _fallback_plan(proposal)
+        _apply_mp_lattice_defaults(plan, self.context)
+        return plan
 
     def _complete_plan(self, plan: ExperimentPlan) -> None:
         for name, value in list(plan.parameters.items()):

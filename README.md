@@ -56,6 +56,41 @@ python3 examples/chat.py \
   --url "https://genai.rcac.purdue.edu/api"
 ```
 
+### Sim2L service authentication
+
+When ARC pushes artifacts and results to authenticated Sim2L services, the
+chat login uses these environment variables:
+
+```bash
+SIM2L_USERNAME=XXX
+SIM2L_PASSWORD=XXX
+```
+
+Set them in `arc/.env` when your catalog, results, or cache service requires
+authentication. The local `./start_services.sh` helper starts services with
+`--no-auth`, so these variables are not needed for that local development mode.
+For authenticated services, use the actual Sim2L service account; production
+deployments should not rely on `admin/admin`.
+
+Do not use the PostgreSQL database credentials here. `sim2l` /
+`sim2l_password` is the default database account, not the Sim2L service login.
+For the built-in local service admin account, use `SIM2L_USERNAME=admin` and
+set `SIM2L_PASSWORD` to either the value in `~/.sim2l/admin_password` or the
+same value you provide as `SIM2L_ADMIN_PASSWORD` when starting services.
+
+### Sim2L MCP tools
+
+ARC can start the optional sim2l MCP server from the same service manager:
+
+```text
+/services start mcp
+```
+
+Regular `/services start` starts only the core cache/catalog/results services.
+Set `ARC_SIM2L_START_MCP=1` to have chat start the MCP process at startup when
+it is not already running. The MCP transport defaults to `streamable-http` and
+can be overridden with `SIM2L_MCP_TRANSPORT`.
+
 Inside chat:
 
 ```text

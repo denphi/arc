@@ -109,6 +109,104 @@ if HAS_TYPER:
         typer.echo(f"Skills:    {kernel.registry.list_skills()}")
         typer.echo(f"Workflows: {kernel.registry.list_workflows()}")
 
+    @app.command()
+    def chat(
+        provider: str = typer.Option(None, "--provider", "-p",
+                                     help="LLM provider: anthropic | openai | openwebui"),
+        token: str = typer.Option(None, "--token", "-t",
+                                   help="API key / bearer token for the provider"),
+        model: str = typer.Option(None, "--model", "-m", help="Model name/ID"),
+        url: str = typer.Option(None, "--url", "-u", help="Provider base URL"),
+        stub: bool = typer.Option(False, "--stub", help="Run without an LLM (for testing)"),
+        session: str = typer.Option(None, "--session", "-s",
+                                     help="Resume an existing session ID"),
+        list_sessions_flag: bool = typer.Option(False, "--list-sessions",
+                                                 help="List all sessions and exit"),
+        delete_session_id: str = typer.Option(None, "--delete-session", metavar="SESSION_ID",
+                                               help="Delete a specific session and exit"),
+        delete_all: bool = typer.Option(False, "--delete-all-sessions",
+                                         help="Delete ALL sessions and exit"),
+        max_iterations: int = typer.Option(20, "--max-iterations",
+                                            help="Max auto-iterations per goal (default 20)"),
+        check: bool = typer.Option(False, "--check",
+                                    help="Dry-run: report config / service / auth status and exit"),
+        check_format: str = typer.Option("ansi", "--check-format",
+                                          help="Format for --check output: ansi | json"),
+        plan: bool = typer.Option(False, "--plan",
+                                   help="Plan mode: show what the chat would do without writing files or pushing to sim2l"),
+        events: str = typer.Option("ansi", "--events",
+                                    help="Event sink: ansi (default), jsonl, stdout-json, multi"),
+        events_path: str = typer.Option(None, "--events-path",
+                                         help="When --events=jsonl|multi, the file to write to "
+                                              "(default: <session_dir>/events.jsonl)"),
+    ):
+        """Start the interactive ARC research chat."""
+        if plan:
+            from arc.chat.plan_mode import set_plan_mode
+            set_plan_mode(True)
+            print("⚑ Plan mode active: no files will be written, no sim2l pushes.")
+
+        # --check is a dry-run that never enters the REPL — short-circuit
+        # before installing any chat sinks so its JSON output stays clean.
+        if check:
+            import asyncio as _asyncio
+            from arc.chat.check import run_check
+            from arc.chat.check_render import render
+            report = _asyncio.run(run_check(
+                provider=provider, token=token, base_url=url, model=model,
+            ))
+            output = render(report, fmt=check_format)  # type: ignore[arg-type]
+            print(output)
+            raise typer.Exit(report.exit_code)
+
+        # ── Event sink wiring ───────────────────────────────────────────
+        # For ANSI and stdout-json we can install the sink now (no
+        # session path needed). For jsonl / multi we defer to chat_loop
+        # so the default path can resolve to <session_dir>/events.jsonl.
+        from pathlib import Path
+        from arc.chat.events import (
+            AnsiSink, StdoutJsonSink, SinkConfig,
+            set_sink, set_sink_config,
+        )
+        if events == "ansi":
+            set_sink(AnsiSink())
+        elif events == "stdout-json":
+            set_sink(StdoutJsonSink())
+        elif events in ("jsonl", "multi"):
+            override = Path(events_path) if events_path else None
+            set_sink_config(SinkConfig(kind=events, path=override))
+            # chat_loop will print the resolved path once it's known.
+        else:
+            print(f"unknown --events value {events!r}; expected one of "
+                  f"ansi, jsonl, stdout-json, multi", file=sys.stderr)
+            raise typer.Exit(2)
+
+        # Reconstruct argv so arc.chat.main()'s argparse sees the right flags.
+        args = []
+        if provider:
+            args += ["--provider", provider]
+        if token:
+            args += ["--token", token]
+        if model:
+            args += ["--model", model]
+        if url:
+            args += ["--url", url]
+        if stub:
+            args += ["--stub"]
+        if session:
+            args += ["--session", session]
+        if list_sessions_flag:
+            args += ["--list-sessions"]
+        if delete_session_id:
+            args += ["--delete-session", delete_session_id]
+        if delete_all:
+            args += ["--delete-all-sessions"]
+        args += ["--max-iterations", str(max_iterations)]
+
+        sys.argv = [sys.argv[0]] + args
+        from arc.chat import main
+        main()
+
 else:
     def app():
         print("Install typer to use the ARC CLI: pip install typer")

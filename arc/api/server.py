@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from arc.api.research_loop_routes import router as research_loop_router
 from arc.api.routes import router
 from arc.core.kernel import Kernel
 from arc.version import __version__
@@ -35,6 +36,7 @@ def create_app(config_path: str = "arc.toml") -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(router)
+    app.include_router(research_loop_router)
 
     @app.get("/health")
     def health():

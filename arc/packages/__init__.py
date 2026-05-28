@@ -3,11 +3,19 @@
 The bundled package directories use distribution-style names such as
 ``arc-sim2l``. These helpers provide stable imports for tests and fallback code
 without requiring those directory names to be Python identifiers.
+
+For *strategy*-aware lookups (i.e. honouring the ``[strategies]`` block of
+``arc.toml``, environment overrides, and per-session ``/strategy`` choices)
+use :func:`resolve_role`. The legacy ``load_<role>()`` helpers below always
+return the *default* strategy's module — they exist so that callers
+needing module-level helpers (``_keys_match`` on the reviewer module, for
+example) keep working unchanged.
 """
 
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _load_from_path(module_name: str, file_path: Path):
@@ -22,6 +30,36 @@ def _load_from_path(module_name: str, file_path: Path):
 
 def _pkg_dir() -> Path:
     return Path(__file__).parent
+
+
+# ── Strategy-aware lookup ───────────────────────────────────────────────
+
+
+def resolve_role(role: str, workflow: Any = None) -> Any:
+    """Return the configured class for ``role``.
+
+    Honours, in order: a per-session ``/strategy`` override stored on
+    ``workflow._context.memory["strategy_overrides"]``, the
+    ``ARC_STRATEGY_<ROLE>`` environment variable, the ``[strategies]``
+    block in ``arc.toml``, then the bundled default strategy.
+
+    The legacy ``load_<role>()`` helpers below are unaffected and continue
+    to return the default strategy's module — handy for callers that need
+    module-level helpers (e.g. ``ReviewerModule._keys_match``).
+    """
+    from arc.core.strategies import resolve_role as _core_resolve
+    overrides: dict[str, str] | None = None
+    if workflow is not None:
+        try:
+            overrides = workflow._context.memory.get("strategy_overrides") or None
+        except AttributeError:
+            overrides = None
+    try:
+        from arc.core.config import load_arc_toml
+        _path, config = load_arc_toml()
+    except Exception:
+        config = {}
+    return _core_resolve(role, overrides=overrides, config=config)
 
 
 def load_ideator():

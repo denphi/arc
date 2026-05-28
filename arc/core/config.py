@@ -8,6 +8,7 @@ that work so the two call sites stay in sync.
 
 from __future__ import annotations
 
+import copy
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -55,11 +56,16 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
     Returns ``(config_path, config_dict)``. When no config can be found, the
     dict is empty and ``config_path`` is whatever ``resolve_config_path``
     returned (which may not actually exist on disk).
+
+    The returned dict is a fresh ``deepcopy`` of the cache entry — review
+    item #A12 — so callers that mutate it can't corrupt the shared cached
+    object.
     """
     config_path = resolve_config_path(path)
     if not config_path.exists():
         return config_path, {}
-    return config_path, _cached_load_toml(str(config_path), config_path.stat().st_mtime_ns)
+    cached = _cached_load_toml(str(config_path), config_path.stat().st_mtime_ns)
+    return config_path, copy.deepcopy(cached)
 
 
 @lru_cache(maxsize=8)
@@ -68,6 +74,8 @@ def _cached_load_toml(path_str: str, mtime_ns: int) -> dict[str, Any]:
 
     Called via a small wrapper so the ``Path`` object isn't part of the cache
     key; the mtime tag invalidates entries automatically when the file changes.
+    Callers receive a deepcopy via ``load_arc_toml`` so they're free to mutate
+    without leaking changes into other readers (#A12).
     """
     return _load_toml(Path(path_str))
 

@@ -781,6 +781,51 @@ def _parse_refinement_target(refinement: str) -> dict:
     return {}
 
 
+def _parse_target_command(raw: str, current_target: dict | None = None) -> tuple[str, dict, str]:
+    """Parse /target commands.
+
+    Returns (action, target, detail), where action is one of:
+      show, set, clear, error
+    """
+    current_target = dict(current_target or {})
+    parts = raw.split(maxsplit=1)
+    if len(parts) == 1:
+        return "show", current_target, ""
+
+    arg = parts[1].strip()
+    if not arg:
+        return "show", current_target, ""
+
+    lowered = arg.lower()
+    if lowered in {"clear", "reset", "none", "off"}:
+        return "clear", {}, ""
+
+    merge = False
+    for prefix in ("update ", "merge ", "add "):
+        if lowered.startswith(prefix):
+            merge = True
+            arg = arg[len(prefix):].strip()
+            break
+
+    lowered = arg.lower()
+    for prefix in ("set ", "replace "):
+        if lowered.startswith(prefix):
+            arg = arg[len(prefix):].strip()
+            break
+
+    parsed = _parse_target(arg)
+    if not parsed:
+        return (
+            "error",
+            current_target,
+            "Could not parse a numeric target. Try: /target result=5 or /target bandgap_ev=1.1",
+        )
+
+    if merge:
+        parsed = {**current_target, **parsed}
+    return "set", parsed, ""
+
+
 def _refinement_needs_artifact_rebuild(refinement: str) -> bool:
     """Return True when a refinement describes broken generated artifact logic."""
     import re
@@ -1524,6 +1569,8 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
   {c('/run [goal]', BOLD)}        Run fresh with a new primary goal (resets everything)
   {c('/iterate [N]', BOLD)}       Continue iterating on current goal (default: 3 steps)
   {c('continue', BOLD)}           Resume the saved session goal for one iteration
+  {c('/target [key=value]', BOLD)} Show or replace target; use clear/reset to remove it
+  {c('/target update key=value', BOLD)} Merge one target key into the current target
   {c('/optimize [G] [P]', BOLD)}  Genetic algorithm: G generations, P population (defaults: 10 8)
   {c('/exec <id> [k=v]', BOLD)}   Run artifact directly with given parameters
   {c('/sweep [id]', BOLD)}        Run the parameter sweep for current or named artifact
@@ -1542,11 +1589,29 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
 {c('─' * 56, DIM)}
 {c('Current session:', BOLD)} {c(workflow.session_id, CYAN)}
 {c('Primary goal:   ', BOLD)} {c(ctx.memory.get('primary_goal') or current_goal or 'none', DIM)}
+{c('Target:         ', BOLD)} {c(ctx.memory.get('target') or 'none', DIM)}
 {c('Refinements:    ', BOLD)} {c(str(len(ctx.memory.get('refinements', []))) + ' constraint(s)', DIM)}
 {c('Current artifact:', BOLD)} {c(f"{artifact.name}  ({artifact.artifact_id[:8]}...)" if artifact else 'none', DIM)}
 {c('Coder:           ', BOLD)} {c(_selected_coder(workflow), DIM)}
   {c('Iteration:      ', BOLD)} {c(ctx.iteration, DIM)}
 """)
+            continue
+
+        if raw.lower().startswith("/target"):
+            ctx = workflow._context
+            action, target, detail = _parse_target_command(raw, ctx.memory.get("target", {}))
+            if action == "show":
+                step("Target", target or "none")
+            elif action == "clear":
+                ctx.memory.pop("target", None)
+                _save_session(workflow, current_goal)
+                ok("Target cleared.")
+            elif action == "set":
+                ctx.memory["target"] = target
+                _save_session(workflow, current_goal)
+                ok(f"Target set to {target}")
+            else:
+                err(detail)
             continue
 
         if raw.lower() == "/clear":

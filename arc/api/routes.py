@@ -1,8 +1,9 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from arc.api.security import require_api_token, validate_provider_base_url
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore
 from arc.orchestrator.workflow import ResearchWorkflow
@@ -12,7 +13,10 @@ from arc.schemas.research import ResearchGoal
 from arc.schemas.review import ReviewResult
 from arc.session import new_session_id, session_paths, sim2l_home, validate_session_id
 
-router = APIRouter()
+# Review item #T4: every route here runs against caller-controlled inputs;
+# applying the bearer-token gate at router level (rather than per-endpoint)
+# keeps it impossible to add a new route that forgets the check.
+router = APIRouter(dependencies=[Depends(require_api_token)])
 
 
 class LLMConfig(BaseModel):
@@ -48,14 +52,39 @@ def _workflow(
     session_id: str | None = None,
     workflow_name: str = "research-loop",
 ) -> ResearchWorkflow:
-    return ResearchWorkflow(
+    # Review item #T4: base_url flows into provider HTTP clients. Validate
+    # it for openwebui (the only provider that actually honours base_url)
+    # so /research/start can't be used as an SSRF primitive either.
+    safe_base_url = llm.base_url
+    if llm.provider == "openwebui" and llm.base_url:
+        safe_base_url = validate_provider_base_url(llm.base_url)
+    resolved_session = session_id or new_session_id()
+    workflow = ResearchWorkflow(
         provider_name=llm.provider,
         token=llm.token,
         model=llm.model,
-        base_url=llm.base_url,
-        session_id=session_id or new_session_id(),
+        base_url=safe_base_url,
+        session_id=resolved_session,
         workflow_name=workflow_name,
     )
+
+    # Splice persisted strategy + recipe state into the workflow's
+    # context memory so the resolver picks them up. Without this, a
+    # client that called POST /strategies/{role} or /recipes/{n}/apply
+    # would see their choice silently ignored when /research/start ran
+    # the workflow with default agents. Best-effort: a missing or
+    # malformed state file falls through to defaults rather than
+    # raising — the API surface should degrade, not 500.
+    try:
+        from arc.api.session_state import load_state
+        state = load_state(resolved_session) or {}
+        for key in ("strategy_overrides", "active_recipe",
+                    "recipe_applied", "recipe_suggested"):
+            if key in state and state[key]:
+                workflow._context.memory[key] = state[key]
+    except Exception:  # noqa: BLE001 — state lookup is best-effort
+        pass
+    return workflow
 
 
 def _require_session_id(session_id: str | None) -> str:
@@ -189,8 +218,10 @@ async def list_results(session_id: str | None = None):
 
 @router.post("/review/run")
 async def run_review(req: ReviewRequest) -> ReviewResult:
+    from arc.api.session_state import load_state
     from arc.contracts.agent import AgentContext
-    from arc.packages import load_reviewer
+    from arc.core.config import load_arc_toml
+    from arc.core.strategies import resolve_role as resolve_strategy_role
     from arc.session import load_session_meta
 
     target = dict(req.target)
@@ -204,8 +235,32 @@ async def run_review(req: ReviewRequest) -> ReviewResult:
             detail="review target is required unless session_id has a saved target",
         )
 
-    ReviewerAgent = load_reviewer().ReviewerAgent
-    agent = ReviewerAgent(context=AgentContext(session_id=session_id, memory={"target": target}))
+    # Pick the reviewer through the strategy resolver so a client that
+    # selected ``reflective`` via POST /strategies/reviewer (or via a
+    # /recipes/.../apply call) actually gets that reviewer, not the
+    # bundled default. Falls through to default when no override is set.
+    overrides: dict | None = None
+    if req.session_id:
+        state = load_state(session_id)
+        overrides = state.get("strategy_overrides") or None
+    try:
+        _path, config = load_arc_toml()
+    except Exception:
+        config = {}
+    ReviewerAgent = resolve_strategy_role(
+        "reviewer", overrides=overrides, config=config,
+    )
+
+    # Hand the reviewer the same memory shape the chat layer gives it —
+    # target plus the persisted state so reflective reviewers can read
+    # run_history / failure_clusters when available.
+    memory: dict = {"target": target}
+    if req.session_id:
+        meta = load_session_meta(session_id) or {}
+        for key in ("run_history", "failure_clusters", "schema_registry"):
+            if meta.get(key):
+                memory[key] = meta[key]
+    agent = ReviewerAgent(context=AgentContext(session_id=session_id, memory=memory))
     return await agent.run(req.result)
 
 
@@ -213,10 +268,17 @@ async def run_review(req: ReviewRequest) -> ReviewResult:
 
 @router.post("/provider/models")
 async def list_models(llm: LLMConfig) -> list[str]:
-    """Return available models for the given provider/endpoint."""
+    """Return available models for the given provider/endpoint.
+
+    Review item #T4: the openwebui branch dispatches an HTTP client at
+    ``llm.base_url``. We validate it against the configured allowlist before
+    creating the provider so a caller can't pivot ``/provider/models`` into
+    an SSRF probe of internal services.
+    """
     if llm.provider == "openwebui":
         from arc.providers.openwebui.provider import OpenWebUIProvider
-        p = OpenWebUIProvider(base_url=llm.base_url, token=llm.token, model=llm.model)
+        safe_url = validate_provider_base_url(llm.base_url) if llm.base_url else None
+        p = OpenWebUIProvider(base_url=safe_url, token=llm.token, model=llm.model)
         return p.list_models()
     if llm.provider == "anthropic":
         return ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]

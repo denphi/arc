@@ -52,18 +52,27 @@ class IdeatorAgent(AgentContract):
     async def run(self, input_data: ResearchGoal) -> ResearchProposal:
         goal = input_data if isinstance(input_data, ResearchGoal) else ResearchGoal(**input_data)
 
-        import os
-        catalog_url = os.environ.get("SIM2L_CATALOG_URL", "http://localhost:8002")
-        results_url = os.environ.get("SIM2L_RESULTS_URL", "http://localhost:8003")
-
         # ── Catalog search ────────────────────────────────────────────────
-        keywords = _goal_keywords(goal.goal)
-        catalog_hits = _search_catalog(catalog_url, keywords)
-
-        # Fetch recent results for the top catalog hit (if any).
+        # The Searcher role decides ranking strategy (keyword vs embedding
+        # vs ...). The ideator only consumes the ranked hits + prior runs.
+        catalog_hits: list[dict] = []
         prior_results: list[dict] = []
-        if catalog_hits:
-            prior_results = _search_results(results_url, catalog_hits[0].get("name", ""), limit=3)
+        try:
+            from arc.core.strategies import resolve_role as _resolve
+            overrides = self.context.memory.get("strategy_overrides") or {}
+            try:
+                from arc.core.config import load_arc_toml
+                _p, config = load_arc_toml()
+            except Exception:
+                config = {}
+            SearcherCls = _resolve("searcher", overrides=overrides, config=config)
+            searcher = SearcherCls(context=self.context)
+            search_result = await searcher.search(goal)
+            catalog_hits = search_result.catalog_hits
+            prior_results = search_result.prior_results
+        except Exception as exc:  # noqa: BLE001 — search is best-effort
+            import logging as _logging
+            _logging.getLogger(__name__).debug("Searcher failed: %s", exc)
 
         # ── Session context ───────────────────────────────────────────────
         run_history: list[dict] = self.context.memory.get("run_history", [])
@@ -110,21 +119,47 @@ class IdeatorAgent(AgentContract):
 
             context_section = "\n\n".join(filter(None, [catalog_block, results_block, history_block, registry_block]))
 
-            prompt = (
-                "You are a scientific research assistant.\n\n"
-                f"Generate a structured research proposal for the following goal:\n"
-                f"Goal: {goal.goal}\n"
-                f"Domain: {goal.domain or 'general'}\n"
-                f"Constraints: {goal.constraints}\n\n"
+            # Prefer a domain-specific prompt template when the active
+            # goal has a domain that matches a package's prompts/*.md
+            # H1. Falls back to the built-in template below when no
+            # match is found. See arc.core.prompts.find_prompt.
+            from arc.core.prompts import find_prompt, safe_format
+            overrides = self.context.memory.get("prompt_overrides") or None
+            template = find_prompt(
+                "hypothesis_generation",
+                domain=goal.domain,
+                overrides=overrides,
             )
-            if context_section:
-                prompt += (
-                    "Available context — use this to avoid duplicating existing work "
-                    "and to build on prior findings:\n\n"
-                    + context_section
-                    + "\n\n"
+
+            if template is not None:
+                prompt = safe_format(
+                    template,
+                    goal=goal.goal,
+                    domain=goal.domain or "general",
+                    constraints=goal.constraints,
+                    context=context_section,
+                    target_property=", ".join((goal.target or {}).keys()) or "unspecified",
+                    material_system=(goal.constraints or {}).get("material_system", "unspecified"),
+                    simulation_method=(goal.constraints or {}).get(
+                        "simulation_method", "any computational method"
+                    ),
                 )
-            prompt += "The proposal should be specific, testable, and suitable for a computational simulation."
+            else:
+                prompt = (
+                    "You are a scientific research assistant.\n\n"
+                    f"Generate a structured research proposal for the following goal:\n"
+                    f"Goal: {goal.goal}\n"
+                    f"Domain: {goal.domain or 'general'}\n"
+                    f"Constraints: {goal.constraints}\n\n"
+                )
+                if context_section:
+                    prompt += (
+                        "Available context — use this to avoid duplicating existing work "
+                        "and to build on prior findings:\n\n"
+                        + context_section
+                        + "\n\n"
+                    )
+                prompt += "The proposal should be specific, testable, and suitable for a computational simulation."
             return await provider.complete_structured(prompt, ResearchProposal)
 
         return ResearchProposal(

@@ -147,6 +147,13 @@ class ResearchWorkflow:
         self._db_path = db_path
 
         self.adapter = _build_adapter(db_path=db_path, session_id=self.session_id)
+        # The backend handles the loop's publish actions (register /
+        # persist / record). Resolves to a sim2l backend when sim2l is
+        # active + the adapter supports it, else a silent no-op so ARC
+        # runs fully local with no shared persistence. See
+        # arc/runtime/backend.py and design/architecture.md.
+        from arc.runtime.backend import resolve_backend
+        self.backend = resolve_backend(self.adapter)
         self.artifacts = ArtifactRegistry(root=artifact_root)
         self.results = ResultsStore(root=results_root)
         self.provenance = ProvenanceLog(log_path=provenance_path)
@@ -209,8 +216,18 @@ class ResearchWorkflow:
         return ref
 
     def _get_field(self, value, field: str):
+        """Look up ``field`` on ``value`` for workflow-YAML reference resolution.
+
+        Dict access is unrestricted (callers control their own payload), but
+        attribute access is filtered: leading-underscore names — including
+        every dunder — are rejected. This stops a malicious workflow YAML
+        from walking the Python object graph via references like
+        ``review.output.__class__.__init__.__globals__`` (review item #A9).
+        """
         if isinstance(value, dict):
             return value.get(field)
+        if not isinstance(field, str) or field.startswith("_"):
+            return None
         return getattr(value, field, None)
 
     # Operators must be ordered longest-first so two-character forms (>=, <=, !=, ==)
@@ -331,6 +348,23 @@ class ResearchWorkflow:
             self._context,
         )
 
+    # Methods that workflow YAML files are allowed to invoke on an adapter.
+    # Any other ``method:`` value in a step is rejected — this keeps a
+    # malicious / typo'd workflow file from calling private helpers (eg.
+    # ``_get_repo``, ``_push_to_catalog``) via ``getattr(adapter, …)``.
+    # Review item #A6.
+    _ALLOWED_ADAPTER_METHODS = frozenset({
+        "run",
+        "run_sweep",
+        "validate_artifact",
+        "prepare_inputs",
+        "get_status",
+        "collect_outputs",
+        "collect_logs",
+        "collect_metrics",
+        "register_artifact",
+    })
+
     async def _execute_workflow_step(self, step: dict, state: dict, workflow_config: dict):
         input_data = self._resolve_ref(step.get("input", "user_goal"), state, workflow_config)
         if "agent" in step:
@@ -342,6 +376,12 @@ class ResearchWorkflow:
             return await self._execute_skill(step["skill"], input_data, state)
         if "adapter" in step:
             method_name = step.get("method", "run")
+            if method_name not in self._ALLOWED_ADAPTER_METHODS:
+                allowed = ", ".join(sorted(self._ALLOWED_ADAPTER_METHODS))
+                raise ValueError(
+                    f"Workflow step requested disallowed adapter method "
+                    f"{method_name!r}. Allowed methods: {allowed}."
+                )
             adapter = self._adapter_for_step(step)
             method = getattr(adapter, method_name)
             if isinstance(input_data, dict) and "artifact" in input_data:

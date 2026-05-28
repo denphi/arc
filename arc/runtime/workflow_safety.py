@@ -24,10 +24,26 @@ from __future__ import annotations
 import ast
 import cmath
 import itertools
+import logging
 import math
 import multiprocessing as mp
 import types
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+# Modules from the Python stdlib that we expect to be importable in every
+# supported environment. Failure to import any of these is a config bug
+# (a stripped-down Python build, broken venv, etc.) and we'd rather fail
+# loudly than silently fall back to a workflow that can't `import math`.
+# Review item #T20.
+_REQUIRED_STDLIB_MODULES: frozenset[str] = frozenset({
+    "math", "cmath", "itertools", "functools", "operator",
+    "statistics", "random", "decimal", "fractions",
+    "collections", "heapq", "bisect", "array",
+    "typing", "abc", "dataclasses", "enum",
+})
 
 
 # ── Allow-lists ──────────────────────────────────────────────────────────────
@@ -134,20 +150,63 @@ def _check_attribute(node: ast.Attribute) -> None:
         )
 
 
+def _constant_fold_string(node: ast.AST) -> str | None:
+    """Best-effort constant fold to a Python string.
+
+    Catches the basic concat tricks (``"a" + "b"``), repeat (``"x" * 5``),
+    and joined strings made entirely of constants — enough to spot
+    ``"__cla" + "ss__"`` style escapes in subscript indices without trying
+    to be a full constant folder. Returns ``None`` when the value isn't a
+    statically-known string.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            else:
+                # f-string interpolation — can't fold safely; refuse.
+                return None
+        return "".join(parts)
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.Add):
+            left = _constant_fold_string(node.left)
+            right = _constant_fold_string(node.right)
+            if left is not None and right is not None:
+                return left + right
+            return None
+        if isinstance(node.op, ast.Mult):
+            for str_node, num_node in ((node.left, node.right), (node.right, node.left)):
+                base = _constant_fold_string(str_node)
+                if base is None:
+                    continue
+                if isinstance(num_node, ast.Constant) and isinstance(num_node.value, int):
+                    # Cap the repeat so an attacker can't trigger memory blowup
+                    # inside the safety checker itself.
+                    if num_node.value < 0 or num_node.value > 64:
+                        return None
+                    return base * num_node.value
+            return None
+    return None
+
+
 def _check_subscript(node: ast.Subscript) -> None:
     """Reject ``obj['__class__']`` style escapes.
 
-    Only flags constant string subscripts — variable indexing is fine because
-    those values come from validated inputs at runtime.
+    Flags constant string subscripts AND simple constant-folded expressions
+    that statically evaluate to a string (``"__cla" + "ss__"``, ``"_" * 2 +
+    "class" + "_" * 2``, plain-constant f-strings). Variable indexing is
+    fine — those values come from validated inputs at runtime.
     """
-    # Python 3.9+: subscript value is the indexed expression directly.
-    index = node.slice
-    if isinstance(index, ast.Constant) and isinstance(index.value, str):
-        if _looks_unsafe_name(index.value):
-            raise WorkflowSafetyError(
-                f"workflow.py uses disallowed subscript '[{index.value!r}]'. "
-                f"Dunder subscript access is forbidden in sandboxed workflows."
-            )
+    folded = _constant_fold_string(node.slice)
+    if folded is not None and _looks_unsafe_name(folded):
+        raise WorkflowSafetyError(
+            f"workflow.py uses disallowed subscript '[{folded!r}]' "
+            f"(after constant folding). Dunder subscript access is "
+            f"forbidden in sandboxed workflows."
+        )
 
 
 def _check_name(node: ast.Name) -> None:
@@ -284,8 +343,21 @@ def build_safe_globals(allowed_modules: frozenset[str] = BUILDER_ALLOWED_IMPORTS
     for mod_name in allowed_modules:
         try:
             safe_globals[mod_name] = importlib.import_module(mod_name)
-        except ImportError:
-            pass
+        except ImportError as exc:
+            # Review item #T20: stdlib modules must be importable. Silently
+            # swallowing the error left workflows that used `import math`
+            # hitting a NameError deep inside `simulate()` with no signal
+            # that the allow-list intended to provide it.
+            if mod_name in _REQUIRED_STDLIB_MODULES:
+                raise RuntimeError(
+                    f"Required stdlib module {mod_name!r} is not importable: {exc}. "
+                    "Check the Python build / virtualenv."
+                ) from exc
+            logger.warning(
+                "Optional safe-globals module %r failed to import: %s. "
+                "Workflows that reference it will get NameError.",
+                mod_name, exc,
+            )
     return safe_globals
 
 

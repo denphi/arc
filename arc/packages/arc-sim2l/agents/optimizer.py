@@ -159,8 +159,14 @@ class GeneticOptimizerAgent(AgentContract):
 
         registry: dict = self.context.memory.get("schema_registry", {})
 
-        # Deploy the artifact once and obtain the simulate() function directly.
-        # This avoids delete+redeploy on every evaluation call inside the GA loop.
+        # Resolve the simulate() callable once per optimization run so each
+        # GA evaluation reuses the same in-memory function instead of
+        # paying the load + safety-check cost per call. Review item #T18:
+        # `_import_workflow_func` no longer mutates sys.path/sys.modules
+        # (#A1) — it execs into a throwaway namespace and returns the
+        # callable directly. If the import fails for any reason (the
+        # artifact doesn't ship workflow.py, the source fails the safety
+        # check, etc.), we fall back to `adapter.run()` per evaluation.
         _simulate_func = None
         try:
             from arc.runtime.sim2l_adapter import _import_workflow_func

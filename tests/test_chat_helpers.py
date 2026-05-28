@@ -1,15 +1,10 @@
-import importlib.util
 from types import SimpleNamespace
-from pathlib import Path
 
 import pytest
 
+from arc import chat
 
-CHAT_PATH = Path(__file__).resolve().parents[1] / "examples" / "chat.py"
-spec = importlib.util.spec_from_file_location("arc_chat_helpers", CHAT_PATH)
-chat = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(chat)
+pytestmark = pytest.mark.chat
 
 
 def test_parse_target_infers_bandgap_from_target_ev_shorthand():
@@ -44,6 +39,47 @@ def test_parse_refinement_target_accepts_explicit_target_change():
     target = chat._parse_refinement_target("change the target to 1.05 eV")
 
     assert target == {"bandgap_ev": 1.05}
+
+
+def test_parse_target_command_shows_current_target():
+    action, target, detail = chat._parse_target_command("/target", {"result": 5.0})
+
+    assert action == "show"
+    assert target == {"result": 5.0}
+    assert detail == ""
+
+
+def test_parse_target_command_replaces_current_target():
+    action, target, detail = chat._parse_target_command(
+        "/target result=4.9",
+        {"bandgap_ev": 1.1},
+    )
+
+    assert action == "set"
+    assert target == {"result": 4.9}
+    assert detail == ""
+
+
+def test_parse_target_command_merges_current_target():
+    action, target, detail = chat._parse_target_command(
+        "/target update result=4.9",
+        {"bandgap_ev": 1.1},
+    )
+
+    assert action == "set"
+    assert target == {"bandgap_ev": 1.1, "result": 4.9}
+    assert detail == ""
+
+
+def test_parse_target_command_clears_current_target():
+    action, target, detail = chat._parse_target_command(
+        "/target clear",
+        {"result": 4.9},
+    )
+
+    assert action == "clear"
+    assert target == {}
+    assert detail == ""
 
 
 def test_refinement_needs_artifact_rebuild_for_broken_metric():
