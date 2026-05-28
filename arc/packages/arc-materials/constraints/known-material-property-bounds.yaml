@@ -1,0 +1,19 @@
+# Constraint: known_material_property_bounds
+# Softer than physically_valid_ranges: warn when a value is physically
+# possible but far outside the *typical* range observed for real
+# materials, since that usually signals a modelling problem worth review.
+
+name: known_material_property_bounds
+description: >
+  Warn (do not reject) when an output is inside the absolute physical
+  range but outside the `typical_range` for that property — a plausible
+  but suspicious value that should be flagged to the reviewer.
+
+severity: warning
+applies_to: outputs
+
+rules:
+  - within_typical_range: materials_properties
+  - examples:
+      band_gap: [0.1, 6.0]       # typical_range from materials_properties.yaml
+  - on_violation: flag_for_review

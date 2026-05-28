@@ -113,6 +113,60 @@ async def test_workflow_retries_retry_steps():
     assert FlakyAdapter.attempts == 2
 
 
+# ── YAML engine honours the strategy resolver (TODO item 7) ─────────────
+
+
+def test_resolve_agent_class_honours_session_override():
+    """A ``/strategy``-style override on the session memory must change
+    which class the YAML engine resolves for a role — the chat path
+    already did this; the YAML path now does too."""
+    workflow = ResearchWorkflow()
+
+    default_cls = workflow._resolve_agent_class("reviewer")
+    assert default_cls.__name__ == "ReviewerAgent"
+
+    workflow._context.memory["strategy_overrides"] = {"reviewer": "reflective"}
+    overridden = workflow._resolve_agent_class("reviewer")
+    assert overridden.__name__ == "ReflectiveReviewerAgent"
+    assert overridden is not default_cls
+
+
+def test_resolve_agent_class_unknown_name_falls_back_to_registry():
+    """Non-role agent names (package-specific agents) still go through the
+    registry — the resolver only owns the catalogue roles."""
+    workflow = ResearchWorkflow()
+
+    class _PkgAgent:
+        def __init__(self, context=None):
+            self.context = context
+
+    workflow.registry.register_agent("experiment_decomposer", _PkgAgent)
+    assert workflow._resolve_agent_class("experiment_decomposer") is _PkgAgent
+
+
+def test_resolve_agent_class_bad_override_falls_back_not_raises():
+    """A nonsense override must not make a runnable workflow unrunnable —
+    resolve_role falls back to the catalogue default internally, so the
+    engine still gets a usable class."""
+    workflow = ResearchWorkflow()
+    workflow._context.memory["strategy_overrides"] = {"reviewer": "does-not-exist"}
+    cls = workflow._resolve_agent_class("reviewer")
+    assert cls.__name__ == "ReviewerAgent"  # fell back to default
+
+
+@pytest.mark.asyncio
+async def test_yaml_engine_runs_with_reviewer_override():
+    """End-to-end: a reviewer override flows through run_once's YAML
+    engine and the run still completes."""
+    workflow = ResearchWorkflow()
+    workflow._context.memory["strategy_overrides"] = {"reviewer": "reflective"}
+    result = await workflow.run_once(
+        ResearchGoal(goal="Verify override path", target={"result": 2.0})
+    )
+    assert result["status"] in {"completed", "iteration_limit"}
+    assert "review" in result
+
+
 @pytest.mark.asyncio
 async def test_workflow_name_selects_registered_workflow():
     registry = ComponentRegistry()

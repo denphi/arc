@@ -139,6 +139,58 @@ def test_coder_unknown_backend_raises():
         chat._set_selected_coder(wf, "nonexistent-backend")
 
 
+# ── builder folded into the strategy resolver (TODO item 13) ────────────────
+
+def test_coder_selection_writes_strategy_overrides():
+    """Selecting a coder now writes the unified strategy_overrides store
+    (catalogue key) — not only the legacy agent_overrides."""
+    wf = make_workflow(memory={})
+    wf.registry.list_agent_sources = lambda role: ["arc-codex"]
+    chat._set_selected_coder(wf, "codex")
+    assert wf._context.memory["strategy_overrides"]["builder"] == "codex"
+    # legacy store mirrored for back-compat
+    assert wf._context.memory["agent_overrides"]["coder"] == "arc-codex:coder"
+
+
+def test_coder_builder_clears_both_stores():
+    wf = make_workflow(memory={
+        "strategy_overrides": {"builder": "codex"},
+        "agent_overrides": {"coder": "arc-codex:coder"},
+    })
+    wf.registry.list_agent_sources = lambda role: ["arc-codex"]
+    chat._set_selected_coder(wf, "builder")
+    assert "builder" not in wf._context.memory["strategy_overrides"]
+    assert "coder" not in wf._context.memory["agent_overrides"]
+
+
+def test_coder_selected_reads_strategy_overrides_first():
+    """_selected_coder prefers the resolver store, mapping the catalogue
+    key back to the loop's backend label."""
+    wf = make_workflow(memory={"strategy_overrides": {"builder": "claude_code"}})
+    assert chat._selected_coder(wf) == "arc-claude-code:coder"
+
+
+def test_coder_legacy_agent_overrides_still_honoured():
+    """A session saved before the builder became a strategy role (only
+    agent_overrides set) still resolves to the right backend."""
+    wf = make_workflow(memory={"agent_overrides": {"coder": "arc-codex:coder"}})
+    assert chat._selected_coder(wf) == "arc-codex:coder"
+
+
+def test_coder_agent_class_resolves_through_builder_role():
+    """_coder_agent_class returns (label, class) via the resolver."""
+    from arc.chat.loop import _coder_agent_class
+    wf = make_workflow(memory={"strategy_overrides": {"builder": "codex"}})
+    label, cls = _coder_agent_class(wf)
+    assert label == "arc-codex:coder"
+    assert cls.__name__ == "CodexCoderAgent"
+
+    wf2 = make_workflow(memory={})
+    label2, cls2 = _coder_agent_class(wf2)
+    assert label2 == "builder"
+    assert cls2.__name__ == "Sim2LBuilderAgent"
+
+
 # ── /target ────────────────────────────────────────────────────────────────
 
 def test_target_show():

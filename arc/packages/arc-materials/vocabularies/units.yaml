@@ -1,0 +1,54 @@
+# Canonical units used across materials-science artifacts.
+# Each entry fixes the SI-or-conventional unit ARC expects for a quantity
+# so the `unit_consistency` constraint can flag mismatches and the
+# interpretation prompt can normalise reported values.
+
+units:
+  energy:
+    canonical: eV
+    aliases: [electronvolt, electron_volt]
+    si: J
+    to_si: 1.602176634e-19  # multiply eV by this to get joules
+
+  energy_per_atom:
+    canonical: eV/atom
+    aliases: [eV_per_atom]
+
+  length:
+    canonical: angstrom
+    aliases: ["Å", "Ang", "A"]
+    si: m
+    to_si: 1.0e-10
+
+  pressure:
+    canonical: GPa
+    aliases: [gigapascal]
+    si: Pa
+    to_si: 1.0e9
+
+  temperature:
+    canonical: K
+    aliases: [kelvin]
+
+  force:
+    canonical: eV/angstrom
+    aliases: [eV/Ang, eV/A]
+    si: N
+
+  density:
+    canonical: g/cm³
+    aliases: [g/cm3, g_per_cm3]
+    si: kg/m³
+    to_si: 1000.0
+
+  thermal_conductivity:
+    canonical: W/(m·K)
+    aliases: [W/mK, W/(m*K)]
+
+  magnetic_moment:
+    canonical: µB
+    aliases: [bohr_magneton, muB, uB]
+
+  dimensionless:
+    canonical: dimensionless
+    aliases: ["", "1", "ratio"]

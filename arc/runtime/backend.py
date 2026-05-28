@@ -1,6 +1,6 @@
 """Backend implementations + selection.
 
-Two backends ship today:
+Three backends ship today:
 
   * :class:`NoopBackend` — the default. Every action is a silent no-op
     and ``is_active()`` is False. ARC runs fully local: it ideates,
@@ -12,9 +12,15 @@ Two backends ship today:
     the publish actions to the sim2l catalog/results services. Active
     when the sim2l package is importable.
 
-:func:`resolve_backend` picks one: sim2l when active, otherwise the
-no-op. A future ``GitHubBackend`` (see design/TODO.md item 15) would
-slot in here as a third implementation.
+  * :class:`GitHubBackend` — publishes artifacts (and, optionally, run
+    records) to a GitHub repository via the Contents API. Gives
+    versioning, PR review, and public shareability for free, with no
+    sim2l dependency. Active when a ``GITHUB_TOKEN`` + repo are
+    configured.
+
+:func:`resolve_backend` picks one. Selection precedence: an explicit
+``ARC_BACKEND`` env var (or ``arc.toml [backend] kind``) wins; otherwise
+it infers sim2l-when-active, else the no-op.
 
 Why a backend rather than more adapter methods?
 -----------------------------------------------
@@ -175,20 +181,227 @@ class Sim2lBackend(BackendActions):
         return {"recorded": True, "handled_inline": True, "backend": "sim2l"}
 
 
+# ── GitHub backend ───────────────────────────────────────────────────────
+
+
+def github_config() -> dict[str, str] | None:
+    """Read GitHub backend config from the environment.
+
+    Returns ``{"token", "repo", "branch", "prefix"}`` when a token + repo
+    are present, else ``None``. ``repo`` is ``owner/name``; ``branch``
+    defaults to empty (the repo default branch); ``prefix`` is the path
+    under which artifacts are committed (default ``artifacts``).
+    """
+    import os
+    token = os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("ARC_GITHUB_REPO")
+    if not token or not repo or "/" not in repo:
+        return None
+    return {
+        "token": token,
+        "repo": repo,
+        "branch": os.environ.get("ARC_GITHUB_BRANCH", ""),
+        "prefix": os.environ.get("ARC_GITHUB_PREFIX", "artifacts").strip("/"),
+    }
+
+
+class GitHubBackend(BackendActions):
+    """Publishes artifacts to a GitHub repo via the Contents API.
+
+    ``register_artifact`` commits every file in the artifact directory
+    (``workflow.py`` + ``sim2l.yaml`` + ``arc_record.json`` + any tests)
+    under ``<prefix>/<name>/<version>/`` on the configured repo/branch.
+    ``persist_result`` / ``record_execution`` append a JSON run record
+    under ``<prefix>/<name>/<version>/runs/``.
+
+    Uses ``requests`` against the REST API — no local clone, no extra
+    pip dependency, works from any environment with a token. Every
+    action is best-effort and never raises (per the contract).
+    """
+
+    name = "github"
+    _API = "https://api.github.com"
+
+    def __init__(self, config: dict[str, str] | None = None):
+        self._config = config or github_config()
+
+    def is_active(self) -> bool:
+        return self._config is not None
+
+    # --- internals ---
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._config['token']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+    def _put_file(self, repo_path: str, content: str, message: str) -> dict[str, Any]:
+        """Create-or-update one file via PUT /repos/{repo}/contents/{path}.
+
+        Returns ``{"ok": bool, ...}``; never raises.
+        """
+        import base64
+        import requests
+
+        url = f"{self._API}/repos/{self._config['repo']}/contents/{repo_path}"
+        payload: dict[str, Any] = {
+            "message": message,
+            "content": base64.b64encode(content.encode()).decode(),
+        }
+        if self._config.get("branch"):
+            payload["branch"] = self._config["branch"]
+        try:
+            # If the file already exists we must pass its blob sha to update it.
+            get_params = {"ref": self._config["branch"]} if self._config.get("branch") else {}
+            existing = requests.get(url, headers=self._headers(), params=get_params, timeout=10)
+            if existing.status_code == 200:
+                payload["sha"] = existing.json().get("sha")
+            resp = requests.put(url, headers=self._headers(), json=payload, timeout=15)
+            if resp.status_code in (200, 201):
+                return {"ok": True, "path": repo_path}
+            return {"ok": False, "path": repo_path,
+                    "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+        except Exception as exc:  # noqa: BLE001 — publishing is best-effort
+            logger.debug("github PUT %s failed: %s", repo_path, exc)
+            return {"ok": False, "path": repo_path, "error": str(exc)}
+
+    def _artifact_base(self, artifact: ArtifactRecord) -> str:
+        name = _safe_segment(artifact.name)
+        version = _safe_segment(artifact.version)
+        return f"{self._config['prefix']}/{name}/{version}"
+
+    # --- actions ---
+
+    async def register_artifact(self, artifact: ArtifactRecord) -> dict[str, Any]:
+        from pathlib import Path
+
+        art_dir = Path(artifact.path)
+        if not art_dir.exists():
+            return {"registered": False, "error": f"artifact path missing: {art_dir}"}
+
+        base = self._artifact_base(artifact)
+        committed: list[str] = []
+        errors: list[str] = []
+        for f in sorted(art_dir.iterdir()):
+            if not f.is_file():
+                continue
+            result = self._put_file(
+                f"{base}/{f.name}",
+                f.read_text(),
+                f"arc: publish {artifact.name} {artifact.version} ({f.name})",
+            )
+            if result["ok"]:
+                committed.append(f.name)
+            else:
+                errors.append(result.get("error", "unknown"))
+
+        return {
+            "registered": bool(committed) and not errors,
+            "backend": "github",
+            "repo": self._config["repo"],
+            "path": base,
+            "files": committed,
+            **({"error": "; ".join(errors)} if errors else {}),
+        }
+
+    async def persist_result(
+        self,
+        artifact: ArtifactRecord,
+        execution: ExecutionResult,
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        import json
+
+        base = self._artifact_base(artifact)
+        record = {
+            "run_id": execution.run_id,
+            "status": execution.status,
+            "inputs": inputs,
+            "outputs": execution.outputs,
+            "metrics": execution.metrics,
+        }
+        result = self._put_file(
+            f"{base}/runs/{_safe_segment(execution.run_id)}.json",
+            json.dumps(record, indent=2, default=str),
+            f"arc: result {execution.run_id} for {artifact.name}",
+        )
+        return {"persisted": result["ok"], "backend": "github",
+                **({"error": result["error"]} if not result["ok"] else {})}
+
+    async def record_execution(
+        self,
+        artifact: ArtifactRecord,
+        execution: ExecutionResult,
+        inputs: dict[str, Any],
+        outputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        # The run record written by persist_result already captures the
+        # execution; recording is a no-op here to avoid a duplicate commit.
+        return {"recorded": True, "handled_inline": True, "backend": "github"}
+
+
+def _safe_segment(value: str) -> str:
+    """Sanitise a string for use as a single repo path segment.
+
+    Keeps alnum, dash, underscore, dot; replaces everything else with
+    ``_`` so a crafted artifact name can't escape the prefix directory.
+    """
+    import re
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", str(value)).strip("._")
+    return cleaned or "_"
+
+
 # ── Selection ───────────────────────────────────────────────────────────
 
 
 def resolve_backend(adapter: Any = None) -> BackendActions:
     """Pick the active backend.
 
-    Returns :class:`Sim2lBackend` when sim2l is importable *and* the
-    given ``adapter`` exposes ``register_artifact`` (i.e. it's a
-    Sim2LRuntimeAdapter). Otherwise the silent :class:`NoopBackend`.
+    Selection precedence:
+
+    1. An explicit choice via ``ARC_BACKEND`` (or ``arc.toml [backend]
+       kind``): ``github`` | ``sim2l`` | ``noop``. An explicit choice
+       that can't activate (e.g. ``github`` with no token) falls back to
+       the no-op rather than silently inferring something else.
+    2. Otherwise infer: :class:`Sim2lBackend` when sim2l is importable
+       *and* ``adapter`` exposes ``register_artifact``; else
+       :class:`NoopBackend`.
 
     The ``adapter`` is passed so the sim2l backend reuses the adapter's
     already-configured catalog/results URLs + session ids rather than
     constructing a second one.
     """
+    kind = _explicit_backend_kind()
+    if kind == "github":
+        gh = GitHubBackend()
+        return gh if gh.is_active() else NoopBackend()
+    if kind == "sim2l":
+        if adapter is not None and hasattr(adapter, "register_artifact") and sim2l_importable():
+            return Sim2lBackend(adapter)
+        return NoopBackend()
+    if kind == "noop":
+        return NoopBackend()
+
+    # No explicit choice — infer.
     if adapter is not None and hasattr(adapter, "register_artifact") and sim2l_importable():
         return Sim2lBackend(adapter)
     return NoopBackend()
+
+
+def _explicit_backend_kind() -> str | None:
+    """Return an explicitly-configured backend kind, or None.
+
+    Checks ``ARC_BACKEND`` first, then ``arc.toml [backend] kind``.
+    """
+    import os
+    kind = os.environ.get("ARC_BACKEND")
+    if not kind:
+        try:
+            from arc.core.config import load_arc_toml
+            _path, config = load_arc_toml()
+            kind = (config.get("backend") or {}).get("kind")
+        except Exception:  # noqa: BLE001 — config is optional
+            kind = None
+    return kind.strip().lower() if isinstance(kind, str) and kind.strip() else None

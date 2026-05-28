@@ -1,0 +1,18 @@
+# Constraint: unit_consistency
+# Every quantity reported by an artifact must carry a unit drawn from the
+# `units` vocabulary, and that unit must match the canonical unit declared
+# for the corresponding property.
+
+name: unit_consistency
+description: >
+  Reject results whose reported units are missing or disagree with the
+  canonical unit for the property (see vocabularies/units.yaml and
+  vocabularies/materials_properties.yaml).
+
+severity: error
+applies_to: outputs
+
+rules:
+  - require_unit: true            # every numeric output must declare a unit
+  - unit_from_vocabulary: units   # the unit must resolve in the units vocab
+  - match_property_unit: true     # and equal the property's canonical unit

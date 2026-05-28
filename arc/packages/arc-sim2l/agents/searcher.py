@@ -273,3 +273,102 @@ def _dot_normalised(a: list[float], b: list[float]) -> float:
         return 0.0
     n = min(len(a), len(b))
     return sum(a[i] * b[i] for i in range(n)) / (da * db)
+
+
+# ── GitHub searcher (read side of the GitHub backend) ───────────────────
+
+
+class GitHubSearcherAgent(_BaseSearcher):
+    """Searches artifacts published to a GitHub repo by ``GitHubBackend``.
+
+    The read-side counterpart of ``arc.runtime.backend.GitHubBackend``:
+    where that backend *commits* artifacts under ``<prefix>/<name>/<version>/``,
+    this searcher *lists* them via the GitHub Contents API and returns the
+    ones whose name/description match the goal keywords as ``catalog_hits``
+    in the standard shape (``name``, ``description``, ``input_schema``,
+    ``output_schema``). Inactive (returns empty) when no GitHub config is
+    present, so it degrades to "no prior artifacts" rather than failing.
+    """
+
+    name = "searcher_github"
+    description = (
+        "Lists artifacts published to the configured GitHub repo (the read "
+        "side of the GitHub backend) and ranks them by keyword overlap with "
+        "the goal. Requires GITHUB_TOKEN + ARC_GITHUB_REPO."
+    )
+
+    async def search(self, goal: ResearchGoal) -> SearchResult:
+        from arc.runtime.backend import github_config
+        config = github_config()
+        if config is None:
+            return SearchResult(catalog_hits=[], prior_results=[])
+
+        keywords = set(goal_keywords(goal.goal))
+        hits = _github_list_artifacts(config, keywords)
+        return SearchResult(catalog_hits=hits, prior_results=[])
+
+
+def _github_list_artifacts(config: dict, keywords: set[str], limit: int = 5) -> list[dict]:
+    """List + rank artifacts in the repo's ``<prefix>/`` tree.
+
+    Reads each ``<prefix>/<name>/<version>/arc_record.json`` and keeps the
+    records whose name/description share at least one goal keyword (or all,
+    when the goal has no usable keywords). Best-effort: any API failure
+    yields an empty list. Uses the git trees API (one recursive call)
+    rather than walking ``contents/`` per directory.
+    """
+    import requests
+
+    repo = config["repo"]
+    prefix = config["prefix"]
+    branch = config.get("branch") or "HEAD"
+    headers = {
+        "Authorization": f"Bearer {config['token']}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        tree_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}"
+        resp = requests.get(tree_url, headers=headers, params={"recursive": "1"}, timeout=10)
+        if resp.status_code != 200:
+            return []
+        tree = resp.json().get("tree", [])
+        record_paths = [
+            node["path"] for node in tree
+            if node.get("type") == "blob"
+            and node["path"].startswith(f"{prefix}/")
+            and node["path"].endswith("/arc_record.json")
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("github tree listing failed: %s", exc)
+        return []
+
+    hits: list[dict] = []
+    for path in record_paths:
+        try:
+            raw_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+            params = {"ref": config["branch"]} if config.get("branch") else {}
+            r = requests.get(raw_url, headers={**headers, "Accept": "application/vnd.github.raw"},
+                             params=params, timeout=10)
+            if r.status_code != 200:
+                continue
+            import json
+            record = json.loads(r.text)
+        except Exception:  # noqa: BLE001
+            continue
+        name = record.get("name", "")
+        description = record.get("description", "")
+        metadata = record.get("metadata", {}) or {}
+        haystack = f"{name} {description}".lower()
+        if not keywords or any(k in haystack for k in keywords):
+            hits.append({
+                "name": name,
+                "description": description,
+                "input_schema": metadata.get("sim2l_inputs", {}),
+                "output_schema": metadata.get("sim2l_outputs", {}),
+                "source": "github",
+                "repo_path": path.rsplit("/", 1)[0],
+            })
+        if len(hits) >= limit:
+            break
+    return hits

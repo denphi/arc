@@ -1,0 +1,41 @@
+# Results-report template for materials experiments.
+# Shapes the analysis/interpretation step's output into a consistent
+# structure so reviews and downstream summaries can rely on fixed fields.
+
+name: materials_results_report
+description: >
+  Structured report for a completed materials experiment or sweep. The
+  analysis agent populates each section; empty sections are dropped.
+
+sections:
+  summary:
+    description: One-paragraph plain-language summary of what was run and found.
+
+  key_results:
+    description: The headline metrics with units and how they compare to the target.
+    fields:
+      - name: metric
+      - name: value
+      - name: unit
+      - name: target
+      - name: delta            # value - target
+      - name: within_tolerance # boolean
+
+  best_candidate:
+    description: Parameters of the best-scoring sweep point (if a sweep was run).
+    fields:
+      - composition
+      - lattice_constant
+      - simulation_method
+
+  physical_validity:
+    description: >
+      Results of the package constraints (unit_consistency,
+      physically_valid_ranges, known_material_property_bounds): pass/fail
+      with any flagged values.
+
+  caveats:
+    description: Convergence warnings, residual forces, or method limitations.
+
+  next_steps:
+    description: Suggested refinements for the next iteration of the loop.

@@ -137,10 +137,17 @@ def test_unrelated_help_question_is_not_a_refinement():
 
 
 @pytest.mark.asyncio
-async def test_register_artifact_with_sim2l_uses_adapter_hook():
+async def test_register_artifact_with_sim2l_uses_backend_hook():
+    """Registration routes through ``workflow.backend.register_artifact``
+    when the backend is active."""
+    from arc.chat.plan_mode import set_plan_mode
+    set_plan_mode(False)
+
     artifact = SimpleNamespace(name="test_artifact", version="0.1.0")
 
-    class Adapter:
+    class _Backend:
+        def is_active(self):
+            return True
         async def register_artifact(self, registered_artifact):
             assert registered_artifact is artifact
             return {
@@ -150,7 +157,8 @@ async def test_register_artifact_with_sim2l_uses_adapter_hook():
                 "catalog_persisted": False,
             }
 
-    workflow = SimpleNamespace(adapter=Adapter(), session_id="session-test")
+    workflow = SimpleNamespace(backend=_Backend(), session_id="session-test",
+                               _db_path=None)
 
     result = await chat._register_artifact_with_sim2l(workflow, artifact)
 

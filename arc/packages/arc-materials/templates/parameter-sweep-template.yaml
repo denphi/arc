@@ -1,0 +1,39 @@
+# Parameter-sweep template for materials experiments.
+# Describes a grid sweep over one or more artifact inputs. The planner
+# fills `axes` with concrete value lists; the runtime adapter's
+# `run_sweep` consumes the cartesian product.
+
+name: materials_parameter_sweep
+description: >
+  Grid sweep over selected inputs of a materials sim2l artifact. Each axis
+  lists the discrete values to scan; the sweep runs the cartesian product
+  and collects the chosen output metric for each point.
+
+target_artifact: materials_experiment
+
+# Inputs swept over — replace value lists with the ranges of interest.
+axes:
+  lattice_constant:
+    values: [5.30, 5.40, 5.43, 5.50]
+    unit: angstrom
+  cutoff_energy:
+    values: [400.0, 500.0, 600.0]
+    unit: eV
+
+# Inputs held fixed for every point in the sweep.
+fixed:
+  composition: "Si"
+  simulation_method: "dft"
+  k_points: 4
+
+# Output(s) recorded for each sweep point and used to rank results.
+collect:
+  - band_gap
+  - total_energy
+  - converged
+
+objective:
+  metric: band_gap
+  direction: target   # one of: maximize | minimize | target
+  target_value: 1.1
+  unit: eV

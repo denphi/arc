@@ -63,5 +63,5 @@ steps:
 
 conditions:
   - after: review
-    if: "review.output.review.approved == false"
+    if: "review.output.approved == false"
     goto: reflect

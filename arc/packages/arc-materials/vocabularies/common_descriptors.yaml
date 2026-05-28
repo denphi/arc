@@ -1,0 +1,44 @@
+# Common materials descriptors (features) used to characterise structures
+# and condition models. Referenced by the ideation/hypothesis prompts so
+# proposals describe candidates in a shared vocabulary.
+
+descriptors:
+  composition:
+    description: Chemical formula / stoichiometry of the material
+    example: "Li0.5CoO2"
+
+  crystal_system:
+    description: One of the seven crystal systems
+    allowed:
+      [triclinic, monoclinic, orthorhombic, tetragonal, trigonal, hexagonal, cubic]
+
+  space_group:
+    description: International space-group number (Hermann-Mauguin)
+    range: [1, 230]
+
+  lattice_constant:
+    description: Characteristic lattice parameter
+    unit: angstrom
+
+  atoms_per_cell:
+    description: Number of atoms in the conventional unit cell
+
+  electronegativity_difference:
+    description: Pauling electronegativity spread across constituent elements
+    unit: dimensionless
+
+  average_atomic_mass:
+    description: Composition-weighted mean atomic mass
+    unit: amu
+
+  valence_electron_concentration:
+    description: Mean number of valence electrons per atom (VEC)
+    unit: dimensionless
+
+  coordination_number:
+    description: Average nearest-neighbour count
+
+  packing_fraction:
+    description: Fraction of cell volume occupied by atoms
+    unit: dimensionless
+    range: [0.0, 1.0]

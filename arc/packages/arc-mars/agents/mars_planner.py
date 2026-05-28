@@ -90,16 +90,34 @@ class MARSPlannerAgent(AgentContract):
         "to respect ``context.memory['budget']`` when set."
     )
 
-    async def run(self, input_data: ResearchProposal) -> ExperimentPlan:
-        proposal = (
-            input_data
-            if isinstance(input_data, ResearchProposal)
-            else ResearchProposal(**input_data)
-        )
+    async def run(self, input_data: ResearchProposal | dict) -> ExperimentPlan:
+        # Two callers, two input shapes:
+        #   * as a resolver ``planner`` strategy → a bare ``ResearchProposal``;
+        #   * in the ``mars-research-loop`` YAML workflow → a wrapper dict
+        #     ``{"proposal": {...}, "history": [...], "budget": N}``.
+        # Accept both. When the wrapper carries history/budget, prefer them
+        # over context so the YAML path works without pre-seeding memory.
+        wrapped_history: list[dict] | None = None
+        wrapped_budget = None
+        if isinstance(input_data, ResearchProposal):
+            proposal = input_data
+        elif isinstance(input_data, dict) and "proposal" in input_data:
+            proposal = ResearchProposal(**input_data["proposal"])
+            wrapped_history = input_data.get("history")
+            wrapped_budget = input_data.get("budget")
+        else:
+            proposal = ResearchProposal(**input_data)
+
+        if wrapped_budget is not None and self.context.memory.get("budget") is None:
+            self.context.memory["budget"] = wrapped_budget
 
         # Cold start: delegate to the default planner so we get its
         # rich first-pass plan instead of a parameter-free skeleton.
-        history: list[dict] = self.context.memory.get("run_history", []) or []
+        history: list[dict] = (
+            self.context.memory.get("run_history")
+            or wrapped_history
+            or []
+        )
         if not history:
             from arc.packages import resolve_role
             workflow = self.context.memory.get("workflow")

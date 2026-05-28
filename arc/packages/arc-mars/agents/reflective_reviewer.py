@@ -100,16 +100,33 @@ class ReflectiveReviewerAgent(AgentContract):
         "switches to ``explore`` strategy when steps stop improving."
     )
 
-    async def run(self, input_data: ExecutionResult) -> ReviewResult:
-        execution = (
-            input_data
-            if isinstance(input_data, ExecutionResult)
-            else ExecutionResult(**input_data)
-        )
+    async def run(self, input_data: ExecutionResult | dict) -> ReviewResult:
+        # Two callers, two input shapes:
+        #   * as a resolver ``reviewer`` strategy → a bare ``ExecutionResult``;
+        #   * in the mars YAML workflows → a wrapper dict
+        #     ``{"plan": ..., "result": <ExecutionResult|dict>, "history": [...]}``.
+        wrapped_history: list[dict] | None = None
+        if isinstance(input_data, ExecutionResult):
+            execution = input_data
+        elif isinstance(input_data, dict) and "result" in input_data:
+            result = input_data.get("result")
+            wrapped_history = input_data.get("history")
+            if result is None:
+                execution = ExecutionResult(run_id="none", status="error", outputs={})
+            elif isinstance(result, ExecutionResult):
+                execution = result
+            else:
+                execution = ExecutionResult(**result)
+        else:
+            execution = ExecutionResult(**input_data)
 
         target = self.context.memory.get("target", {})
         registry = self.context.memory.get("schema_registry", {})
-        history: list[dict] = self.context.memory.get("run_history", []) or []
+        history: list[dict] = (
+            self.context.memory.get("run_history")
+            or wrapped_history
+            or []
+        )
         outputs = execution.outputs or {}
 
         # ── Deterministic signals ────────────────────────────────────

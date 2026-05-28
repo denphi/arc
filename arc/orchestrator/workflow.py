@@ -179,6 +179,45 @@ class ResearchWorkflow:
     def _agent(self, agent_class):
         return agent_class(context=self._context)
 
+    def _resolve_agent_class(self, name: str):
+        """Resolve a workflow step's ``agent:`` name to a class.
+
+        For names that are strategy *roles* (ideator, planner, reviewer,
+        reflector, …) this routes through the strategy resolver so the
+        YAML workflow engine honours the same precedence the chat loop
+        does — per-session ``/strategy`` overrides + applied recipes
+        (``memory["strategy_overrides"]``), the ``ARC_STRATEGY_<ROLE>``
+        env var, the ``arc.toml [strategies]`` block, then the catalogue
+        default. Without this the YAML path silently ran the default
+        agent regardless of overrides (TODO item 7).
+
+        Any name that is not a known role (e.g. a package-specific agent
+        like ``experiment_decomposer``, or an explicit ``package:agent``
+        form) falls back to the registry lookup. The registry is also the
+        fallback if the resolver raises, so a malformed override can never
+        make a previously-runnable workflow unrunnable.
+        """
+        from arc.core.strategies import known_roles, resolve_role
+
+        if name in known_roles():
+            overrides = None
+            try:
+                overrides = self._context.memory.get("strategy_overrides") or None
+            except AttributeError:
+                overrides = None
+            try:
+                _path, config = load_arc_toml()
+            except Exception:
+                config = {}
+            try:
+                return resolve_role(name, overrides=overrides, config=config)
+            except Exception as exc:
+                logger.warning(
+                    "resolve_role(%r) failed (%s) — falling back to registry",
+                    name, exc,
+                )
+        return self.registry.get_agent(name)
+
     def _dump(self, value):
         if hasattr(value, "model_dump"):
             return value.model_dump()
@@ -368,7 +407,7 @@ class ResearchWorkflow:
     async def _execute_workflow_step(self, step: dict, state: dict, workflow_config: dict):
         input_data = self._resolve_ref(step.get("input", "user_goal"), state, workflow_config)
         if "agent" in step:
-            agent = self._agent(self.registry.get_agent(step["agent"]))
+            agent = self._agent(self._resolve_agent_class(step["agent"]))
             if step["agent"] == "reflector" and "run" in state["steps"]:
                 return await agent.run(input_data, execution=state["steps"]["run"]["output"])
             return await agent.run(input_data)

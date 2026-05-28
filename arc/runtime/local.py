@@ -4,16 +4,20 @@ from pathlib import Path
 from typing import Any
 
 from arc.contracts.adapter import RuntimeAdapterContract
+from arc.runtime.executor import execute_workflow, load_simulate
 from arc.schemas.artifact import ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
 from arc.sim2l_schema import load_sim2l_schema
 
 
 class LocalRuntimeAdapter(RuntimeAdapterContract):
-    """Executes artifact workflows in the local process.
+    """ARC's own local runtime adapter.
 
-    Placeholder implementation. A production version would invoke the Sim2L
-    execution APIs or run the artifact notebook via Papermill.
+    Runs an artifact's ``simulate(**inputs) -> dict`` via the arc-owned
+    executor (``arc/runtime/executor.py``) — subprocess-isolated with a
+    timeout by default, fully standalone with **no sim2l dependency**.
+    This is the default adapter; ``Sim2LRuntimeAdapter`` is used only
+    when ``ARC_RUNTIME_ADAPTER=sim2l``.
     """
 
     async def validate_artifact(self, artifact: ArtifactRecord) -> ValidationResult:
@@ -31,8 +35,8 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
 
         if (artifact_path / "workflow.py").exists():
             try:
-                from arc.runtime.sim2l_adapter import _import_workflow_func
-                _import_workflow_func(str(artifact_path), artifact.artifact_id)
+                # Loads + safety-lints workflow.py without running it.
+                load_simulate(str(artifact_path), artifact.artifact_id)
             except Exception as exc:
                 errors.append(f"workflow.py import error: {exc}")
 
@@ -52,59 +56,66 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
     ) -> ExecutionResult:
         run_id = str(uuid.uuid4())
         workflow_path = Path(artifact.path) / "workflow.py"
-        if workflow_path.exists():
-            try:
-                from arc.runtime.sim2l_adapter import _import_workflow_func
+        if not workflow_path.exists():
+            # No workflow.py — explicit error rather than a misleading demo
+            # result that would let reviewers think the artifact ran.
+            return ExecutionResult(
+                run_id=run_id,
+                status="error",
+                outputs={},
+                logs=[
+                    f"Run {run_id}: artifact has no workflow.py at "
+                    f"{artifact.path}. LocalRuntimeAdapter requires a "
+                    "workflow.py defining simulate(**inputs) -> dict.",
+                ],
+                metrics={"execution_success": False, "reason": "missing_workflow_py"},
+            )
 
-                input_schema, output_schema = load_sim2l_schema(artifact.path)
-                defaults = {
-                    key: field.get("default", 1.0)
-                    for key, field in input_schema.items()
-                }
-                reconciled = {
-                    **defaults,
-                    **{key: value for key, value in inputs.items() if not input_schema or key in input_schema},
-                }
-                func = _import_workflow_func(artifact.path, artifact.artifact_id)
-                raw_outputs = func(**reconciled) or {}
-                if not isinstance(raw_outputs, dict):
-                    raise ValueError(f"simulate() must return dict, got {type(raw_outputs).__name__}")
-                outputs = {
-                    key: raw_outputs.get(key)
-                    for key in output_schema
-                } if output_schema else raw_outputs
-                return ExecutionResult(
-                    run_id=run_id,
-                    status="completed",
-                    outputs=outputs,
-                    logs=[
-                        f"Run {run_id} started.",
-                        f"Inputs: {reconciled}",
-                        "Execution completed via LocalRuntimeAdapter.",
-                    ],
-                    metrics={"execution_success": True, **reconciled},
-                )
-            except Exception as exc:
-                normalized = await self.normalize_errors(exc)
-                return ExecutionResult(
-                    run_id=run_id,
-                    status="error",
-                    logs=[normalized["message"]],
-                )
+        # Reconcile inputs against the artifact's declared schema: start
+        # from declared defaults, overlay the caller's inputs (dropping
+        # keys the schema doesn't declare, when a schema exists).
+        input_schema, output_schema = load_sim2l_schema(artifact.path)
+        defaults = {
+            key: field.get("default", 1.0) for key, field in input_schema.items()
+        }
+        reconciled = {
+            **defaults,
+            **{
+                key: value
+                for key, value in inputs.items()
+                if not input_schema or key in input_schema
+            },
+        }
 
-        # No workflow.py — return an explicit error rather than a misleading
-        # "value * 2" demo result, which would let downstream reviewers think
-        # the artifact ran successfully and pollute caches with bogus outputs.
+        # Execute via the arc-owned executor (subprocess + timeout by
+        # default). Returns {"ok": bool, "outputs"|"error": ...}.
+        result = execute_workflow(artifact.path, artifact.artifact_id, reconciled)
+
+        if not result.get("ok"):
+            return ExecutionResult(
+                run_id=run_id,
+                status="error",
+                outputs={},
+                logs=[result.get("error", "execution failed")],
+                metrics={"execution_success": False, **reconciled},
+            )
+
+        raw_outputs = result.get("outputs") or {}
+        outputs = (
+            {key: raw_outputs.get(key) for key in output_schema}
+            if output_schema
+            else raw_outputs
+        )
         return ExecutionResult(
             run_id=run_id,
-            status="error",
-            outputs={},
+            status="completed",
+            outputs=outputs,
             logs=[
-                f"Run {run_id}: artifact has no workflow.py at "
-                f"{artifact.path}. LocalRuntimeAdapter requires a "
-                "workflow.py defining simulate(**inputs) -> dict.",
+                f"Run {run_id} started.",
+                f"Inputs: {reconciled}",
+                "Execution completed via LocalRuntimeAdapter (arc executor).",
             ],
-            metrics={"execution_success": False, "reason": "missing_workflow_py"},
+            metrics={"execution_success": True, **reconciled},
         )
 
     async def run_sweep(

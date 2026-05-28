@@ -1,0 +1,20 @@
+# Constraint: physically_valid_ranges
+# Reported property values must fall inside the absolute physical `range`
+# declared for that property. Values outside the range indicate a broken
+# calculation or a unit error rather than a real material.
+
+name: physically_valid_ranges
+description: >
+  Flag any output whose value falls outside the hard physical bounds for
+  its property (the `range` field in vocabularies/materials_properties.yaml).
+  E.g. a negative band gap or a Poisson ratio above 0.5.
+
+severity: error
+applies_to: outputs
+
+rules:
+  - within_property_range: materials_properties
+  - examples:
+      band_gap: [0.0, 14.0]
+      poisson_ratio: [-1.0, 0.5]
+      density: [0.5, 25.0]

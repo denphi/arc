@@ -131,6 +131,18 @@ _ROLE_CATALOGUE: dict[str, tuple[str, tuple[StrategySpec, ...]]] = {
                     "parameter regions."
                 ),
             ),
+            StrategySpec(
+                name="github",
+                package_dir="arc-sim2l",
+                module_path="agents/searcher.py",
+                attr="GitHubSearcherAgent",
+                description=(
+                    "Read side of the GitHub backend: lists artifacts "
+                    "published to the configured GitHub repo and ranks them "
+                    "by keyword overlap with the goal. Requires GITHUB_TOKEN "
+                    "+ ARC_GITHUB_REPO; inactive (empty) otherwise."
+                ),
+            ),
         ),
     ),
     "planner": (
@@ -272,6 +284,44 @@ _ROLE_CATALOGUE: dict[str, tuple[str, tuple[StrategySpec, ...]]] = {
                 module_path="agents/curator.py",
                 attr="CuratorAgent",
                 description="Canonicalises output keys against the registry.",
+            ),
+        ),
+    ),
+    "builder": (
+        "default",
+        (
+            StrategySpec(
+                name="default",
+                package_dir="arc-sim2l",
+                module_path="agents/builder.py",
+                attr="Sim2LBuilderAgent",
+                description=(
+                    "Built-in LLM artifact builder. Generates the "
+                    "workflow.py + sim2l.yaml + tests for a plan. No "
+                    "external coding CLI required."
+                ),
+            ),
+            StrategySpec(
+                name="codex",
+                package_dir="arc-codex",
+                module_path="agents/coder.py",
+                attr="CodexCoderAgent",
+                description=(
+                    "Codex-CLI-backed coder. Drives the Codex agentic "
+                    "coding loop to author the artifact. Requires the "
+                    "codex CLI; selected via /coder codex."
+                ),
+            ),
+            StrategySpec(
+                name="claude_code",
+                package_dir="arc-claude-code",
+                module_path="agents/coder.py",
+                attr="ClaudeCodeCoderAgent",
+                description=(
+                    "Claude-Code-backed coder. Drives the Claude Code "
+                    "agentic loop to author the artifact. Requires the "
+                    "claude CLI; selected via /coder claude-code."
+                ),
             ),
         ),
     ),

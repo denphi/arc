@@ -451,6 +451,26 @@ from arc.chat.session_io import (
 )
 
 
+# The builder is now a strategy role (catalogue role ``builder``), so coder
+# selection flows through the same resolver as every other role. We keep the
+# loop's historical *backend label* (``builder`` / ``arc-codex:coder`` /
+# ``arc-claude-code:coder``) as the public surface — the build step keys its
+# permission/progress callbacks off that label — and map it to/from the
+# catalogue key the resolver understands.
+#
+#   backend label          catalogue key
+#   ---------------------  -------------
+#   builder                default
+#   arc-codex:coder        codex
+#   arc-claude-code:coder  claude_code
+_CODER_LABEL_TO_KEY = {
+    "builder": "default",
+    "arc-codex:coder": "codex",
+    "arc-claude-code:coder": "claude_code",
+}
+_CODER_KEY_TO_LABEL = {v: k for k, v in _CODER_LABEL_TO_KEY.items()}
+
+
 def _available_coding_backends(workflow: ResearchWorkflow) -> list[str]:
     backends = ["builder"]
     for package_name in workflow.registry.list_agent_sources("coder"):
@@ -459,8 +479,19 @@ def _available_coding_backends(workflow: ResearchWorkflow) -> list[str]:
 
 
 def _selected_coder(workflow: ResearchWorkflow) -> str:
-    overrides = workflow._context.memory.get("agent_overrides", {})
-    return overrides.get("coder", "builder")
+    """Return the active coder backend *label*.
+
+    Prefers the resolver's ``strategy_overrides["builder"]`` (the unified
+    role-override store); falls back to the legacy
+    ``agent_overrides["coder"]`` so sessions saved before the builder
+    became a strategy role keep working.
+    """
+    memory = workflow._context.memory
+    key = (memory.get("strategy_overrides") or {}).get("builder")
+    if key:
+        return _CODER_KEY_TO_LABEL.get(key, key)
+    legacy = (memory.get("agent_overrides") or {}).get("coder")
+    return legacy or "builder"
 
 
 def _set_selected_coder(workflow: ResearchWorkflow, backend: str) -> str:
@@ -468,6 +499,7 @@ def _set_selected_coder(workflow: ResearchWorkflow, backend: str) -> str:
         "builtin": "builder",
         "built-in": "builder",
         "sim2l": "builder",
+        "default": "builder",
         "codex": "arc-codex:coder",
         "claude": "arc-claude-code:coder",
         "claude-code": "arc-claude-code:coder",
@@ -477,20 +509,42 @@ def _set_selected_coder(workflow: ResearchWorkflow, backend: str) -> str:
         raise ValueError(
             f"Unknown coder backend '{backend}'. Available: {', '.join(_available_coding_backends(workflow))}"
         )
-    overrides = workflow._context.memory.setdefault("agent_overrides", {})
+    memory = workflow._context.memory
+    strategy_overrides = memory.setdefault("strategy_overrides", {})
+    agent_overrides = memory.setdefault("agent_overrides", {})
+    key = _CODER_LABEL_TO_KEY.get(backend, backend)
     if backend == "builder":
-        overrides.pop("coder", None)
+        # Default: clear both stores so the resolver uses the catalogue default.
+        strategy_overrides.pop("builder", None)
+        agent_overrides.pop("coder", None)
     else:
-        overrides["coder"] = backend
+        strategy_overrides["builder"] = key
+        # Mirror into the legacy store so anything still reading it agrees.
+        agent_overrides["coder"] = backend
     return backend
 
 
 def _coder_agent_class(workflow: ResearchWorkflow):
+    """Resolve the active coder to (backend_label, agent_class).
+
+    Routes through the strategy resolver (``builder`` role) so coder
+    selection honours the same precedence as every other role:
+    ``strategy_overrides`` → ``ARC_STRATEGY_BUILDER`` → ``arc.toml`` →
+    catalogue default. Returns the loop's backend *label* alongside the
+    class so the build step can wire backend-specific callbacks.
+    """
+    from arc.core.strategies import resolve_role as _core_resolve
     backend = _selected_coder(workflow)
-    if backend == "builder":
+    key = _CODER_LABEL_TO_KEY.get(backend, "default")
+    # Resolve from the label we just computed (which already honoured the
+    # legacy store), so the class and the label can't disagree even for a
+    # session that only has the old agent_overrides["coder"] set.
+    try:
+        cls = _core_resolve("builder", overrides={"builder": key})
+    except Exception:
         from arc.packages import load_builder
         return "builder", load_builder().Sim2LBuilderAgent
-    return backend, workflow.registry.get_agent(backend)
+    return backend, cls
 
 
 async def _register_artifact_with_sim2l(workflow: ResearchWorkflow, artifact) -> dict | None:
