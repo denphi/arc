@@ -3,6 +3,7 @@ import importlib
 import pytest
 
 from arc.contracts.agent import AgentContext
+from arc.schemas.research import ExperimentPlan, ResearchProposal
 
 claude_coder = importlib.import_module("arc.packages.arc-claude-code.agents.coder")
 
@@ -10,6 +11,24 @@ claude_coder = importlib.import_module("arc.packages.arc-claude-code.agents.code
 def _fresh_delta_state():
     """Per-call streaming buffers expected by ``_progress_from_event``."""
     return {}, {}
+
+
+def _plan() -> ExperimentPlan:
+    proposal = ResearchProposal(
+        hypothesis="Test hypothesis",
+        objective="Generate a Claude Code artifact",
+        variables=["x"],
+        methodology="compute a deterministic response",
+        expected_outcomes="numeric output",
+        evaluation_metrics=["result"],
+    )
+    return ExperimentPlan(
+        proposal=proposal,
+        artifact_strategy="create",
+        parameters={"x": 1.0},
+        parameter_sweep={"x": [1.0]},
+        success_criteria=["returns result"],
+    )
 
 
 def test_claude_progress_from_system_event():
@@ -131,3 +150,15 @@ async def test_claude_bypass_writes_prompt_to_stdin(monkeypatch, tmp_path):
     # The fake stdin received the prompt bytes.
     assert b"build this artifact" in captured["proc"].stdin.written
     assert captured["proc"].stdin.eof_called is True
+
+
+@pytest.mark.asyncio
+async def test_claude_requires_permission_callback_for_noninteractive_run(monkeypatch):
+    monkeypatch.setattr(claude_coder.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.delenv("ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE", raising=False)
+    agent = claude_coder.ClaudeCodeCoderAgent(context=AgentContext(session_id="test-session"))
+
+    with pytest.raises(RuntimeError) as exc:
+        await agent.run(_plan())
+
+    assert "permission relay is not configured" in str(exc.value)

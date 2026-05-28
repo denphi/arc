@@ -71,6 +71,28 @@ class FlakyAdapter(LocalRuntimeAdapter):
         return await super().run(artifact, inputs)
 
 
+class SpyBackend:
+    def __init__(self):
+        self.registered = []
+        self.persisted = []
+        self.recorded = []
+
+    def is_active(self):
+        return True
+
+    async def register_artifact(self, artifact):
+        self.registered.append(artifact)
+        return {"registered": True, "backend": "spy"}
+
+    async def persist_result(self, artifact, execution, inputs):
+        self.persisted.append((artifact, execution, inputs))
+        return {"persisted": True, "backend": "spy"}
+
+    async def record_execution(self, artifact, execution, inputs, outputs):
+        self.recorded.append((artifact, execution, inputs, outputs))
+        return {"recorded": True, "backend": "spy"}
+
+
 @pytest.mark.asyncio
 async def test_workflow_uses_declared_adapter():
     workflow = ResearchWorkflow()
@@ -89,6 +111,26 @@ async def test_workflow_uses_declared_adapter():
     )
     assert result["execution"]["outputs"]["result"] == 42
     assert result["execution"]["metrics"]["marker_adapter"] is True
+
+
+@pytest.mark.asyncio
+async def test_yaml_workflow_calls_backend_publish_actions():
+    workflow = ResearchWorkflow()
+    backend = SpyBackend()
+    workflow.backend = backend
+
+    result = await workflow.run_once(
+        ResearchGoal(goal="Verify backend publish hooks", target={"result": 2.0})
+    )
+
+    assert result["status"] == "completed"
+    assert len(backend.registered) == 1
+    assert len(backend.persisted) >= 1
+    assert len(backend.recorded) >= 1
+    artifact, execution, inputs = backend.persisted[-1]
+    assert artifact is backend.registered[-1]
+    assert execution.run_id == result["execution"]["run_id"]
+    assert isinstance(inputs, dict)
 
 
 @pytest.mark.asyncio

@@ -66,7 +66,15 @@ def _candidates_for(name: str, plan: dict | None, history: list[dict]) -> list[f
         hi = lo + 1.0
     steps = 8
     grid = [round(lo + (hi - lo) * i / (steps - 1), 6) for i in range(steps)]
-    candidates = [v for v in grid if v not in explored]
+    # Tolerance-based "already explored" check — exact float equality would
+    # almost never match a freshly-rounded grid point against a raw prior
+    # value, so dedup with a relative-ish tolerance instead.
+    explored_nums = [v for v in explored if isinstance(v, (int, float))]
+
+    def _is_new(v: float) -> bool:
+        return all(abs(v - e) > 1e-6 for e in explored_nums)
+
+    candidates = [v for v in grid if _is_new(v)]
     return candidates[:4] or grid[:4]
 
 

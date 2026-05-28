@@ -70,6 +70,12 @@ def test_results_store_save_and_get(tmp_path):
     assert retrieved.outputs["result"] == 2.0
 
 
+def test_results_store_rejects_unsafe_run_id(tmp_path):
+    store = ResultsStore(root=str(tmp_path / "runs"))
+    with pytest.raises(ValueError):
+        store.get("../escape")
+
+
 def test_provenance_log_record_and_read(tmp_path):
     log = ProvenanceLog(log_path=str(tmp_path / "provenance.jsonl"))
     log.record(

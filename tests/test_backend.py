@@ -9,6 +9,7 @@ sim2l backend routes them to the catalog/results services.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -304,6 +305,62 @@ def test_github_register_missing_path_is_handled(monkeypatch):
     assert "missing" in result["error"]
 
 
+def test_github_register_commits_binary_file_without_raising(monkeypatch, tmp_path):
+    """A binary artifact file must not crash register_artifact (the
+    contract says it never raises) — bytes are base64-encoded like any
+    other file."""
+    import requests
+    from arc.runtime.backend import GitHubBackend
+    from arc.schemas.artifact import ArtifactRecord
+    _github_env(monkeypatch)
+    fake = _FakeRequests()
+    monkeypatch.setattr(requests, "get", fake.get)
+    monkeypatch.setattr(requests, "put", fake.put)
+
+    art_dir = tmp_path / "art" / "0.1.0"
+    art_dir.mkdir(parents=True)
+    (art_dir / "workflow.py").write_text("def simulate():\n    return {}\n")
+    # Non-UTF8 bytes — read_text() would have raised UnicodeDecodeError.
+    (art_dir / "data.bin").write_bytes(b"\x00\x01\x02\xff\xfe")
+    rec = ArtifactRecord(artifact_id="a", name="bin model", version="0.1.0",
+                         state="REGISTERED", path=str(art_dir), metadata={})
+
+    result = asyncio.run(GitHubBackend().register_artifact(rec))
+    assert result["registered"] is True
+    assert set(result["files"]) == {"workflow.py", "data.bin"}
+
+
+def test_github_register_commits_nested_files(monkeypatch, tmp_path):
+    import requests
+    from arc.runtime.backend import GitHubBackend
+    _github_env(monkeypatch)
+    fake = _FakeRequests()
+    monkeypatch.setattr(requests, "get", fake.get)
+    monkeypatch.setattr(requests, "put", fake.put)
+
+    art = _real_artifact(tmp_path)
+    art_dir = Path(art.path)
+    (art_dir / "tests").mkdir()
+    (art_dir / "tests" / "test_workflow.py").write_text("def test_ok(): pass\n")
+
+    result = asyncio.run(GitHubBackend().register_artifact(art))
+
+    assert result["registered"] is True
+    assert "tests/test_workflow.py" in result["files"]
+    assert any("/tests/test_workflow.py" in url for url, _ in fake.puts)
+
+
+def test_github_persist_inactive_never_raises(monkeypatch):
+    from arc.runtime.backend import GitHubBackend
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("ARC_GITHUB_REPO", raising=False)
+
+    result = asyncio.run(GitHubBackend().persist_result(_artifact(), _execution(), {}))
+
+    assert result["persisted"] is False
+    assert result["skipped"] is True
+
+
 def test_github_persist_result_writes_run_record(monkeypatch, tmp_path):
     import requests
     from arc.runtime.backend import GitHubBackend
@@ -319,6 +376,22 @@ def test_github_persist_result_writes_run_record(monkeypatch, tmp_path):
     result = asyncio.run(backend.persist_result(_real_artifact(tmp_path), execution, {"x": 1.0}))
     assert result["persisted"] is True
     assert any("/runs/r1.json" in url for url, _ in fake.puts)
+
+
+def test_safe_backend_action_converts_exceptions_to_error_result():
+    from arc.runtime.backend import safe_backend_action
+
+    class _Boom:
+        name = "boom"
+
+        async def persist_result(self, *args):
+            raise RuntimeError("network down")
+
+    result = asyncio.run(safe_backend_action(_Boom(), "persist_result", _artifact(), _execution(), {}))
+
+    assert result["persisted"] is False
+    assert result["backend"] == "boom"
+    assert "network down" in result["error"]
 
 
 def test_github_never_raises_on_network_error(monkeypatch, tmp_path):

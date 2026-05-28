@@ -66,6 +66,27 @@ def _default_export_dir() -> Path:
     return base / "shared" / "skills"
 
 
+def _resolve_skill_transfer_dir(target: str | None) -> Path:
+    """Resolve an import/export directory under the shared skills root.
+
+    The HTTP API accepts caller-controlled JSON, so an arbitrary absolute
+    ``target`` would turn skill import/export into a filesystem read/write
+    primitive. Treat relative targets as subdirectories of the shared skills
+    root and reject anything that resolves outside it.
+    """
+    base = _default_export_dir().resolve()
+    if not target:
+        return base
+    raw = Path(target)
+    candidate = raw.resolve() if raw.is_absolute() else (base / raw).resolve()
+    if candidate == base or base in candidate.parents:
+        return candidate
+    raise HTTPException(
+        status_code=400,
+        detail=f"skill transfer target must be inside {base}",
+    )
+
+
 # ── /strategies ────────────────────────────────────────────────────────
 
 
@@ -516,7 +537,7 @@ async def export_skills_endpoint(
     if not list(src.glob("*.md")):
         return {"src": str(src), "dst": None, "copied": [],
                 "overwritten": [], "skipped_same": [], "skipped_conflict": []}
-    dst = Path(body.target) if body.target else _default_export_dir()
+    dst = _resolve_skill_transfer_dir(body.target)
     report = _transfer_skills(src=src, dst=dst, force=body.force)
     return {"src": str(src), "dst": str(dst), **report}
 
@@ -527,7 +548,7 @@ async def import_skills_endpoint(
     session_id: str,
 ) -> dict[str, Any]:
     session_id = _session(session_id)
-    src = Path(body.target) if body.target else _default_export_dir()
+    src = _resolve_skill_transfer_dir(body.target)
     if not src.exists():
         raise HTTPException(
             status_code=404, detail=f"source does not exist: {src}",

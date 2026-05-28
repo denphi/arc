@@ -20,6 +20,7 @@ from arc.schemas.execution import ExecutionResult
 from arc.schemas.research import ResearchGoal
 from arc.schemas.review import ReviewResult
 from arc.session import session_paths
+from arc.runtime.backend import safe_backend_action
 
 
 def _build_adapter(db_path: str | None = None, session_id: str | None = None):
@@ -371,9 +372,15 @@ class ResearchWorkflow:
             if isinstance(input_data, ArtifactDraft):
                 artifact = self.artifacts.register(input_data)
                 self._context.memory["current_artifact"] = artifact
+                state["backend_register"] = await safe_backend_action(
+                    self.backend, "register_artifact", artifact,
+                )
                 return artifact
             if isinstance(input_data, ArtifactRecord):
                 self._context.memory["current_artifact"] = input_data
+                state["backend_register"] = await safe_backend_action(
+                    self.backend, "register_artifact", input_data,
+                )
             return input_data
         if name == "improve-artifact":
             return {
@@ -438,6 +445,12 @@ class ResearchWorkflow:
                         "outputs": result.outputs,
                         "metrics": result.metrics,
                     })
+                    state["backend_persist"] = await safe_backend_action(
+                        self.backend, "persist_result", artifact, result, prepared,
+                    )
+                    state["backend_record"] = await safe_backend_action(
+                        self.backend, "record_execution", artifact, result, prepared, result.outputs,
+                    )
                 return result
             return await method(input_data)
         raise ValueError(f"Unsupported workflow step: {step}")

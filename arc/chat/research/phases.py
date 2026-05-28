@@ -22,6 +22,7 @@ from arc.chat.ui import (
     BOLD, CYAN, DIM, GREEN, RED, YELLOW,
     c, err, header, ok, step, warn,
 )
+from arc.runtime.backend import safe_backend_action
 
 
 # ── Validation ────────────────────────────────────────────────────────────
@@ -93,6 +94,15 @@ class ExecutionPhase:
             print(f"    {c(log_line, DIM)}")
 
         state.execution = execution
+
+        backend = getattr(workflow, "backend", None)
+        if backend is not None:
+            state.extras["backend_persist"] = await safe_backend_action(
+                backend, "persist_result", state.artifact, execution, inputs,
+            )
+            state.extras["backend_record"] = await safe_backend_action(
+                backend, "record_execution", state.artifact, execution, inputs, execution.outputs,
+            )
 
         # Post-execution validation (separate from adapter.validate_artifact,
         # which only checks the artifact's schema/imports before the run).

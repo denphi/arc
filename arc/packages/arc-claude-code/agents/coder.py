@@ -56,6 +56,13 @@ def _append_option(args: list[str], flag: str, value: str | None) -> None:
         args.extend([flag, value])
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
 def _build_claude_code_args(mcp_config_path: str | None = None) -> list[str]:
     args = shlex.split(os.environ.get("ARC_CLAUDE_CODE_ARGS", "-p"))
     _append_option(args, "--model", os.environ.get("ARC_CLAUDE_CODE_MODEL"))
@@ -251,6 +258,17 @@ class ClaudeCodeCoderAgent(AgentContract):
                 command, workspace, prompt, permission_callback, progress_callback, timeout
             )
         else:
+            allow_non_interactive = bool(
+                self.context.config.get("allow_non_interactive")
+                or _env_flag("ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE", False)
+            )
+            if not allow_non_interactive:
+                raise RuntimeError(
+                    "Claude Code permission relay is not configured. Provide a "
+                    "permission_callback or set "
+                    "ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE=true to run without "
+                    "user approval prompts."
+                )
             stdout, stderr = await self._run_bypass(
                 command, workspace, prompt, progress_callback, timeout
             )

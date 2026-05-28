@@ -462,7 +462,7 @@ def test_skills_export_to_custom_target(session_id, tmp_path):
     _write_skill_file(
         session_id, "beta-bbb.md", "# learned_skill: beta\nbody\n",
     )
-    target = tmp_path / "library"
+    target = Path(os.environ["SIM2L_HOME"]) / "shared" / "skills" / "library"
     payload = asyncio.run(export_skills_endpoint(
         body=SkillTransferRequest(target=str(target)),
         session_id=session_id,
@@ -472,8 +472,8 @@ def test_skills_export_to_custom_target(session_id, tmp_path):
 
 
 def test_skills_import_from_source(session_id, tmp_path):
-    src = tmp_path / "library"
-    src.mkdir()
+    src = Path(os.environ["SIM2L_HOME"]) / "shared" / "skills" / "library"
+    src.mkdir(parents=True)
     (src / "gamma-ccc.md").write_text(
         "# learned_skill: gamma\nshared\n", encoding="utf-8",
     )
@@ -494,8 +494,8 @@ def test_skills_import_conflict_without_force(session_id, tmp_path):
         session_id, "delta-ddd.md",
         "# learned_skill: delta\nsession version\n",
     )
-    src = tmp_path / "library"
-    src.mkdir()
+    src = Path(os.environ["SIM2L_HOME"]) / "shared" / "skills" / "library"
+    src.mkdir(parents=True)
     (src / "delta-ddd.md").write_text(
         "# learned_skill: delta\nshared version\n", encoding="utf-8",
     )
@@ -517,8 +517,8 @@ def test_skills_import_overwrites_with_force(session_id, tmp_path):
         session_id, "delta-ddd.md",
         "# learned_skill: delta\nold\n",
     )
-    src = tmp_path / "library"
-    src.mkdir()
+    src = Path(os.environ["SIM2L_HOME"]) / "shared" / "skills" / "library"
+    src.mkdir(parents=True)
     (src / "delta-ddd.md").write_text(
         "# learned_skill: delta\nnew\n", encoding="utf-8",
     )
@@ -536,10 +536,22 @@ def test_skills_import_overwrites_with_force(session_id, tmp_path):
 def test_skills_import_missing_source_404(session_id, tmp_path):
     with pytest.raises(Exception) as exc:
         asyncio.run(import_skills_endpoint(
-            body=SkillTransferRequest(target=str(tmp_path / "no-such-dir")),
+            body=SkillTransferRequest(target="no-such-dir"),
             session_id=session_id,
         ))
     assert getattr(exc.value, "status_code", None) == 404
+
+
+def test_skills_transfer_rejects_target_outside_shared_root(session_id, tmp_path):
+    _write_skill_file(
+        session_id, "outside-aaa.md", "# learned_skill: outside\nbody\n",
+    )
+    with pytest.raises(Exception) as exc:
+        asyncio.run(export_skills_endpoint(
+            body=SkillTransferRequest(target=str(tmp_path / "outside")),
+            session_id=session_id,
+        ))
+    assert getattr(exc.value, "status_code", None) == 400
 
 
 # ── Server wiring ────────────────────────────────────────────────────

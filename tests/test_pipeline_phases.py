@@ -101,6 +101,30 @@ class _FakeResults:
         return list(self.saved)
 
 
+class _FakeBackend:
+    def __init__(self):
+        self.persisted = []
+        self.recorded = []
+
+    async def persist_result(self, artifact, execution, inputs):
+        self.persisted.append((artifact, execution, inputs))
+        return {"persisted": True}
+
+    async def record_execution(self, artifact, execution, inputs, outputs):
+        self.recorded.append((artifact, execution, inputs, outputs))
+        return {"recorded": True}
+
+
+class _RaisingBackend:
+    name = "raising"
+
+    async def persist_result(self, *args):
+        raise RuntimeError("backend unavailable")
+
+    async def record_execution(self, *args):
+        raise RuntimeError("backend unavailable")
+
+
 @pytest.mark.asyncio
 async def test_execution_phase_uses_explicit_run_inputs():
     adapter = _FakeAdapter()
@@ -114,6 +138,44 @@ async def test_execution_phase_uses_explicit_run_inputs():
     assert state.execution is not None
     assert adapter.prepare_calls[0][1] == {"thickness": 5.0}
     assert wf.results.saved == [state.execution]
+
+
+@pytest.mark.asyncio
+async def test_execution_phase_calls_backend_result_actions():
+    adapter = _FakeAdapter()
+    backend = _FakeBackend()
+    wf = make_workflow()
+    wf.adapter = adapter
+    wf.backend = backend
+    wf.results = _FakeResults()
+    artifact = make_artifact()
+    state = PipelineState(workflow=wf, goal_text="x", artifact=artifact)
+    state.extras["run_inputs"] = {"thickness": 5.0}
+
+    state = await ExecutionPhase().run(state)
+
+    assert backend.persisted == [(artifact, state.execution, {"thickness": 5.0})]
+    assert backend.recorded == [
+        (artifact, state.execution, {"thickness": 5.0}, state.execution.outputs)
+    ]
+    assert state.extras["backend_persist"]["persisted"] is True
+    assert state.extras["backend_record"]["recorded"] is True
+
+
+@pytest.mark.asyncio
+async def test_execution_phase_backend_errors_do_not_abort_run():
+    adapter = _FakeAdapter()
+    wf = make_workflow()
+    wf.adapter = adapter
+    wf.backend = _RaisingBackend()
+    wf.results = _FakeResults()
+    state = PipelineState(workflow=wf, goal_text="x", artifact=make_artifact())
+
+    state = await ExecutionPhase().run(state)
+
+    assert state.execution is not None
+    assert state.extras["backend_persist"]["persisted"] is False
+    assert "backend unavailable" in state.extras["backend_persist"]["error"]
 
 
 @pytest.mark.asyncio

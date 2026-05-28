@@ -35,6 +35,7 @@ independently.
 from __future__ import annotations
 
 import logging
+import inspect
 from typing import Any
 
 from arc.contracts.backend import BackendActions
@@ -42,6 +43,46 @@ from arc.schemas.artifact import ArtifactRecord
 from arc.schemas.execution import ExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+_ACTION_RESULT_KEYS = {
+    "register_artifact": "registered",
+    "persist_result": "persisted",
+    "record_execution": "recorded",
+}
+
+
+async def safe_backend_action(backend: Any, action: str, *args: Any) -> dict[str, Any]:
+    """Call a backend publish action without letting it abort the loop.
+
+    BackendActions implementations are supposed to be best-effort and never
+    raise. This wrapper enforces that contract at the call boundary too, so a
+    misconfigured built-in backend or a third-party backend cannot turn a
+    successful execution into a failed workflow.
+    """
+    result_key = _ACTION_RESULT_KEYS.get(action, "ok")
+    backend_name = getattr(backend, "name", None) or type(backend).__name__
+    if backend is None:
+        return {result_key: False, "skipped": True, "backend": "none"}
+
+    method = getattr(backend, action, None)
+    if method is None:
+        return {
+            result_key: False,
+            "backend": backend_name,
+            "error": f"backend has no {action}",
+        }
+
+    try:
+        result = method(*args)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, dict):
+            return result
+        return {result_key: bool(result), "backend": backend_name}
+    except Exception as exc:  # noqa: BLE001 — publishing is advisory
+        logger.debug("backend %s.%s failed: %s", backend_name, action, exc)
+        return {result_key: False, "backend": backend_name, "error": str(exc)}
 
 
 # ── Detection (layered) ────────────────────────────────────────────────
@@ -237,18 +278,20 @@ class GitHubBackend(BackendActions):
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-    def _put_file(self, repo_path: str, content: str, message: str) -> dict[str, Any]:
+    def _put_file(self, repo_path: str, content: str | bytes, message: str) -> dict[str, Any]:
         """Create-or-update one file via PUT /repos/{repo}/contents/{path}.
 
-        Returns ``{"ok": bool, ...}``; never raises.
+        ``content`` may be text or raw bytes (artifact files can be
+        binary). Returns ``{"ok": bool, ...}``; never raises.
         """
         import base64
         import requests
 
+        raw = content.encode() if isinstance(content, str) else content
         url = f"{self._API}/repos/{self._config['repo']}/contents/{repo_path}"
         payload: dict[str, Any] = {
             "message": message,
-            "content": base64.b64encode(content.encode()).decode(),
+            "content": base64.b64encode(raw).decode(),
         }
         if self._config.get("branch"):
             payload["branch"] = self._config["branch"]
@@ -275,6 +318,23 @@ class GitHubBackend(BackendActions):
     # --- actions ---
 
     async def register_artifact(self, artifact: ArtifactRecord) -> dict[str, Any]:
+        if not self.is_active():
+            return {
+                "registered": False,
+                "skipped": True,
+                "backend": "github",
+                "error": "GitHub backend is not configured",
+            }
+        # Per the BackendActions contract this must never raise — wrap the
+        # whole body so a filesystem race / permission error / unreadable
+        # file becomes an error result, not an exception in the loop.
+        try:
+            return self._commit_artifact_dir(artifact)
+        except Exception as exc:  # noqa: BLE001 — publishing is best-effort
+            logger.debug("github register_artifact failed: %s", exc)
+            return {"registered": False, "backend": "github", "error": str(exc)}
+
+    def _commit_artifact_dir(self, artifact: ArtifactRecord) -> dict[str, Any]:
         from pathlib import Path
 
         art_dir = Path(artifact.path)
@@ -284,16 +344,28 @@ class GitHubBackend(BackendActions):
         base = self._artifact_base(artifact)
         committed: list[str] = []
         errors: list[str] = []
-        for f in sorted(art_dir.iterdir()):
+        for f in sorted(art_dir.rglob("*")):
             if not f.is_file():
                 continue
+            if f.is_symlink():
+                errors.append(f"{f.relative_to(art_dir).as_posix()}: symlinks are not published")
+                continue
+            # Read as bytes so binary artifact files survive (base64 in
+            # _put_file handles both); a single unreadable file is recorded
+            # as an error rather than aborting the whole publish.
+            rel_path = f.relative_to(art_dir).as_posix()
+            try:
+                content: bytes = f.read_bytes()
+            except OSError as exc:
+                errors.append(f"{rel_path}: {exc}")
+                continue
             result = self._put_file(
-                f"{base}/{f.name}",
-                f.read_text(),
-                f"arc: publish {artifact.name} {artifact.version} ({f.name})",
+                f"{base}/{rel_path}",
+                content,
+                f"arc: publish {artifact.name} {artifact.version} ({rel_path})",
             )
             if result["ok"]:
-                committed.append(f.name)
+                committed.append(rel_path)
             else:
                 errors.append(result.get("error", "unknown"))
 
@@ -314,21 +386,32 @@ class GitHubBackend(BackendActions):
     ) -> dict[str, Any]:
         import json
 
-        base = self._artifact_base(artifact)
-        record = {
-            "run_id": execution.run_id,
-            "status": execution.status,
-            "inputs": inputs,
-            "outputs": execution.outputs,
-            "metrics": execution.metrics,
-        }
-        result = self._put_file(
-            f"{base}/runs/{_safe_segment(execution.run_id)}.json",
-            json.dumps(record, indent=2, default=str),
-            f"arc: result {execution.run_id} for {artifact.name}",
-        )
-        return {"persisted": result["ok"], "backend": "github",
-                **({"error": result["error"]} if not result["ok"] else {})}
+        if not self.is_active():
+            return {
+                "persisted": False,
+                "skipped": True,
+                "backend": "github",
+                "error": "GitHub backend is not configured",
+            }
+        try:
+            base = self._artifact_base(artifact)
+            record = {
+                "run_id": execution.run_id,
+                "status": execution.status,
+                "inputs": inputs,
+                "outputs": execution.outputs,
+                "metrics": execution.metrics,
+            }
+            result = self._put_file(
+                f"{base}/runs/{_safe_segment(execution.run_id)}.json",
+                json.dumps(record, indent=2, default=str),
+                f"arc: result {execution.run_id} for {artifact.name}",
+            )
+            return {"persisted": result["ok"], "backend": "github",
+                    **({"error": result["error"]} if not result["ok"] else {})}
+        except Exception as exc:  # noqa: BLE001 — publishing is best-effort
+            logger.debug("github persist_result failed: %s", exc)
+            return {"persisted": False, "backend": "github", "error": str(exc)}
 
     async def record_execution(
         self,
@@ -337,6 +420,13 @@ class GitHubBackend(BackendActions):
         inputs: dict[str, Any],
         outputs: dict[str, Any],
     ) -> dict[str, Any]:
+        if not self.is_active():
+            return {
+                "recorded": False,
+                "skipped": True,
+                "backend": "github",
+                "error": "GitHub backend is not configured",
+            }
         # The run record written by persist_result already captures the
         # execution; recording is a no-op here to avoid a duplicate commit.
         return {"recorded": True, "handled_inline": True, "backend": "github"}

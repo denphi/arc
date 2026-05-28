@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from arc import chat
+from arc.chat import loop as chat_loop
 from tests.fakes import (
     FakeProvider,
     make_workflow,
@@ -355,6 +356,28 @@ async def test_register_skips_silently_when_backend_inactive():
     wf = SimpleNamespace(backend=_InactiveBackend(), session_id="s", _db_path=None)
     result = await chat._register_artifact_with_sim2l(wf, art)
     assert result is None
+
+
+def test_registration_success_parts_uses_github_label():
+    art = make_artifact(name="model")
+    label, detail, show_catalog_warning = chat_loop._registration_success_parts(
+        {
+            "registered": True,
+            "backend": "github",
+            "repo": "owner/repo",
+            "path": "artifacts/model/0.1.0",
+        },
+        art,
+    )
+
+    assert label == "GitHub published"
+    assert detail == "owner/repo / artifacts/model/0.1.0"
+    assert show_catalog_warning is False
+
+
+def test_registration_failure_label_uses_backend_name():
+    assert chat_loop._registration_failure_label({"backend": "github"}) == "GitHub"
+    assert chat_loop._registration_failure_label({"backend": "sim2l"}) == "Sim2L"
 
 
 # ── _check_sim2l_services ──────────────────────────────────────────────────

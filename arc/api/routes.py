@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from arc.api.security import require_api_token, validate_provider_base_url
 from arc.memory.artifact_registry import ArtifactRegistry
-from arc.memory.results_store import ResultsStore
+from arc.memory.results_store import ResultsStore, validate_run_id
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.execution import ExecutionRequest, ExecutionResult
@@ -111,15 +111,26 @@ def _all_session_results() -> list[ExecutionResult]:
     root = sim2l_home()
     if not root.exists():
         return results
-    for session_dir in root.iterdir():
-        if not session_dir.is_dir():
+    try:
+        session_dirs = list(root.iterdir())
+    except OSError:
+        return results
+    for session_dir in session_dirs:
+        try:
+            if not session_dir.is_dir():
+                continue
+        except OSError:
             continue
-        store = ResultsStore(root=str(session_dir / "runs"))
+        runs_dir = session_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        store = ResultsStore(root=str(runs_dir))
         results.extend(store.list_all())
     return results
 
 
 def _find_result(run_id: str) -> ExecutionResult:
+    validate_run_id(run_id)
     for result in _all_session_results():
         if result.run_id == run_id:
             return result
@@ -145,7 +156,16 @@ async def start_research(req: ResearchRequest) -> dict[str, Any]:
 
 @router.post("/artifact/create")
 async def create_artifact(draft: ArtifactDraft, session_id: str | None = None):
-    return _registry(_require_session_id(session_id)).register(draft)
+    from arc.runtime.backend import safe_backend_action
+
+    session_id = _require_session_id(session_id)
+    artifact = _registry(session_id).register(draft)
+    try:
+        workflow = _workflow(LLMConfig(), session_id=session_id)
+        await safe_backend_action(workflow.backend, "register_artifact", artifact)
+    except Exception:  # noqa: BLE001 — backend publication is advisory
+        pass
+    return artifact
 
 
 @router.get("/artifact/{artifact_id}")
@@ -173,7 +193,7 @@ async def list_artifacts(session_id: str | None = None):
 
 @router.post("/execution/run")
 async def run_execution(request: ExecutionRequest, session_id: str | None = None):
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+    from arc.runtime.backend import safe_backend_action
 
     if not request.artifact_id:
         raise HTTPException(status_code=400, detail="artifact_id is required")
@@ -185,18 +205,30 @@ async def run_execution(request: ExecutionRequest, session_id: str | None = None
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    paths = session_paths(session_id)
-    adapter = Sim2LRuntimeAdapter(db_path=paths["db"], session_id=session_id)
-    result = await adapter.run(artifact, request.inputs)
-    _results(session_id).save(result)
+    workflow = _workflow(LLMConfig(), session_id=session_id)
+    inputs = await workflow.adapter.prepare_inputs(artifact, request.inputs)
+    result = await workflow.adapter.run(artifact, inputs)
+    workflow.results.save(result)
+    await safe_backend_action(workflow.backend, "persist_result", artifact, result, inputs)
+    await safe_backend_action(
+        workflow.backend, "record_execution", artifact, result, inputs, result.outputs,
+    )
     return result
 
 
 @router.get("/execution/status/{run_id}")
-async def get_status(run_id: str):
-    from arc.runtime.local import LocalRuntimeAdapter
-    adapter = LocalRuntimeAdapter()
-    return {"run_id": run_id, "status": await adapter.get_status(run_id)}
+async def get_status(run_id: str, session_id: str | None = None):
+    try:
+        result = (
+            _results(_require_session_id(session_id)).get(run_id)
+            if session_id else
+            _find_result(run_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return {"run_id": run_id, "status": result.status}
 
 
 # --- Results ---
@@ -205,6 +237,8 @@ async def get_status(run_id: str):
 async def get_result(run_id: str, session_id: str | None = None):
     try:
         return _results(_require_session_id(session_id)).get(run_id) if session_id else _find_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Result not found")
 

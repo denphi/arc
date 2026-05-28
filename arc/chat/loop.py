@@ -528,23 +528,60 @@ def _coder_agent_class(workflow: ResearchWorkflow):
     """Resolve the active coder to (backend_label, agent_class).
 
     Routes through the strategy resolver (``builder`` role) so coder
-    selection honours the same precedence as every other role:
-    ``strategy_overrides`` → ``ARC_STRATEGY_BUILDER`` → ``arc.toml`` →
-    catalogue default. Returns the loop's backend *label* alongside the
-    class so the build step can wire backend-specific callbacks.
+    selection honours the same precedence as every other role. When the
+    session has an explicit choice (``/coder``, stored in
+    ``strategy_overrides["builder"]`` or the legacy
+    ``agent_overrides["coder"]``) that wins; otherwise the resolver's
+    lower layers apply — ``ARC_STRATEGY_BUILDER`` → ``arc.toml
+    [strategies] builder`` → catalogue default. Returns the loop's
+    backend *label* alongside the class so the build step can wire
+    backend-specific callbacks.
     """
     from arc.core.strategies import resolve_role as _core_resolve
-    backend = _selected_coder(workflow)
-    key = _CODER_LABEL_TO_KEY.get(backend, "default")
-    # Resolve from the label we just computed (which already honoured the
-    # legacy store), so the class and the label can't disagree even for a
-    # session that only has the old agent_overrides["coder"] set.
+
+    memory = workflow._context.memory
+    session_key = (
+        (memory.get("strategy_overrides") or {}).get("builder")
+        or _CODER_LABEL_TO_KEY.get((memory.get("agent_overrides") or {}).get("coder"))
+    )
+    # Explicit session choice → force it. No session choice → let the
+    # resolver consult env + arc.toml (don't pin to a key here).
+    overrides = {"builder": session_key} if session_key else None
     try:
-        cls = _core_resolve("builder", overrides={"builder": key})
-    except Exception:
+        from arc.core.config import load_arc_toml
+        _path, config = load_arc_toml()
+    except Exception:  # noqa: BLE001 — arc.toml is optional
+        config = {}
+    try:
+        cls = _core_resolve("builder", overrides=overrides, config=config)
+    except Exception:  # noqa: BLE001 — never let coder resolution break the build
         from arc.packages import load_builder
         return "builder", load_builder().Sim2LBuilderAgent
-    return backend, cls
+
+    # Map the resolved class back to the loop's backend label so the build
+    # step's callback wiring (which keys off the label) matches the class
+    # actually chosen — including when env/arc.toml selected it.
+    label = _label_for_class(cls, session_key)
+    return label, cls
+
+
+def _label_for_class(cls, session_key: str | None) -> str:
+    """Best-effort backend label for a resolved builder class.
+
+    Maps the known coder classes to their loop labels; falls back to the
+    session-derived label, then ``builder``.
+    """
+    by_class = {
+        "CodexCoderAgent": "arc-codex:coder",
+        "ClaudeCodeCoderAgent": "arc-claude-code:coder",
+        "Sim2LBuilderAgent": "builder",
+    }
+    label = by_class.get(cls.__name__)
+    if label:
+        return label
+    if session_key:
+        return _CODER_KEY_TO_LABEL.get(session_key, "builder")
+    return "builder"
 
 
 async def _register_artifact_with_sim2l(workflow: ResearchWorkflow, artifact) -> dict | None:
@@ -571,7 +608,35 @@ async def _register_artifact_with_sim2l(workflow: ResearchWorkflow, artifact) ->
         # No active publish backend → fully local, skip silently.
         return None
 
-    return await backend.register_artifact(artifact)
+    from arc.runtime.backend import safe_backend_action
+    return await safe_backend_action(backend, "register_artifact", artifact)
+
+
+def _registration_success_parts(registration: dict, artifact) -> tuple[str, str, bool]:
+    """Return display label, detail, and whether to show Sim2L catalog advice."""
+    backend_name = str(registration.get("backend") or "sim2l").lower()
+    if backend_name == "github":
+        detail = " / ".join(
+            str(part) for part in (
+                registration.get("repo"),
+                registration.get("path"),
+            ) if part
+        )
+        return "GitHub published", detail or artifact.name, False
+    if backend_name == "sim2l":
+        name = registration.get("sim_name", artifact.name)
+        version = registration.get("sim_version", artifact.version)
+        return "Sim2L registered", f"{name}/{version}", not registration.get("catalog_persisted", True)
+    return f"{backend_name} registered", artifact.name, False
+
+
+def _registration_failure_label(registration: dict) -> str:
+    backend_name = str(registration.get("backend") or "sim2l").lower()
+    if backend_name == "github":
+        return "GitHub"
+    if backend_name == "sim2l":
+        return "Sim2L"
+    return backend_name
 
 
 def _set_session_package_state(workflow: ResearchWorkflow, package_name: str, enabled: bool) -> None:
@@ -874,19 +939,21 @@ async def run_research(
 
             sim2l_registration = await _register_artifact_with_sim2l(workflow, artifact)
             if sim2l_registration and sim2l_registration.get("registered"):
-                name = sim2l_registration.get("sim_name", artifact.name)
-                version = sim2l_registration.get("sim_version", artifact.version)
-                ok(f"Sim2L registered  {c(f'{name}/{version}', DIM)}")
-                if not sim2l_registration.get("catalog_persisted"):
+                label, detail, show_catalog_warning = _registration_success_parts(
+                    sim2l_registration, artifact,
+                )
+                ok(f"{label}  {c(detail, DIM)}")
+                if show_catalog_warning:
                     print(f"  {c('ℹ', CYAN)} Catalog service not reachable — artifact is saved locally only.")
             elif sim2l_registration:
                 error_msg = sim2l_registration.get("error", "unknown error")
+                backend_label = _registration_failure_label(sim2l_registration)
                 _conn_errors = ("connection refused", "max retries", "newconnectionerror", "failed to establish")
-                if any(e in error_msg.lower() for e in _conn_errors):
+                if backend_label == "Sim2L" and any(e in error_msg.lower() for e in _conn_errors):
                     print(f"  {c('ℹ', CYAN)} Sim2L services are not running — artifact saved to local ARC session only.")
                     print(f"  {c('  Start sim2l services to enable catalog/results sync.', DIM)}")
                 else:
-                    warn(f"Sim2L registration skipped: {error_msg}")
+                    warn(f"{backend_label} registration skipped: {error_msg}")
 
             # Save for later iterations
             ctx.memory["current_artifact"] = artifact

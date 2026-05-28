@@ -1,10 +1,24 @@
 """Tests for API route validation and request plumbing."""
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
-from arc.api.routes import ResearchRequest, ReviewRequest, list_artifacts, list_results, run_review, start_research
-from arc.schemas.execution import ExecutionResult
+import arc.api.routes as routes
+from arc.api.routes import (
+    ResearchRequest,
+    ReviewRequest,
+    create_artifact,
+    get_status,
+    list_artifacts,
+    list_results,
+    run_execution,
+    run_review,
+    start_research,
+)
+from arc.schemas.artifact import ArtifactDraft
+from arc.schemas.execution import ExecutionRequest, ExecutionResult
 from arc.schemas.research import ResearchGoal
 
 
@@ -50,6 +64,133 @@ async def test_run_review_requires_target_context():
     with pytest.raises(Exception) as exc:
         await run_review(request)
     assert getattr(exc.value, "status_code", None) == 400
+
+
+@pytest.mark.asyncio
+async def test_run_execution_uses_local_runtime_by_default(monkeypatch):
+    monkeypatch.setenv("ARC_RUNTIME_ADAPTER", "local")
+    session_id = "api-exec-local"
+    artifact = await create_artifact(
+        ArtifactDraft(
+            name="local-exec",
+            description="local execution artifact",
+            files={
+                "workflow.py": (
+                    "def simulate(**inputs):\n"
+                    "    return {'result': inputs.get('x', 1.0) * 3}\n"
+                ),
+                "sim2l.yaml": (
+                    "inputs:\n"
+                    "  x: {type: Number, default: 1.0}\n"
+                    "outputs:\n"
+                    "  result: {type: Number}\n"
+                ),
+            },
+        ),
+        session_id=session_id,
+    )
+
+    result = await run_execution(
+        ExecutionRequest(artifact_id=artifact.artifact_id, inputs={"x": 2.0}),
+        session_id=session_id,
+    )
+
+    assert result.status == "completed"
+    assert result.outputs["result"] == 6.0
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_registers_with_backend(monkeypatch):
+    registered = []
+
+    class _Backend:
+        name = "spy"
+
+        async def register_artifact(self, artifact):
+            registered.append(artifact)
+            return {"registered": True, "backend": "spy"}
+
+    monkeypatch.setattr(
+        routes,
+        "_workflow",
+        lambda *args, **kwargs: SimpleNamespace(backend=_Backend()),
+    )
+
+    artifact = await create_artifact(
+        ArtifactDraft(
+            name="published-api-artifact",
+            description="published from API",
+            files={
+                "workflow.py": "def simulate(**inputs):\n    return {'result': 1}\n",
+                "sim2l.yaml": "outputs:\n  result: {type: Number}\n",
+            },
+        ),
+        session_id="api-create-publish",
+    )
+
+    assert registered == [artifact]
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_survives_backend_setup_failure(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("backend setup failed")
+
+    monkeypatch.setattr(routes, "_workflow", _boom)
+
+    artifact = await create_artifact(
+        ArtifactDraft(
+            name="local-only-api-artifact",
+            description="still saved locally",
+            files={
+                "workflow.py": "def simulate(**inputs):\n    return {'result': 1}\n",
+                "sim2l.yaml": "outputs:\n  result: {type: Number}\n",
+            },
+        ),
+        session_id="api-create-backend-fails",
+    )
+
+    assert artifact.name == "local-only-api-artifact"
+
+
+@pytest.mark.asyncio
+async def test_get_status_reads_saved_result_not_adapter_default():
+    session_id = "api-status"
+    from arc.memory.results_store import ResultsStore
+    from arc.session import session_paths
+
+    store = ResultsStore(root=session_paths(session_id)["runs"])
+    store.save(ExecutionResult(run_id="run-error", status="error"))
+
+    assert await get_status("run-error", session_id=session_id) == {
+        "run_id": "run-error",
+        "status": "error",
+    }
+    with pytest.raises(Exception) as exc:
+        await get_status("missing-run", session_id=session_id)
+    assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_sessionless_result_lookup_rejects_unsafe_run_id():
+    for fn in (get_status, routes.get_result):
+        with pytest.raises(Exception) as exc:
+            await fn("../escape")
+        assert getattr(exc.value, "status_code", None) == 400
+
+
+@pytest.mark.asyncio
+async def test_sessionless_result_scan_is_read_only(monkeypatch):
+    from arc.session import sim2l_home
+
+    stray = sim2l_home() / "shared"
+    stray.mkdir(parents=True)
+
+    with pytest.raises(Exception) as exc:
+        await get_status("missing-run")
+
+    assert getattr(exc.value, "status_code", None) == 404
+    assert not (stray / "runs").exists()
 
 
 # ── Strategy state plumbing (fix for the half-shipped API gap) ────────
