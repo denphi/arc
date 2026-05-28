@@ -1,0 +1,28 @@
+name: failure-aware
+description: >
+  Pairs the failure-clustering reflector with the reflective reviewer
+  so systemic failure modes (NaN outputs, "far from target" cluster,
+  status='failed' streaks) automatically escalate the loop's strategy
+  to ``explore`` on the next iteration. Useful when the search is
+  producing repeated similar failures and the user wants the loop to
+  notice and pivot instead of nudging the same parameters.
+
+  Domain-neutral: no validator override here so the recipe works for
+  any artifact, not just materials. Pair with ``mp-discovery`` or
+  ``bayesian-materials`` for a materials-focused stack with failure
+  awareness on top.
+
+tags:
+  - diagnostic
+  - failure-aware
+  - exploration
+
+triggers:
+  # Only fire when the user already has a target — failure clustering
+  # only earns its keep when there's a "right answer" to be wrong about.
+  - target_keys: [bandgap_ev, band_gap, formation_energy_per_atom, formation_energy]
+    goal_keywords: [stagnant, repeated, failing, stuck, plateau]
+
+strategies:
+  reviewer:  reflective
+  reflector: failure_clustering

@@ -1,0 +1,18 @@
+name: cmaes-continuous
+description: >
+  CMA-ES-driven optimisation for continuous parameter spaces where
+  inputs are correlated (e.g. thickness ↔ effective mass, temperature
+  ↔ doping). Pairs CMA-ES with the cost-aware planner so the initial
+  sweep stays inside plausible bounds, and the reflective reviewer so
+  the loop switches strategies when CMA-ES stagnates.
+
+tags:
+  - continuous
+  - cmaes
+  - correlated-parameters
+
+strategies:
+  planner:   mars_planner
+  reviewer:  reflective
+  searcher:  default
+  optimizer: cmaes

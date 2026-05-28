@@ -1,0 +1,25 @@
+name: bayesian-materials
+description: >
+  GP-driven optimisation for materials-science workflows. Uses Bayesian
+  optimization for parameter search, a cost-aware planner that biases
+  sweeps to unexplored regions, semantic catalog search, and a reflective
+  reviewer that switches to broad exploration when steps stagnate.
+
+tags:
+  - materials
+  - bayesopt
+  - expensive-simulations
+
+triggers:
+  # Materials goal that mentions Bayesian / expensive simulation hints.
+  # mp-discovery wins when the user has a concrete numeric target; this
+  # recipe wins when the framing is exploratory.
+  - domains: [materials]
+    goal_keywords: [bayesian, expensive, sample-efficient, dft, ab initio]
+
+strategies:
+  planner:   mars_planner
+  reviewer:  reflective
+  searcher:  embeddings
+  optimizer: bayesopt
+  validator: materials_evaluators

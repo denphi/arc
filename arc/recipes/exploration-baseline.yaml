@@ -1,0 +1,15 @@
+name: exploration-baseline
+description: >
+  The factory defaults. Use this recipe to quickly revert from a
+  per-strategy override or another recipe back to a known reference
+  configuration without having to clear individual overrides.
+
+tags:
+  - baseline
+  - default
+
+strategies:
+  planner:   default
+  reviewer:  default
+  searcher:  default
+  optimizer: default

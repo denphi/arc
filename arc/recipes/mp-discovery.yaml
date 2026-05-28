@@ -1,0 +1,39 @@
+name: mp-discovery
+description: >
+  Materials Project-driven discovery: pull real DFT-computed reference
+  materials matching the goal's elements + target properties, then
+  optimise a Sim2L workflow around the inputs MP suggests. Pairs the
+  MP searcher with the cost-aware planner, reflective reviewer,
+  Bayesian optimiser, and the arc-materials evaluator validator.
+
+  Requires the MP_API_KEY environment variable (or a .env file with
+  MP_API_KEY=...). Without it, the searcher returns empty and the
+  ideator falls back to its other context sources.
+
+tags:
+  - materials
+  - materials-project
+  - reference-driven
+
+triggers:
+  # Materials goal AND a numeric target on a property MP indexes →
+  # the user is almost certainly trying to design a material against
+  # a real-world reference point. Suggest this recipe.
+  - domains: [materials]
+    target_keys: [bandgap_ev, band_gap, formation_energy_per_atom, formation_energy]
+  # An explicit MP mention beats everything.
+  - goal_keywords: [materials project, materialsproject, mp-id]
+  # Catch the case where the user didn't declare a target but their
+  # first run produced an MP-indexed property anyway. We wait two
+  # iterations so the suggestion lands after the user has seen
+  # something — not on a fresh, no-runs session.
+  - domains: [materials]
+    output_keys: [band_gap, bandgap_ev, formation_energy_per_atom, formation_energy]
+    min_iteration: 2
+
+strategies:
+  planner:   mars_planner
+  reviewer:  reflective
+  searcher:  materials_project
+  optimizer: bayesopt
+  validator: materials_evaluators
