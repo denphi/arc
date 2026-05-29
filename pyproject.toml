@@ -66,6 +66,7 @@ arc = [
   "skills/**/*.md",
   "templates/**/*",
   "extensions/**/*",
+  "ui/static/**/*",
 ]
 
 [tool.ruff]

@@ -121,6 +121,10 @@ class CMAESOptimizerAgent(AgentContract):
                 "Artifact has no sim2l_inputs schema — cannot initialise CMA-ES"
             )
 
+        # Clamp caller-supplied sizes (a user can pass 0 via /optimize).
+        pop_size = max(2, int(pop_size))   # CMA-ES needs ≥2 for a covariance
+        max_generations = max(1, int(max_generations))
+
         registry: dict = self.context.memory.get("schema_registry", {})
         schema_defaults = {
             k: (v.get("default", 1.0) if isinstance(v, dict) else 1.0)

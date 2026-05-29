@@ -157,6 +157,12 @@ class GeneticOptimizerAgent(AgentContract):
         if not schema:
             raise ValueError("Artifact has no sim2l_inputs schema — cannot initialise population")
 
+        # Clamp caller-supplied sizes to a sane minimum. A user can reach
+        # this via ``/optimize <gens> <pop>`` with 0, which would yield an
+        # empty population and crash on ``min(range(0))`` below.
+        pop_size = max(1, int(pop_size))
+        max_generations = max(1, int(max_generations))
+
         registry: dict = self.context.memory.get("schema_registry", {})
 
         # Resolve the simulate() callable once per optimization run so each

@@ -517,12 +517,31 @@ class ResearchWorkflow:
 
             jumped = False
             for condition in conditions:
-                if condition.get("after") == step_id and self._condition_matches(condition.get("if", ""), state):
+                if condition.get("after") != step_id:
+                    continue
+                # A malformed ``if:`` expression must not abort the whole
+                # run — log and treat the condition as not-matched.
+                try:
+                    matched = self._condition_matches(condition.get("if", ""), state)
+                except ValueError as exc:
+                    logger.warning(
+                        "Skipping workflow condition after %r: %s", step_id, exc,
+                    )
+                    continue
+                if matched:
                     goto = condition.get("goto")
                     if goto in step_index:
                         idx = step_index[goto]
                         jumped = True
                         break
+                    # A goto pointing at a step that doesn't exist is almost
+                    # always a typo — surface it instead of silently falling
+                    # through to the next step.
+                    logger.warning(
+                        "Workflow condition after %r has goto=%r, which is not "
+                        "a known step id %s — ignoring the jump.",
+                        step_id, goto, sorted(step_index),
+                    )
             if not jumped:
                 idx += 1
             transitions += 1

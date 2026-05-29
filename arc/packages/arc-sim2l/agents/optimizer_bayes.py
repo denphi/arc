@@ -143,8 +143,12 @@ class BayesOptOptimizerAgent(AgentContract):
             except Exception:
                 return {}
 
+        # Clamp sizes: a user can pass 0 via /optimize, which would make
+        # n_seed 0 (skopt's n_initial_points must be ≥1) and starve the loop.
+        pop_size = max(1, int(pop_size))
+        max_generations = max(1, int(max_generations))
         budget = max(1, max_generations * pop_size)
-        n_seed = min(pop_size, budget)
+        n_seed = max(1, min(pop_size, budget))
 
         # ── Try scikit-optimize backend ─────────────────────────────────
         skopt_run = await _maybe_run_skopt(
