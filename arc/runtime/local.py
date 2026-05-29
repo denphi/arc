@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from itertools import product
 from pathlib import Path
@@ -74,7 +75,9 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
         # Reconcile inputs against the artifact's declared schema: start
         # from declared defaults, overlay the caller's inputs (dropping
         # keys the schema doesn't declare, when a schema exists).
-        input_schema, output_schema = load_sim2l_schema(artifact.path)
+        input_schema, output_schema = await asyncio.to_thread(
+            load_sim2l_schema, artifact.path
+        )
         defaults = {
             key: field.get("default", 1.0) for key, field in input_schema.items()
         }
@@ -89,7 +92,11 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
 
         # Execute via the arc-owned executor (subprocess + timeout by
         # default). Returns {"ok": bool, "outputs"|"error": ...}.
-        result = execute_workflow(artifact.path, artifact.artifact_id, reconciled)
+        # ``execute_workflow`` blocks (spawns + joins a child process), so
+        # run it off the event loop.
+        result = await asyncio.to_thread(
+            execute_workflow, artifact.path, artifact.artifact_id, reconciled
+        )
 
         if not result.get("ok"):
             return ExecutionResult(

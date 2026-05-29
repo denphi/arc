@@ -113,7 +113,17 @@ def _recipe_from_dict(data: dict[str, Any], *, source: str) -> Recipe | None:
     for role, impl in strategies.items():
         if isinstance(role, str) and isinstance(impl, str):
             clean_strategies[role] = impl
+        else:
+            logger.warning(
+                "Recipe %r: dropping invalid strategy entry %r → %r "
+                "(both role and impl must be strings)",
+                data.get("name", "<unnamed>"), role, impl,
+            )
     if not clean_strategies:
+        logger.warning(
+            "Recipe %r has no valid strategies after filtering — ignoring",
+            data.get("name", "<unnamed>"),
+        )
         return None
     tags = data.get("tags") or ()
     if isinstance(tags, list):

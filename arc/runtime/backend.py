@@ -34,6 +34,7 @@ independently.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import inspect
 from typing import Any
@@ -234,9 +235,13 @@ def github_config() -> dict[str, str] | None:
     under which artifacts are committed (default ``artifacts``).
     """
     import os
+    import re
     token = os.environ.get("GITHUB_TOKEN")
     repo = os.environ.get("ARC_GITHUB_REPO")
-    if not token or not repo or "/" not in repo:
+    # ``repo`` is interpolated into the API URL after ``/repos/``; require a
+    # strict ``owner/name`` shape so a malformed value can't smuggle extra
+    # path segments or query/host tricks into the request URL.
+    if not token or not repo or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
         return None
     return {
         "token": token,
@@ -328,8 +333,10 @@ class GitHubBackend(BackendActions):
         # Per the BackendActions contract this must never raise — wrap the
         # whole body so a filesystem race / permission error / unreadable
         # file becomes an error result, not an exception in the loop.
+        # ``_commit_artifact_dir`` does blocking file reads + HTTP, so run
+        # it off the event loop.
         try:
-            return self._commit_artifact_dir(artifact)
+            return await asyncio.to_thread(self._commit_artifact_dir, artifact)
         except Exception as exc:  # noqa: BLE001 — publishing is best-effort
             logger.debug("github register_artifact failed: %s", exc)
             return {"registered": False, "backend": "github", "error": str(exc)}
@@ -402,7 +409,8 @@ class GitHubBackend(BackendActions):
                 "outputs": execution.outputs,
                 "metrics": execution.metrics,
             }
-            result = self._put_file(
+            result = await asyncio.to_thread(
+                self._put_file,
                 f"{base}/runs/{_safe_segment(execution.run_id)}.json",
                 json.dumps(record, indent=2, default=str),
                 f"arc: result {execution.run_id} for {artifact.name}",

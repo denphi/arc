@@ -147,7 +147,7 @@ class BayesOptOptimizerAgent(AgentContract):
         n_seed = min(pop_size, budget)
 
         # ── Try scikit-optimize backend ─────────────────────────────────
-        skopt_run = _maybe_run_skopt(
+        skopt_run = await _maybe_run_skopt(
             param_names, bounds, _evaluate, target, registry,
             budget=budget, n_seed=n_seed,
             convergence_threshold=convergence_threshold,
@@ -168,23 +168,24 @@ class BayesOptOptimizerAgent(AgentContract):
 # ── scikit-optimize backend ─────────────────────────────────────────────
 
 
-def _maybe_run_skopt(
+async def _maybe_run_skopt(
     param_names, bounds, evaluate_async, target, registry,
     *, budget, n_seed, convergence_threshold, on_step,
 ):
     """Return a result dict when skopt is available, else ``None``.
 
-    Implemented as a sync routine that drives the async evaluator via
-    ``asyncio.run`` on a per-call basis so the BO loop stays a plain
-    callable — exactly how ``gp_minimize`` expects its objective.
+    Runs as a coroutine inside the caller's event loop and ``await``\\s the
+    async evaluator directly. ``skopt.Optimizer.ask()/tell()`` are plain
+    synchronous calls, so they interleave cleanly with the awaits — we do
+    *not* spin up a nested loop (the previous ``run_until_complete`` here
+    raised ``RuntimeError: This event loop is already running`` whenever
+    the optimizer was invoked from the async research loop, i.e. always).
     """
     try:
         from skopt import Optimizer  # type: ignore[import-not-found]
         from skopt.space import Real  # type: ignore[import-not-found]
     except ImportError:
         return None
-
-    import asyncio
 
     dimensions = [Real(bounds[n][0], bounds[n][1], name=n) for n in param_names]
     opt = Optimizer(
@@ -205,7 +206,7 @@ def _maybe_run_skopt(
     for step_index in range(budget):
         x = opt.ask()
         point = {name: float(val) for name, val in zip(param_names, x)}
-        out = asyncio.get_event_loop().run_until_complete(evaluate_async(point))
+        out = await evaluate_async(point)
         fit = _fitness(out, target, registry)
         opt.tell(x, fit if fit != float("inf") else 1e18)  # skopt rejects inf
 
@@ -221,9 +222,7 @@ def _maybe_run_skopt(
             "best_outputs": dict(out),
         })
         if on_step is not None:
-            asyncio.get_event_loop().run_until_complete(
-                on_step(step_index, point, out, fit)
-            )
+            await on_step(step_index, point, out, fit)
 
         if best_fitness <= convergence_threshold:
             converged = True

@@ -18,6 +18,7 @@ The router shares the bearer-token gate (``require_api_token``) with
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -30,6 +31,8 @@ from arc.api.security import require_api_token
 from arc.api.session_state import load_state, save_state
 from arc.session import session_paths, validate_session_id
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(require_api_token)])
 
@@ -96,7 +99,7 @@ class StrategyOverrideRequest(BaseModel):
 
 
 @router.get("/strategies")
-async def list_strategies_endpoint(session_id: str) -> dict[str, Any]:
+def list_strategies_endpoint(session_id: str) -> dict[str, Any]:
     """Return per-role catalogue + the active strategy for each role.
 
     The active strategy reflects the four-layer precedence
@@ -137,7 +140,7 @@ async def list_strategies_endpoint(session_id: str) -> dict[str, Any]:
 
 
 @router.post("/strategies/{role}")
-async def set_strategy_endpoint(
+def set_strategy_endpoint(
     role: str,
     body: StrategyOverrideRequest,
     session_id: str,
@@ -165,7 +168,7 @@ async def set_strategy_endpoint(
 
 
 @router.delete("/strategies/{role}")
-async def clear_strategy_endpoint(role: str, session_id: str) -> dict[str, Any]:
+def clear_strategy_endpoint(role: str, session_id: str) -> dict[str, Any]:
     """Clear the session override for ``role`` (the resolver falls back
     to env / arc.toml / default)."""
     session_id = _session(session_id)
@@ -206,7 +209,7 @@ def _serialise_recipe(recipe) -> dict[str, Any]:
 
 
 @router.get("/recipes")
-async def list_recipes_endpoint(session_id: str) -> dict[str, Any]:
+def list_recipes_endpoint(session_id: str) -> dict[str, Any]:
     """Discoverable recipes (bundled + user) plus the session's active recipe."""
     session_id = _session(session_id)
     from arc.core.recipes import list_recipes
@@ -220,7 +223,7 @@ async def list_recipes_endpoint(session_id: str) -> dict[str, Any]:
 
 
 @router.get("/recipes/{name}")
-async def show_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
+def show_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
     session_id = _session(session_id)
     from arc.core.recipes import get_recipe
 
@@ -231,7 +234,7 @@ async def show_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
 
 
 @router.post("/recipes/{name}/apply")
-async def apply_recipe_endpoint(
+def apply_recipe_endpoint(
     name: str,
     body: RecipeApplyRequest,
     session_id: str,
@@ -263,7 +266,7 @@ async def apply_recipe_endpoint(
 
 
 @router.post("/recipes")
-async def save_recipe_endpoint(
+def save_recipe_endpoint(
     body: RecipeSaveRequest,
     session_id: str,
 ) -> dict[str, Any]:
@@ -295,7 +298,7 @@ async def save_recipe_endpoint(
 
 
 @router.delete("/recipes/{name}")
-async def delete_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
+def delete_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
     """Remove a user recipe. Bundled recipes are read-only."""
     session_id = _session(session_id)
     from arc.core.recipes import RecipeDeleteError, clear_recipe, delete_recipe
@@ -325,7 +328,7 @@ async def delete_recipe_endpoint(name: str, session_id: str) -> dict[str, Any]:
 
 
 @router.post("/recipes/clear")
-async def clear_active_recipe_endpoint(session_id: str) -> dict[str, Any]:
+def clear_active_recipe_endpoint(session_id: str) -> dict[str, Any]:
     """Drop the keys the last applied recipe set."""
     session_id = _session(session_id)
     from arc.core.recipes import clear_recipe
@@ -341,7 +344,7 @@ async def clear_active_recipe_endpoint(session_id: str) -> dict[str, Any]:
 
 
 @router.get("/clusters")
-async def list_clusters_endpoint(session_id: str) -> dict[str, Any]:
+def list_clusters_endpoint(session_id: str) -> dict[str, Any]:
     """Return the failure clusters the reflector last stamped.
 
     These come from the per-session ``run_history`` flow rather than
@@ -361,7 +364,7 @@ async def list_clusters_endpoint(session_id: str) -> dict[str, Any]:
 
 
 @router.get("/clusters/{signature}")
-async def show_cluster_endpoint(signature: str, session_id: str) -> dict[str, Any]:
+def show_cluster_endpoint(signature: str, session_id: str) -> dict[str, Any]:
     session_id = _session(session_id)
     from arc.session import load_session_meta
 
@@ -413,7 +416,7 @@ def _read_skill_files(target: Path) -> list[dict[str, Any]]:
 
 
 @router.get("/skills")
-async def list_skills_endpoint(session_id: str) -> dict[str, Any]:
+def list_skills_endpoint(session_id: str) -> dict[str, Any]:
     session_id = _session(session_id)
     target = _session_skills_dir(session_id)
     if target is None:
@@ -426,7 +429,7 @@ async def list_skills_endpoint(session_id: str) -> dict[str, Any]:
 
 
 @router.get("/skills/{name}")
-async def show_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
+def show_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
     session_id = _session(session_id)
     target = _session_skills_dir(session_id)
     if target is None:
@@ -450,7 +453,7 @@ async def show_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
 
 
 @router.delete("/skills/{name}")
-async def delete_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
+def delete_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
     session_id = _session(session_id)
     target = _session_skills_dir(session_id)
     if target is None:
@@ -472,7 +475,9 @@ async def delete_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
     try:
         match.unlink()
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        # Don't leak the filesystem path / OS detail to the client.
+        logger.warning("Failed to delete skill %r: %s", name, exc)
+        raise HTTPException(status_code=500, detail="Failed to delete skill")
     return {"deleted": match.stem, "filename": match.name}
 
 
@@ -526,7 +531,7 @@ def _transfer_skills(
 
 
 @router.post("/skills/export")
-async def export_skills_endpoint(
+def export_skills_endpoint(
     body: SkillTransferRequest,
     session_id: str,
 ) -> dict[str, Any]:
@@ -543,7 +548,7 @@ async def export_skills_endpoint(
 
 
 @router.post("/skills/import")
-async def import_skills_endpoint(
+def import_skills_endpoint(
     body: SkillTransferRequest,
     session_id: str,
 ) -> dict[str, Any]:

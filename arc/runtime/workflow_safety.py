@@ -427,7 +427,10 @@ def validate_workflow_import_timeout(source: str, module_name: str, filename: st
     proc.join(WORKFLOW_IMPORT_TIMEOUT_SECONDS)
     if proc.is_alive():
         proc.terminate()
-        proc.join()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
         raise TimeoutError("workflow.py import timed out")
 
     if not queue.empty():
@@ -512,7 +515,10 @@ def run_simulate_with_timeout(
     proc.join(timeout)
     if proc.is_alive():
         proc.terminate()
-        proc.join()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
         return {"ok": False, "reason": "simulate() timed out during validation"}
     if not queue.empty():
         return queue.get()

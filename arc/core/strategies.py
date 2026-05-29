@@ -563,5 +563,12 @@ def _load_spec(spec: StrategySpec) -> Any:
         loader_spec = importlib.util.spec_from_file_location(mod_name, full_path)
         module = importlib.util.module_from_spec(loader_spec)
         sys.modules[mod_name] = module
-        loader_spec.loader.exec_module(module)
+        try:
+            loader_spec.loader.exec_module(module)
+        except BaseException:
+            # Don't leave a half-initialised module cached — a later load of
+            # the same strategy would return the broken object instead of
+            # retrying. Drop it so the next call re-execs from scratch.
+            sys.modules.pop(mod_name, None)
+            raise
     return getattr(module, spec.attr)

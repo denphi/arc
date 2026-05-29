@@ -220,3 +220,27 @@ def test_run_uses_skopt_when_available():
     ))
     assert result["generations_run"] >= 1
     assert len(seen_points) >= 1
+
+
+@pytest.mark.asyncio
+async def test_skopt_path_runs_inside_existing_event_loop():
+    """Regression for the ``run_until_complete`` crash: the skopt backend
+    must run when ``run()`` is awaited from inside an already-running event
+    loop (i.e. the normal research-loop path). Previously the BO loop
+    called ``asyncio.get_event_loop().run_until_complete`` here, which
+    raised ``RuntimeError: This event loop is already running``."""
+    pytest.importorskip("skopt")
+
+    art = _artifact()
+
+    def _outputs(inputs):
+        return {"bandgap_ev": inputs["thickness"] / 10.0}
+
+    agent = _agent(_adapter(_outputs))
+    # No asyncio.run() — we're already in a running loop (pytest-asyncio).
+    result = await agent.run(
+        art, target={"bandgap_ev": 1.0},
+        max_generations=2, pop_size=3,
+    )
+    assert result["generations_run"] >= 1
+    assert "best_inputs" in result

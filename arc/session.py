@@ -16,6 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from arc.utils.io import atomic_write_text
+
 
 def sim2l_home() -> Path:
     """Return the ARC session root, honoring SIM2L_HOME at call time."""
@@ -123,7 +125,7 @@ def save_session_meta(
         "agent_overrides": agent_overrides if agent_overrides is not None else existing.get("agent_overrides", {}),
         "created": created or existing.get("created", ""),
     }
-    p.write_text(json.dumps(meta, indent=2))
+    atomic_write_text(p, json.dumps(meta, indent=2))
 
 
 def load_session_meta(session_id: str) -> dict[str, Any]:

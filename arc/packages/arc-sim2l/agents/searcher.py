@@ -256,12 +256,26 @@ def _candidate_doc(record: dict) -> str:
 
 
 async def _safe_embed(embed_fn, text: str) -> list[float]:
-    """Embed `text`; tolerate both sync and async embed callables."""
+    """Embed `text`; tolerate both sync and async embed callables.
+
+    Returns ``[]`` (not a crash) when the embedder is unavailable or
+    returns something that isn't a numeric vector — callers fall back to
+    TF vectors, so a bad embedder degrades ranking rather than breaking
+    the search.
+    """
     import asyncio
-    result = embed_fn(text)
-    if asyncio.iscoroutine(result):
-        result = await result
-    return list(result)
+    try:
+        result = embed_fn(text)
+        if asyncio.iscoroutine(result):
+            result = await result
+        if result is None:
+            return []
+        if hasattr(result, "tolist"):  # numpy / torch tensor
+            result = result.tolist()
+        return [float(x) for x in result]
+    except Exception:  # noqa: BLE001 — embedding is best-effort
+        logger.debug("embedding failed; falling back", exc_info=True)
+        return []
 
 
 def _dot_normalised(a: list[float], b: list[float]) -> float:

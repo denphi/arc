@@ -157,11 +157,23 @@ def run_in_subprocess(
         proc.start()
         proc.join(timeout)
         if proc.is_alive():
+            # Escalate: SIGTERM, then SIGKILL if the child ignores it, so a
+            # workflow that traps SIGTERM can't hang the parent forever.
             proc.terminate()
-            proc.join()
+            proc.join(5)
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
             return {"ok": False, "error": f"simulate() timed out after {timeout}s"}
-        if not queue.empty():
-            return queue.get()
+        # The worker exited within the timeout. Read its result with a short
+        # blocking get rather than empty()+get(): the child may still be
+        # flushing the queue's feeder thread the instant join() returns, so a
+        # bare empty() check can race and report "no result" for a run that
+        # actually succeeded.
+        try:
+            return queue.get(timeout=1.0)
+        except Exception:  # noqa: BLE001 — genuinely empty / closed queue
+            pass
         if proc.exitcode:
             return {"ok": False, "error": f"worker exited with code {proc.exitcode}"}
         return {"ok": False, "error": "worker produced no result"}

@@ -158,7 +158,13 @@ def _import_class(entrypoint: str):
         raise ImportError(f"Cannot load module from {candidate}")
     module = module_from_spec(spec)
     sys.modules[underscored] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # Don't leave a half-initialised module cached on failure — a later
+        # import of the same path would return the broken object.
+        sys.modules.pop(underscored, None)
+        raise
     return getattr(module, class_name)
 
 

@@ -4,6 +4,8 @@ These exercise the actual ``arc.cli.main`` Typer app so the wiring
 between flags and chat infrastructure is verified end-to-end.
 """
 
+import inspect
+
 import pytest
 from typer.testing import CliRunner
 
@@ -15,7 +17,12 @@ pytestmark = pytest.mark.chat
 
 @pytest.fixture
 def runner():
-    return CliRunner(mix_stderr=False)
+    # ``mix_stderr`` was removed from Click's CliRunner in 8.2 (stdout and
+    # stderr are captured separately by default there). Only pass it on the
+    # older Click that still accepts it, so the fixture works on both.
+    if "mix_stderr" in inspect.signature(CliRunner.__init__).parameters:
+        return CliRunner(mix_stderr=False)
+    return CliRunner()
 
 
 # ── --check ──────────────────────────────────────────────────────────────

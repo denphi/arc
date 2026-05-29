@@ -4,6 +4,7 @@ Bridges the ARC RuntimeAdapterContract to the real sim2l library.
 Uses sim2l's LocalExecutor, SimulationDefinition, and repository APIs.
 """
 
+import asyncio
 import logging
 import os
 import types
@@ -711,7 +712,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             )
         try:
             sim_def, sim_name, sim_version, in_schema, out_schema, catalog_persisted = (
-                self._ensure_deployed(artifact, inputs)
+                await asyncio.to_thread(self._ensure_deployed, artifact, inputs)
             )
             if self._services_required and not catalog_persisted:
                 return ExecutionResult(
@@ -733,15 +734,23 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
 
             # Execute via the configured executor (subprocess by default —
             # see _build_executor for the threat-model justification).
+            # ``sim_def.run`` is a blocking call (it may spawn a subprocess
+            # and wait); offload it so it doesn't stall the event loop when
+            # the adapter is driven from the async API / research loop.
             executor = self._build_executor()
-            sim2l_result = sim_def.run(**reconciled, executor=executor)
+            sim2l_result = await asyncio.to_thread(
+                sim_def.run, **reconciled, executor=executor
+            )
 
             outputs = {
                 k: getattr(sim2l_result.outputs, k, None)
                 for k in out_schema.fields
             }
-            results_persisted = self._push_to_results(
-                sim2l_result, sim_name, sim_version, reconciled, outputs
+            # The persist/record helpers do blocking HTTP (requests.*); run
+            # them off the loop too.
+            results_persisted = await asyncio.to_thread(
+                self._push_to_results,
+                sim2l_result, sim_name, sim_version, reconciled, outputs,
             )
             if self._services_required and not results_persisted:
                 return ExecutionResult(
@@ -757,7 +766,8 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             # advances. This is best-effort: a 404 (sim not in catalog)
             # or 401 doesn't fail the run, but is surfaced via
             # ``last_push_errors`` to the chat.
-            self._push_to_catalog_execution_registry(
+            await asyncio.to_thread(
+                self._push_to_catalog_execution_registry,
                 sim2l_result, sim_name, sim_version, reconciled, outputs,
             )
 

@@ -246,11 +246,15 @@ class ResearchWorkflow:
         if len(parts) >= 2 and parts[0] in state["steps"] and parts[1] == "output":
             value = state["steps"][parts[0]]["output"]
             for part in parts[2:]:
+                if value is None:
+                    break  # broken intermediate — stop walking, resolve to None
                 value = self._get_field(value, part)
             return value
         if parts[0] in roots:
             value = roots[parts[0]]
             for part in parts[1:]:
+                if value is None:
+                    break
                 value = self._get_field(value, part)
             return value
         return ref
@@ -331,11 +335,11 @@ class ResearchWorkflow:
         lhs = self._resolve_ref(left, state, {})
         rhs = self._parse_condition_literal(right)
 
-        # Booleans need identity-style comparison so e.g. ``approved == false``
-        # behaves the same when the resolved value is None vs. False.
+        # Booleans: coerce the LHS to a bool (so ``approved == false`` works
+        # whether the resolved value is None or False) and compare by value.
         if isinstance(rhs, bool):
             lhs_bool = bool(lhs)
-            return (op == "==") == (lhs_bool is rhs)
+            return (lhs_bool == rhs) if op == "==" else (lhs_bool != rhs)
         if op == "==":
             return lhs == rhs or str(lhs) == str(rhs)
         if op == "!=":

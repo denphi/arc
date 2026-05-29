@@ -209,6 +209,11 @@ def _trigger_matches(
         try:
             threshold = int(min_iteration)
         except (TypeError, ValueError):
+            logger.warning(
+                "Recipe trigger has invalid min_iteration %r (must be an "
+                "integer); treating as 0 (no iteration gate)",
+                min_iteration,
+            )
             threshold = 0
         if threshold > 0:
             current = _iteration_count(memory)
