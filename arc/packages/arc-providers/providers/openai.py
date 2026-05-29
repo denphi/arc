@@ -27,6 +27,22 @@ class OpenAIProvider(ProviderContract):
         # Review item #T17: capability cache moved to a shared module-level
         # dict keyed by (provider, model). See arc.providers.utils.
 
+    @classmethod
+    def from_config(cls, *, token=None, model=None, base_url=None):
+        """Factory hook for ``arc.providers.build_provider``.
+
+        OpenAI ignores ``base_url``; ``token`` maps to the API key and
+        ``model`` falls back to ``ARC_MODEL`` then the class default.
+        """
+        return cls(
+            model=model or os.environ.get("ARC_MODEL", "gpt-4.1"),
+            api_key=token,
+        )
+
+    def list_models(self) -> list[str]:
+        """Curated model list."""
+        return ["gpt-4.1", "gpt-4o", "gpt-4o-mini"]
+
     def _get_client(self):
         if self._client is None:
             import openai

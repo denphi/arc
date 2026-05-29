@@ -45,6 +45,11 @@ class OpenWebUIProvider(ProviderContract):
         self.timeout = timeout
         self._client = None
 
+    @classmethod
+    def from_config(cls, *, token=None, model=None, base_url=None):
+        """Factory hook used by ``arc.providers.build_provider``."""
+        return cls(base_url=base_url, token=token, model=model)
+
     def _get_client(self):
         if self._client is None:
             from openai import OpenAI

@@ -309,13 +309,20 @@ async def list_models(llm: LLMConfig) -> list[str]:
     creating the provider so a caller can't pivot ``/provider/models`` into
     an SSRF probe of internal services.
     """
-    if llm.provider == "openwebui":
-        from arc.providers.openwebui.provider import OpenWebUIProvider
-        safe_url = validate_provider_base_url(llm.base_url) if llm.base_url else None
-        p = OpenWebUIProvider(base_url=safe_url, token=llm.token, model=llm.model)
-        return p.list_models()
-    if llm.provider == "anthropic":
-        return ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-    if llm.provider == "openai":
-        return ["gpt-4.1", "gpt-4o", "gpt-4o-mini"]
+    # Validate base_url (openwebui is the only provider that honours it)
+    # before constructing, then resolve through the package-aware factory
+    # and ask the provider itself for its models — no per-provider ladder.
+    safe_url = validate_provider_base_url(llm.base_url) if llm.base_url else None
+    from arc.orchestrator.workflow import _default_registry
+    from arc.providers import build_provider
+    provider = build_provider(
+        llm.provider, token=llm.token, model=llm.model, base_url=safe_url,
+        registry=_default_registry(),
+    )
+    lister = getattr(provider, "list_models", None) if provider else None
+    if callable(lister):
+        try:
+            return list(lister())
+        except Exception:  # noqa: BLE001 — listing is best-effort
+            return []
     return []

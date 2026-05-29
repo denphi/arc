@@ -216,6 +216,17 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
         except Exception as exc:
             logger.error("Failed to load adapter '%s': %s", adapter_def.get("name"), exc)
 
+    for provider_def in manifest.get("provides", {}).get("providers", []):
+        # Register the provider *class* (not an instance) under its name.
+        # ``build_provider`` instantiates it on demand with the caller's
+        # token/model/base_url. This is the seam that lets a package ship a
+        # new LLM provider without touching core (core ships only openwebui).
+        try:
+            provider_class = _import_class(provider_def["entrypoint"])
+            registry.register_provider(provider_def["name"], provider_class)
+        except Exception as exc:
+            logger.error("Failed to load provider '%s': %s", provider_def.get("name"), exc)
+
     for evaluator_def in manifest.get("provides", {}).get("evaluators", []):
         try:
             if isinstance(evaluator_def, dict) and "entrypoint" in evaluator_def:

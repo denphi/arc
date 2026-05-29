@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from arc.contracts.adapter import RuntimeAdapterContract
+from arc.runtime._adapter_common import filter_outputs, reconcile_inputs
 from arc.runtime.executor import execute_workflow, load_simulate
 from arc.schemas.artifact import ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
@@ -78,17 +79,7 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
         input_schema, output_schema = await asyncio.to_thread(
             load_sim2l_schema, artifact.path
         )
-        defaults = {
-            key: field.get("default", 1.0) for key, field in input_schema.items()
-        }
-        reconciled = {
-            **defaults,
-            **{
-                key: value
-                for key, value in inputs.items()
-                if not input_schema or key in input_schema
-            },
-        }
+        reconciled = reconcile_inputs(input_schema, inputs)
 
         # Execute via the arc-owned executor (subprocess + timeout by
         # default). Returns {"ok": bool, "outputs"|"error": ...}.
@@ -107,12 +98,7 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
                 metrics={"execution_success": False, **reconciled},
             )
 
-        raw_outputs = result.get("outputs") or {}
-        outputs = (
-            {key: raw_outputs.get(key) for key in output_schema}
-            if output_schema
-            else raw_outputs
-        )
+        outputs = filter_outputs(output_schema, result.get("outputs") or {})
         return ExecutionResult(
             run_id=run_id,
             status="completed",

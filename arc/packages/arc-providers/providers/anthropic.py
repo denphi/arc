@@ -32,6 +32,22 @@ class AnthropicProvider(ProviderContract):
         # (provider, model) so spinning up a fresh provider per workflow
         # run doesn't re-probe the API on every call.
 
+    @classmethod
+    def from_config(cls, *, token=None, model=None, base_url=None):
+        """Factory hook for ``arc.providers.build_provider``.
+
+        Anthropic ignores ``base_url``; ``token`` maps to the API key and
+        ``model`` falls back to ``ARC_MODEL`` then the class default.
+        """
+        return cls(
+            model=model or os.environ.get("ARC_MODEL", "claude-opus-4-7"),
+            api_key=token,
+        )
+
+    def list_models(self) -> list[str]:
+        """Curated model list (Anthropic has no public list endpoint)."""
+        return ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+
     def _get_client(self):
         if self._client is None:
             import anthropic

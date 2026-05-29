@@ -9,6 +9,7 @@ paths = [
   "packages/arc-materials",
   "packages/arc-codex",
   "packages/arc-claude-code",
+  "packages/arc-providers",
 ]
 
 [runtime]

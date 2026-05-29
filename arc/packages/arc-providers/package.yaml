@@ -1,0 +1,23 @@
+name: arc-providers
+version: 0.1.0
+type: provider-package
+description: >
+  Bundled LLM providers beyond the core's built-in openwebui. Core ships
+  only openwebui (the universal OpenAI-compatible client); anthropic and
+  openai live here as a package so adding a provider never touches core —
+  it's a new `provides.providers` entry. Third-party provider packages
+  follow the same pattern.
+
+provides:
+  providers:
+    - name: anthropic
+      entrypoint: arc.packages.arc-providers.providers.anthropic:AnthropicProvider
+    - name: openai
+      entrypoint: arc.packages.arc-providers.providers.openai:OpenAIProvider
+
+requires:
+  # The provider SDKs are optional extras; a provider only needs its SDK
+  # installed when actually selected (the import is lazy inside the class).
+  integrations:
+    - anthropic
+    - openai

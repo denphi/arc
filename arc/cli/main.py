@@ -12,6 +12,9 @@ except ImportError:
 
 if HAS_TYPER:
     import typer
+    from arc.ui.__main__ import DEFAULT_HOST as DEFAULT_UI_HOST
+    from arc.ui.__main__ import DEFAULT_PORT as DEFAULT_UI_PORT
+
     app = typer.Typer(name="arc", help="ARC-Sim2L — Autonomous Research Coder")
 
     @app.command()
@@ -73,20 +76,17 @@ if HAS_TYPER:
         base_url: str = typer.Option(None, "--base-url", "-u", help="Base URL"),
     ):
         """List available models for a provider."""
-        if provider == "openwebui":
-            from arc.providers.openwebui.provider import OpenWebUIProvider
-            p = OpenWebUIProvider(base_url=base_url, token=token)
-            for m in p.list_models():
-                typer.echo(m)
-        elif provider == "anthropic":
-            for m in ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]:
-                typer.echo(m)
-        elif provider == "openai":
-            for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini"]:
-                typer.echo(m)
-        else:
+        from arc.orchestrator.workflow import _default_registry
+        from arc.providers import build_provider
+        p = build_provider(
+            provider, token=token, base_url=base_url, registry=_default_registry(),
+        )
+        lister = getattr(p, "list_models", None) if p else None
+        if not callable(lister):
             typer.echo(f"Unknown provider: {provider}", err=True)
             raise typer.Exit(1)
+        for m in lister():
+            typer.echo(m)
 
     @app.command()
     def serve(
@@ -97,6 +97,17 @@ if HAS_TYPER:
         """Start the ARC API server."""
         import uvicorn
         uvicorn.run("arc.api.server:app", host=host, port=port, reload=reload)
+
+    @app.command()
+    def ui(
+        host: str = typer.Option(DEFAULT_UI_HOST, "--host", help="Host interface to bind"),
+        port: int = typer.Option(DEFAULT_UI_PORT, "--port", help="Port for the browser UI"),
+        reload: bool = typer.Option(False, "--reload", help="Reload on code changes"),
+    ):
+        """Start the standalone ARC browser UI."""
+        from arc.ui.__main__ import run_server
+
+        run_server(host=host, port=port, reload=reload)
 
     @app.command()
     def info():

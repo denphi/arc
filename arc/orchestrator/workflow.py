@@ -100,28 +100,19 @@ def _build_provider(
     token: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    registry: Any = None,
 ):
+    """Resolve the LLM provider through the package-aware factory.
+
+    Core ships only ``openwebui``; anthropic/openai (and any third-party
+    provider) come from a package's ``provides.providers`` and are looked
+    up on ``registry``. Returns ``None`` (stub mode) when unset/unknown.
+    """
+    from arc.providers import build_provider
     name = provider_name or os.environ.get("ARC_PROVIDER", "")
-    if name == "anthropic":
-        from arc.providers.anthropic.provider import AnthropicProvider
-        return AnthropicProvider(
-            model=model or os.environ.get("ARC_MODEL", "claude-opus-4-7"),
-            api_key=token,
-        )
-    if name == "openai":
-        from arc.providers.openai.provider import OpenAIProvider
-        return OpenAIProvider(
-            model=model or os.environ.get("ARC_MODEL", "gpt-4.1"),
-            api_key=token,
-        )
-    if name == "openwebui":
-        from arc.providers.openwebui.provider import OpenWebUIProvider
-        return OpenWebUIProvider(
-            base_url=base_url,
-            token=token,
-            model=model,
-        )
-    return None
+    return build_provider(
+        name, token=token, model=model, base_url=base_url, registry=registry,
+    )
 
 
 class ResearchWorkflow:
@@ -164,6 +155,7 @@ class ResearchWorkflow:
             token=token,
             model=model,
             base_url=base_url,
+            registry=self.registry,
         )
 
         self._context = AgentContext(
