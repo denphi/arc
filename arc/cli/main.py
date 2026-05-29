@@ -111,7 +111,8 @@ if HAS_TYPER:
 
     @app.command()
     def info():
-        """Show registered components."""
+        """Show registered components + each package's declared config."""
+        import os
         from arc.core.kernel import Kernel
 
         kernel = Kernel()
@@ -119,6 +120,33 @@ if HAS_TYPER:
         typer.echo(f"Agents:    {kernel.registry.list_agents()}")
         typer.echo(f"Skills:    {kernel.registry.list_skills()}")
         typer.echo(f"Workflows: {kernel.registry.list_workflows()}")
+
+        # Declared package config: what each package reads from .env / env,
+        # and whether it's currently set. Secret values are masked.
+        typer.echo("\nPackage config (.env / environment):")
+        any_config = False
+        for pkg_name in kernel.registry.list_packages():
+            manifest = kernel.registry.get_package(pkg_name)
+            entries = (manifest or {}).get("config") or []
+            if not entries:
+                continue
+            any_config = True
+            typer.echo(f"  {pkg_name}:")
+            for entry in entries:
+                if not isinstance(entry, dict) or not entry.get("name"):
+                    continue
+                var = entry["name"]
+                raw = os.environ.get(var)
+                if raw:
+                    shown = "********" if entry.get("secret") else raw
+                    status = f"set ({shown})"
+                else:
+                    req = " REQUIRED" if entry.get("required") else ""
+                    status = f"unset{req}"
+                desc = entry.get("description", "")
+                typer.echo(f"    {var:<28} {status}{('  — ' + desc) if desc else ''}")
+        if not any_config:
+            typer.echo("  (no packages declare config)")
 
     @app.command()
     def chat(

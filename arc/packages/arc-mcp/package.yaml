@@ -1,0 +1,26 @@
+name: arc-mcp
+version: 0.1.0
+type: extension-package
+description: >
+  Model Context Protocol (MCP) integration. Connects to one or more MCP
+  servers ("ext-apps") and registers each server's tools as ARC skills
+  named `mcp::<app>::<tool>`. Core defines ExtensionContract; this package
+  implements it. Enabled via the `[extensions.mcp]` block in arc.toml
+  (entrypoint: arc.packages.arc-mcp.extension:McpExtension).
+
+# The extension itself is wired through arc.toml's [extensions.mcp] block,
+# not provides.agents — extensions are loaded by the kernel's extension
+# loader, which reads the entrypoint from that block.
+
+config:
+  - name: ARC_MCP_SERVER_URL
+    description: >
+      Single-server shortcut: HTTP(S) URL of an MCP server. For multiple
+      servers (ext-apps), configure an `apps` list in the
+      [extensions.mcp] block of arc.toml instead.
+    required: false
+    default: ""
+
+requires:
+  integrations:
+    - mcp   # the `mcp` Python SDK; only needed when this extension is enabled

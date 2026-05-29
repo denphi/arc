@@ -260,6 +260,8 @@ class ConfigSaveRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
+    from arc.core.env import load_env
+    load_env()  # populate os.environ from .env before any package/provider use
     app = FastAPI(
         title="ARC UI",
         description="Standalone browser UI for ARC sessions, artifacts, and runs",

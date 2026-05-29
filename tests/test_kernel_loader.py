@@ -51,6 +51,30 @@ enabled = ["arc-sim2l"]
     await kernel.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_kernel_loads_extension_via_hyphenated_entrypoint(tmp_path):
+    """Core seam (Item 2): the extension loader resolves a package-hosted
+    extension whose entrypoint has a hyphenated path, and registers it.
+    The mcp extension with no apps loads idle (no live server needed)."""
+    config = tmp_path / "arc.toml"
+    config.write_text(
+        """
+[packages]
+paths = []
+
+[extensions.mcp]
+enabled = true
+entrypoint = "arc.packages.arc-mcp.extension:McpExtension"
+"""
+    )
+    kernel = Kernel(config_path=str(config))
+    await kernel.startup()
+
+    # The extension was constructed + registered despite the hyphenated path.
+    assert kernel.registry.get_extension("mcp") is not None
+    await kernel.shutdown()
+
+
 def test_registry_resolves_agent_by_package_source():
     class FirstAgent:
         pass

@@ -43,6 +43,24 @@ def _build_adapter(db_path: str | None = None, session_id: str | None = None):
     if adapter_name in {"auto"}:
         return _build_auto_adapter(db_path=db_path, session_id=session_id)
 
+    # Package-provided remote adapters (docker/slurm/k8s) resolved by
+    # entrypoint so core never imports them — they live in packages.
+    _REMOTE_ADAPTERS = {
+        "docker": "arc.packages.arc-docker.adapter:DockerRuntimeAdapter",
+        "slurm": "arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter",
+        "k8s": "arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter",
+        "kubernetes": "arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter",
+    }
+    if adapter_name in _REMOTE_ADAPTERS:
+        try:
+            from arc.core.loader import _import_class
+            cls = _import_class(_REMOTE_ADAPTERS[adapter_name])
+            logger.info("Using %s", cls.__name__)
+            return _instantiate_adapter(cls, db_path=db_path, session_id=session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not load %s adapter (%s); falling back to local",
+                           adapter_name, exc)
+
     logger.warning("Unknown ARC_RUNTIME_ADAPTER=%s; falling back to local", adapter_name)
     from arc.runtime.local import LocalRuntimeAdapter
     return LocalRuntimeAdapter()
@@ -88,11 +106,31 @@ def _default_registry() -> ComponentRegistry:
     loads them. The orchestrator does NOT apply enabled/disabled filtering —
     it loads everything declared in the config.
     """
+    from arc.core.env import load_env
+    load_env()  # populate os.environ from .env before packages read it
     registry = ComponentRegistry()
     config_path, config = load_arc_toml()
     package_paths = resolve_package_paths(config, config_path) if config else []
     load_packages(package_paths, registry)
     return registry
+
+
+def _resolve_package_config(registry: ComponentRegistry) -> dict[str, Any]:
+    """Merge every loaded package's declared config into one dict.
+
+    Agents read ``self.context.config[VAR]`` for vars their package
+    declared in ``package.yaml``'s ``config:`` section, instead of reaching
+    into ``os.environ`` with magic strings. Later packages win on a key
+    collision (rare — config vars are namespaced by convention, e.g.
+    ``ARC_CODEX_*``).
+    """
+    merged: dict[str, Any] = {}
+    try:
+        for pkg in registry.list_packages():
+            merged.update(registry.package_config(pkg))
+    except Exception as exc:  # noqa: BLE001 — config resolution must not break init
+        logger.debug("package config resolution failed: %s", exc)
+    return merged
 
 
 def _build_provider(
@@ -160,6 +198,7 @@ class ResearchWorkflow:
 
         self._context = AgentContext(
             session_id=self.session_id,
+            config=_resolve_package_config(self.registry),
             memory={
                 "provider": self.provider,
                 "registry": self.artifacts,

@@ -1,0 +1,21 @@
+name: arc-vector-memory
+version: 0.1.0
+type: extension-package
+description: >
+  Persistent semantic memory over artifacts, results, and reflections.
+  The durable counterpart to the transient `searcher.embeddings` strategy.
+  Ships a zero-dependency JSON/TF-cosine store (works out of the box);
+  Chroma is an optional backend. Core defines ExtensionContract; this
+  package implements it. Enabled via `[extensions.vector-memory]`.
+
+config:
+  - name: ARC_VECTOR_MEMORY_PATH
+    description: >
+      Filesystem path for the persistent index (overrides the
+      persist_path in the [extensions.vector-memory] block when set).
+    required: false
+    default: ""
+
+requires:
+  integrations:
+    - chromadb   # only needed when backend = "chroma"; default backend is dep-free

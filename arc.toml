@@ -10,6 +10,13 @@ paths = [
   "arc/packages/arc-codex",
   "arc/packages/arc-claude-code",
   "arc/packages/arc-providers",
+  "arc/packages/arc-mcp",
+  "arc/packages/arc-openapi",
+  "arc/packages/arc-vector-memory",
+  "arc/packages/arc-docker",
+  "arc/packages/arc-slurm",
+  "arc/packages/arc-k8s",
+  "arc/packages/arc-knowledge-graph",
 ]
 
 [runtime]
@@ -44,18 +51,69 @@ reload = false
 [extensions]
 # All extensions disabled by default. Enable individually below.
 
-[extensions.vector-memory]
+[extensions.mcp]
+# Model Context Protocol tools as ARC skills (mcp::<app>::<tool>).
+# Implementation: arc-mcp package. Set enabled=true and configure either a
+# single server_url, or an `apps` list for multiple MCP servers (ext-apps).
 enabled = false
-backend = "chroma"
+entrypoint = "arc.packages.arc-mcp.extension:McpExtension"
+# server_url = "http://localhost:8080/mcp"      # single-server shortcut
+# [[extensions.mcp.apps]]                         # …or multiple ext-apps:
+#   name = "files"
+#   transport = "stdio"
+#   command = "mcp-server-filesystem"
+#   args = ["--root", "."]
+# [[extensions.mcp.apps]]
+#   name = "search"
+#   transport = "http"
+#   url = "http://localhost:8080/mcp"
+
+[extensions.openapi]
+# Expose OpenAPI 3.x operations as skills (openapi::<spec>::<operationId>).
+# Implementation: arc-openapi package.
+enabled = false
+entrypoint = "arc.packages.arc-openapi.extension:OpenApiExtension"
+# spec_url = "https://api.example.com/openapi.json"   # single-spec shortcut
+# [[extensions.openapi.specs]]                          # …or multiple:
+#   name = "materials_project"
+#   url = "https://api.materialsproject.org/openapi.json"
+#   auth_env = "MP_API_KEY"
+
+[extensions.vector-memory]
+# Persistent semantic memory. Implementation: arc-vector-memory package.
+# "default" is a zero-dep JSON/TF-cosine store (works out of the box);
+# set backend = "chroma" (and `pip install chromadb`) for a real vector DB.
+enabled = false
+entrypoint = "arc.packages.arc-vector-memory.extension:VectorMemoryExtension"
+backend = "default"
 persist_path = "workspace/memory/vectors"
 
 [extensions.docker-runtime]
+# Registers the `docker` runtime adapter (arc-docker package) so a workflow
+# step can use `adapter: docker`. Also reachable via ARC_RUNTIME_ADAPTER=docker.
 enabled = false
-image = "sim2l/runner:latest"
+entrypoint = "arc.packages.arc-docker.extension:DockerRuntimeExtension"
+image = "python:3.11-slim"
 
 [extensions.slurm-runtime]
+# Registers the `slurm` runtime adapter (arc-slurm package).
+# Also reachable via ARC_RUNTIME_ADAPTER=slurm.
 enabled = false
+entrypoint = "arc.packages.arc-slurm.extension:SlurmRuntimeExtension"
 partition = "general"
+
+[extensions.k8s-runtime]
+# Registers the `k8s` runtime adapter (arc-k8s package).
+# Also reachable via ARC_RUNTIME_ADAPTER=k8s.
+enabled = false
+entrypoint = "arc.packages.arc-k8s.extension:KubernetesRuntimeExtension"
+
+[extensions.knowledge-graph]
+# Relationships between experiments/artifacts/variables. Implementation:
+# arc-knowledge-graph package (zero-dep persistent directed graph).
+enabled = false
+entrypoint = "arc.packages.arc-knowledge-graph.extension:KnowledgeGraphExtension"
+persist_path = "workspace/memory/graph.json"
 
 [extensions.web-ui]
 enabled = false

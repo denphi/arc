@@ -12,6 +12,28 @@ provides:
   skills:
     - skills/write-artifact-with-claude-code.md
 
+# Key user-facing config. The coder also reads several advanced
+# ARC_CLAUDE_CODE_* tuning vars (ARGS / EXTRA_ARGS / ALLOWED_TOOLS /
+# DISALLOWED_TOOLS / SYSTEM_PROMPT / EFFORT / PERMISSION_MODE / …); those
+# are power-user knobs and intentionally not all surfaced here.
+config:
+  - name: ARC_CLAUDE_CODE_COMMAND
+    description: Path/name of the Claude Code CLI executable.
+    required: false
+    default: claude
+  - name: ARC_CLAUDE_CODE_MODEL
+    description: Model the Claude Code CLI should use.
+    required: false
+    default: ""
+  - name: ARC_CLAUDE_CODE_TIMEOUT_SECONDS
+    description: Hard wall-clock timeout for a Claude Code run.
+    required: false
+    default: "300"
+  - name: ARC_CLAUDE_CODE_MAX_BUDGET_USD
+    description: Optional cost ceiling (USD) for a single Claude Code run.
+    required: false
+    default: ""
+
 requires:
   runtime_adapter: any
   artifact_type: sim2l

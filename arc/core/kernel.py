@@ -24,6 +24,8 @@ class Kernel:
         self._extensions: list = []
 
     async def startup(self) -> None:
+        from arc.core.env import load_env
+        load_env()  # populate os.environ from .env before packages load
         package_config = self.config.get("packages", {})
         resolved_paths = resolve_package_paths(self.config, self.config_path)
         load_packages(self._filter_package_paths(resolved_paths, package_config), self.registry)
@@ -63,12 +65,21 @@ class Kernel:
             if not entrypoint:
                 continue
             try:
-                import importlib
-                module_path, class_name = entrypoint.rsplit(":", 1)
-                module = importlib.import_module(module_path)
-                cls = getattr(module, class_name)
+                import inspect
+                from arc.core.loader import _import_class
+                # Use the package loader's importer so a package-hosted
+                # extension (hyphenated path like
+                # ``arc.packages.arc-mcp.extension:McpExtension``) resolves.
+                cls = _import_class(entrypoint)
                 ext = cls()
-                await ext.initialize(ext_cfg)
+                # Pass the registry when the implementation accepts it, so
+                # the extension can register skills/adapters. Older
+                # extensions with a one-arg initialize keep working.
+                params = inspect.signature(ext.initialize).parameters
+                if len(params) >= 2:
+                    await ext.initialize(ext_cfg, self.registry)
+                else:
+                    await ext.initialize(ext_cfg)
                 self.registry.register_extension(ext_name, ext)
                 self._extensions.append(ext)
             except Exception as exc:

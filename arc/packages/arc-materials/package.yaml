@@ -38,6 +38,14 @@ provides:
     - units
     - common_descriptors
 
+config:
+  - name: MP_API_KEY
+    description: >
+      Materials Project (next-gen) API key. Enables the materials_project
+      searcher; without it that searcher degrades to empty results.
+    required: false
+    secret: true
+
 requires:
   artifact_type:
     - sim2l

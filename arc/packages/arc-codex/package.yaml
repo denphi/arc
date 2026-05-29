@@ -12,6 +12,24 @@ provides:
   skills:
     - skills/write-artifact-with-codex.md
 
+# Key user-facing config. The coder also reads several advanced
+# ARC_CODEX_* arg-tuning vars (ARGS / EXTRA_ARGS / GLOBAL_ARGS / CONFIG /
+# PROFILE / SANDBOX / WORKDIR / APPROVAL_POLICY); those are power-user
+# knobs and intentionally not all surfaced here.
+config:
+  - name: ARC_CODEX_COMMAND
+    description: Path/name of the Codex CLI executable.
+    required: false
+    default: codex
+  - name: ARC_CODEX_MODEL
+    description: Model the Codex CLI should use.
+    required: false
+    default: ""
+  - name: ARC_CODEX_TIMEOUT_SECONDS
+    description: Hard wall-clock timeout for a Codex run.
+    required: false
+    default: "300"
+
 requires:
   runtime_adapter: any
   artifact_type: sim2l

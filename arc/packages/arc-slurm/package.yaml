@@ -1,0 +1,35 @@
+name: arc-slurm
+version: 0.1.0
+type: runtime-package
+description: >
+  Slurm runtime adapter — runs an artifact's simulate() as an sbatch job
+  on an HPC cluster. Reuses core's BaseSubmitPollAdapter; talks to the
+  Slurm CLI (sbatch/sacct/scancel), no Python client dependency. Reachable
+  via ARC_RUNTIME_ADAPTER=slurm or a workflow step `adapter: slurm`.
+
+provides:
+  runtime_adapters:
+    - name: slurm
+      entrypoint: arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter
+
+config:
+  - name: ARC_SLURM_PARTITION
+    description: Slurm partition to submit to.
+    required: false
+    default: ""
+  - name: ARC_SLURM_ACCOUNT
+    description: Slurm account/allocation to charge.
+    required: false
+    default: ""
+  - name: ARC_SLURM_TIME
+    description: Per-job wall-clock limit (HH:MM:SS).
+    required: false
+    default: "00:30:00"
+  - name: ARC_SLURM_SCRATCH
+    description: Shared/scratch dir for staging job files (must be visible to compute nodes).
+    required: false
+    default: ""
+
+requires:
+  integrations:
+    - slurm-cli   # sbatch/sacct/scancel must be on PATH (a submission host)

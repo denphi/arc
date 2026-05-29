@@ -1,0 +1,27 @@
+name: arc-k8s
+version: 0.1.0
+type: runtime-package
+description: >
+  Kubernetes runtime adapter — runs an artifact's simulate() as a Job
+  (one pod, restartPolicy=Never). Reuses core's BaseSubmitPollAdapter;
+  talks to `kubectl` (no Python client dependency). Reachable via
+  ARC_RUNTIME_ADAPTER=k8s (or kubernetes) or a workflow step `adapter: k8s`.
+
+provides:
+  runtime_adapters:
+    - name: k8s
+      entrypoint: arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter
+
+config:
+  - name: ARC_K8S_IMAGE
+    description: Container image for the Job pod.
+    required: false
+    default: "python:3.11-slim"
+  - name: ARC_K8S_NAMESPACE
+    description: Namespace to create the Job/ConfigMaps in.
+    required: false
+    default: "default"
+
+requires:
+  integrations:
+    - kubectl   # kubectl must be on PATH + a reachable cluster context

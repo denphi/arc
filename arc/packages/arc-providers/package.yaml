@@ -15,6 +15,20 @@ provides:
     - name: openai
       entrypoint: arc.packages.arc-providers.providers.openai:OpenAIProvider
 
+config:
+  - name: ANTHROPIC_API_KEY
+    description: API key for the anthropic provider.
+    required: false   # only needed when --provider anthropic is selected
+    secret: true
+  - name: OPENAI_API_KEY
+    description: API key for the openai provider.
+    required: false
+    secret: true
+  - name: ARC_MODEL
+    description: Default model id for anthropic/openai when not passed per-request.
+    required: false
+    default: ""
+
 requires:
   # The provider SDKs are optional extras; a provider only needs its SDK
   # installed when actually selected (the import is lazy inside the class).

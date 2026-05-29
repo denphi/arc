@@ -1,0 +1,19 @@
+name: arc-knowledge-graph
+version: 0.1.0
+type: extension-package
+description: >
+  Knowledge graph over experiments, artifacts, and variables. A zero-dep
+  persistent directed multigraph exposing add_edge / neighbors / edges.
+  Core defines ExtensionContract; this package implements it. Enabled via
+  `[extensions.knowledge-graph]`. Lowest-priority capability — a richer
+  backend (e.g. Neo4j) can slot in behind the same extension later.
+
+config:
+  - name: ARC_KG_PATH
+    description: >
+      Filesystem path for the persistent graph (overrides persist_path in
+      the [extensions.knowledge-graph] block when set).
+    required: false
+    default: ""
+
+requires: {}

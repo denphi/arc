@@ -181,6 +181,18 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
     logger.info("Loading package: %s", pkg_name)
     registry.register_package(pkg_name, manifest)
 
+    # Surface missing *required* config early (a clear startup warning beats
+    # a late KeyError / silent empty-string deep in a run). The package still
+    # loads — a required var may be set later, or the feature degrades.
+    import os as _os
+    for entry in manifest.get("config", []) or []:
+        if isinstance(entry, dict) and entry.get("required") and not _os.environ.get(entry.get("name", "")):
+            logger.warning(
+                "Package %r requires config %r which is unset — set it in "
+                ".env or the environment. (%s)",
+                pkg_name, entry.get("name"), entry.get("description", ""),
+            )
+
     for agent_def in manifest.get("provides", {}).get("agents", []):
         try:
             agent_class = _import_class(agent_def["entrypoint"])

@@ -1,0 +1,20 @@
+name: arc-openapi
+version: 0.1.0
+type: extension-package
+description: >
+  Exposes OpenAPI 3.x endpoints as ARC skills. Fetches one or more specs
+  and registers each operation as a skill `openapi::<spec>::<operationId>`.
+  Core defines ExtensionContract; this package implements it. Enabled via
+  the `[extensions.openapi]` block in arc.toml.
+
+config:
+  - name: ARC_OPENAPI_SPEC_URL
+    description: >
+      Single-spec shortcut: URL of an OpenAPI 3.x document. For multiple
+      specs, configure a `specs` list in the [extensions.openapi] block.
+    required: false
+    default: ""
+
+requires:
+  integrations:
+    - requests   # core dependency; used to fetch the spec + call operations

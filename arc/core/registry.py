@@ -80,6 +80,36 @@ class ComponentRegistry:
     def get_package(self, name: str) -> dict[str, Any]:
         return self._packages.get(name)
 
+    def package_config(self, name: str) -> dict[str, Any]:
+        """Resolve a package's declared ``config:`` against the environment.
+
+        Reads the package's ``config:`` manifest section (a list of
+        ``{name, default, ...}`` entries) and returns ``{var: value}`` with
+        each value taken from ``os.environ`` when set, else the declared
+        ``default`` (or ``""``). Packages read this instead of reaching into
+        ``os.environ`` with magic strings; the manifest is the single place
+        a contributor declares + documents what the package needs.
+
+        Returns an empty dict for an unknown package or one with no
+        ``config:`` section.
+        """
+        import os
+        try:
+            manifest = self._packages.get(name)
+        except KeyError:
+            return {}
+        resolved: dict[str, Any] = {}
+        for entry in (manifest or {}).get("config", []) or []:
+            if isinstance(entry, dict) and entry.get("name"):
+                var = entry["name"]
+            elif isinstance(entry, str):
+                var = entry
+                entry = {"name": var}
+            else:
+                continue
+            resolved[var] = os.environ.get(var, entry.get("default", ""))
+        return resolved
+
     # --- agents (special-cased: per-package source tracking) ---
 
     def register_agent(self, name: str, agent_class: Any, package_name: str | None = None) -> None:

@@ -1,0 +1,38 @@
+name: arc-docker
+version: 0.1.0
+type: runtime-package
+description: >
+  Docker runtime adapter — runs an artifact's simulate() inside a
+  container (real isolation: fresh container, --network none by default).
+  Core defines RuntimeAdapterContract + the BaseSubmitPollAdapter
+  scaffolding; this package supplies the Docker backend. Shells out to the
+  `docker` CLI (no SDK dependency). Reachable via ARC_RUNTIME_ADAPTER=docker
+  or a workflow step `adapter: docker` once the docker-runtime extension
+  registers it.
+
+provides:
+  runtime_adapters:
+    - name: docker
+      entrypoint: arc.packages.arc-docker.adapter:DockerRuntimeAdapter
+
+config:
+  - name: ARC_DOCKER_IMAGE
+    description: Container image to run the workflow in.
+    required: false
+    default: "python:3.11-slim"
+  - name: ARC_DOCKER_NETWORK
+    description: Container network mode (`none` closes the SSRF/exfil surface).
+    required: false
+    default: "none"
+  - name: ARC_DOCKER_CPUS
+    description: CPU limit passed to `docker run --cpus`.
+    required: false
+    default: ""
+  - name: ARC_DOCKER_MEMORY
+    description: Memory limit passed to `docker run --memory`.
+    required: false
+    default: ""
+
+requires:
+  integrations:
+    - docker-cli   # the `docker` CLI must be on PATH + daemon reachable
