@@ -90,16 +90,11 @@
               <h2 id="sessionTitle">No session selected</h2>
               <p id="sessionMeta">Create or select a session.</p>
             </div>
-            <div class="option-menubar" role="menubar" aria-label="Run options">
-              <label class="menu-field">
-                <span>Domain</span>
-                <input id="domainInput" name="domain" type="text" placeholder="science" />
-              </label>
-              <label class="menu-field menu-field-compact">
-                <span>Steps</span>
-                <input id="iterationsInput" name="iterations" type="number" min="1" max="20" value="1" />
-              </label>
-            </div>
+            <!-- Goal-first: no always-on run options. Domain/steps are carried
+                 as hidden defaults; the loop surfaces next-step chips in the
+                 thread (see renderSuggestions) only when it needs user input. -->
+            <input id="domainInput" name="domain" type="hidden" value="" />
+            <input id="iterationsInput" name="iterations" type="hidden" value="1" />
           </header>
 
           <section id="threadList" class="thread-list" aria-live="polite"></section>
@@ -126,7 +121,7 @@
                 id="messageInput"
                 name="message"
                 rows="1"
-                placeholder="Message ARC or choose a tool"
+                placeholder="Describe your research goal…"
                 required
               ></textarea>
               <button class="send-icon-button" type="submit" aria-label="Send">
@@ -202,6 +197,41 @@
             </button>
           </section>
 
+          <section class="panel author-panel">
+            <div class="panel-heading">
+              <h3>Author Artifact</h3>
+            </div>
+            <label>
+              Name
+              <input id="authorName" type="text" placeholder="my_simulation" />
+            </label>
+            <label>
+              workflow.py
+              <textarea id="authorWorkflow" rows="6" placeholder="def simulate(x=1.0):&#10;    return {'y': x * 2}"></textarea>
+            </label>
+            <label>
+              sim2l.yaml
+              <textarea id="authorSchema" rows="3" placeholder="inputs:&#10;  x: {type: Number, default: 1.0}"></textarea>
+            </label>
+            <div class="author-actions">
+              <button id="validateWorkflow" class="secondary-button" type="button">Validate</button>
+              <button id="createArtifact" class="primary-button" type="button">Create</button>
+            </div>
+            <p id="authorStatus" class="author-status" aria-live="polite"></p>
+          </section>
+
+          <section class="panel activity-panel">
+            <div class="panel-heading">
+              <h3>Activity</h3>
+              <button id="cancelJob" class="sidebar-ghost-button" type="button" hidden>Cancel</button>
+            </div>
+            <label class="menu-field menu-field-inline">
+              <input id="streamToggle" type="checkbox" checked />
+              <span>Run as a background job (live progress, cancellable)</span>
+            </label>
+            <div id="activityList" class="activity-list" aria-live="polite"></div>
+          </section>
+
           <section class="panel detail-panel">
             <div class="panel-heading">
               <h3>Detail</h3>
@@ -217,7 +247,7 @@
             <span class="capability-dot"></span>
             <span id="healthLabel">checking</span>
           </button>
-          <span id="busyState" class="status-pill">idle</span>
+          <span id="busyState" class="status-pill" role="status" aria-live="polite">idle</span>
         </div>
         <div class="aux-actions">
           <button id="reloadSession" class="secondary-button icon-text-button" type="button">

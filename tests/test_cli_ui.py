@@ -26,7 +26,7 @@ def test_arc_ui_uses_browser_ui_default_port(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == [{"host": DEFAULT_HOST, "port": DEFAULT_PORT, "reload": False}]
-    assert DEFAULT_PORT == 8080
+    assert DEFAULT_PORT == 8888
 
 
 def test_arc_ui_forwards_host_port_and_reload(monkeypatch):
@@ -50,5 +50,5 @@ def test_arc_ui_help_lists_default_port():
     result = _runner().invoke(app, ["ui", "--help"])
 
     assert result.exit_code == 0
-    assert "8080" in result.stdout
+    assert str(DEFAULT_PORT) in result.stdout
     assert "standalone ARC browser UI" in result.stdout

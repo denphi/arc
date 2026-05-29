@@ -4,6 +4,7 @@ Usage:
     /strategy                    list every known role + current pick
     /strategy <role>             list available strategies for that role
     /strategy <role> <impl>      switch the active strategy for this session
+    /strategy <role> a b c       use an ordered strategy stack when supported
     /strategy <role> reset       drop the session override
 """
 
@@ -42,7 +43,12 @@ def _resolved_name(role: str, overrides: dict[str, str] | None) -> str:
 
 
 async def run(state: ChatState, argv: list[str]) -> None:
-    from arc.core.strategies import known_roles, list_strategies, default_strategy
+    from arc.core.strategies import (
+        known_roles,
+        list_strategies,
+        default_strategy,
+        parse_strategy_names,
+    )
 
     overrides = state.memory.get("strategy_overrides") or {}
 
@@ -69,8 +75,9 @@ async def run(state: ChatState, argv: list[str]) -> None:
     if len(argv) == 1:
         header(f"Strategies for {role}")
         picked = _resolved_name(role, overrides)
+        picked_parts = set(parse_strategy_names(picked))
         for spec in list_strategies(role):
-            marker = c(" ← active", GREEN, BOLD) if spec.name == picked else ""
+            marker = c(" ← active", GREEN, BOLD) if spec.name in picked_parts else ""
             label = c(spec.name, CYAN, BOLD) + marker
             print(f"  {label}")
             if spec.description:
@@ -79,7 +86,7 @@ async def run(state: ChatState, argv: list[str]) -> None:
             warn(f"No strategies registered for {role}.")
         return
 
-    impl = argv[1].lower()
+    impl = " ".join(argv[1:]).lower()
     if impl in ("reset", "clear"):
         _set_override(state, role, None)
         ok(f"Cleared session override for {c(role, CYAN)}. Now using "
@@ -87,9 +94,11 @@ async def run(state: ChatState, argv: list[str]) -> None:
         state.persist()
         return
 
-    available = {s.name for s in list_strategies(role)}
-    if impl not in available:
-        err(f"Unknown strategy {impl!r} for {role}. "
+    from arc.core.strategies import unknown_strategy_names
+    unknown = unknown_strategy_names(role, impl)
+    if unknown:
+        available = {s.name for s in list_strategies(role)}
+        err(f"Unknown strategy component(s) {unknown!r} for {role}. "
             f"Available: {', '.join(sorted(available))}")
         return
 

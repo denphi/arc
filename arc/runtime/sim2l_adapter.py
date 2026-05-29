@@ -173,6 +173,31 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
     def _results_url(self):
         return os.environ.get("SIM2L_RESULTS_URL", "http://localhost:8003")
 
+    def _services_reachable(self) -> bool:
+        """Cheap, cached probe of the catalog ``/health`` endpoint.
+
+        When the sim2l services aren't running (the common local case),
+        every per-run push would otherwise stall on a connection-refused
+        timeout (seconds) and emit an ERROR log. This short-circuits those
+        pushes: probe once, cache the answer for a few seconds, and skip the
+        push quietly when nothing is listening. Publishing is advisory, so a
+        skipped push never affects the run's result.
+        """
+        import time
+        now = time.monotonic()
+        cached = getattr(self, "_svc_probe", None)
+        if cached is not None and now - cached[0] < 5.0:
+            return cached[1]
+        reachable = False
+        try:
+            import requests
+            resp = requests.get(f"{self._catalog_url.rstrip('/')}/health", timeout=1.0)
+            reachable = resp.status_code == 200
+        except Exception:  # noqa: BLE001 — unreachable → don't publish
+            reachable = False
+        self._svc_probe = (now, reachable)
+        return reachable
+
     @staticmethod
     def _accepted_configure_keys(sim2l_module) -> set[str]:
         """Return the set of config keys ``sim2l.configure`` will accept.
@@ -289,6 +314,12 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         On 409 (already registered), fetches the existing record and PATCHes
         its metadata so the workflow source stays current.
         """
+        # Skip fast + quietly when the catalog service isn't up — avoids a
+        # multi-second connection-refused stall (and ERROR log spam) on every
+        # run in the common no-services-running case. Publishing is advisory.
+        if not self._services_reachable():
+            logger.debug("Catalog unreachable — skipping push for %s/%s", sim_name, sim_version)
+            return False
         try:
             import requests as _req
             client = self._catalog_client()

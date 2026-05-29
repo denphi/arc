@@ -290,6 +290,46 @@ def test_searcher_override_picks_embedding_searcher():
     assert cls.__name__ == "EmbeddingSearcherAgent"
 
 
+def test_composite_searcher_merges_ordered_sources(stub_catalog, monkeypatch):
+    """A stack runs each searcher and appends new, deduped evidence."""
+    from arc.core.strategies import resolve_role
+    import sys
+
+    monkeypatch.setenv("MP_API_KEY", "test-key")
+    MPCls = resolve_role("searcher", overrides={"searcher": "materials_project"})
+    mp_searcher_module = sys.modules[MPCls.__module__]
+    monkeypatch.setattr(
+        mp_searcher_module,
+        "fetch_mp_summary",
+        lambda *a, **kw: [
+            {
+                "material_id": "mp-149",
+                "formula_pretty": "Si",
+                "band_gap": 1.1,
+                "formation_energy_per_atom": -0.2,
+                "is_stable": True,
+            }
+        ],
+    )
+
+    Composite = resolve_role(
+        "searcher",
+        overrides={"searcher": "default embeddings materials_project"},
+    )
+    result = asyncio.run(Composite(context=_context()).search(
+        ResearchGoal(
+            goal="silicon nanowire bandgap",
+            domain="materials",
+            target={"bandgap_ev": 1.1},
+        )
+    ))
+
+    names = [hit["name"] for hit in result.catalog_hits]
+    assert names.count("silicon_quantum_well") == 1
+    assert any(name.startswith("Si_mp-149") for name in names)
+    assert result.catalog_hits[0]["name"] == "silicon_quantum_well"
+
+
 # ── Ideator → Searcher integration ─────────────────────────────────────
 
 

@@ -16,8 +16,8 @@ import shlex
 import time
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -25,12 +25,17 @@ from arc.api import research_loop_routes as loop_actions
 from arc.api.research_loop_routes import router as research_loop_router
 from arc.api.routes import router as core_api_router
 from arc.api.session_state import load_state, save_state
-from arc.api.security import require_api_token, validate_provider_base_url
+from arc.api.security import (
+    load_security_config,
+    require_api_token,
+    validate_provider_base_url,
+)
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.runtime.backend import safe_backend_action
 from arc.schemas.research import ResearchGoal
+from arc.ui import jobs
 from arc.session import (
     delete_session as delete_session_dir,
     list_sessions,
@@ -259,6 +264,32 @@ class ConfigSaveRequest(BaseModel):
     values: dict[str, str | None] = Field(default_factory=dict)
 
 
+class TargetPatchRequest(BaseModel):
+    target: dict[str, Any] = Field(default_factory=dict)
+    remove: list[str] = Field(default_factory=list)
+    replace: bool = False   # replace the whole target vs. merge
+
+
+class StrategySetRequest(BaseModel):
+    impl: str | None = None   # None/"reset"/"clear" → clear the override
+
+
+class RecipeApplyBody(BaseModel):
+    force: bool = False
+
+
+class ArtifactCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    files: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    version: str = "0.1.0"
+
+
+class WorkflowValidateRequest(BaseModel):
+    source: str = Field(..., min_length=1)
+
+
 def create_app() -> FastAPI:
     from arc.core.env import load_env
     load_env()  # populate os.environ from .env before any package/provider use
@@ -272,8 +303,15 @@ def create_app() -> FastAPI:
     app.include_router(research_loop_router, prefix="/api/actions")
 
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    def index() -> HTMLResponse:
+        # Cache-bust the JS/CSS with the arc version so a browser never serves
+        # a stale app.js/app.css after an upgrade. The index itself is served
+        # no-cache (it's tiny and carries the version stamp), so a plain reload
+        # always picks up new assets — no hard-refresh needed.
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        html = html.replace("/assets/app.css", f"/assets/app.css?v={__version__}")
+        html = html.replace("/assets/app.js", f"/assets/app.js?v={__version__}")
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -383,6 +421,7 @@ def create_app() -> FastAPI:
             _assistant_summary(result["result"]),
             title="ARC",
             payload=result["result"],
+            suggestions=_suggestions_for(result["result"]),
         )
         return {
             "session_id": session_id,
@@ -412,6 +451,7 @@ def create_app() -> FastAPI:
             _assistant_summary(result["result"]),
             title="ARC",
             payload=result["result"],
+            suggestions=_suggestions_for(result["result"]),
         )
         return {
             "session_id": session_id,
@@ -460,7 +500,229 @@ def create_app() -> FastAPI:
             "session": _session_snapshot(session_id),
         }
 
+    # ── Phase 2 read routes ──────────────────────────────────────────────
+
+    @app.get("/api/sessions/{session_id}/artifacts", dependencies=auth)
+    def list_session_artifacts(session_id: str) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        paths = session_paths(session_id)
+        return {"session_id": session_id,
+                "artifacts": _list_artifacts_readonly(Path(paths["artifacts"]))}
+
+    @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}", dependencies=auth)
+    def get_session_artifact(
+        session_id: str, artifact_id: str, version: str | None = None,
+    ) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
+        artifact = _resolve_artifact(registry, artifact_id, version or "0.1.0")
+        return {
+            "session_id": session_id,
+            "artifact": artifact.model_dump(),
+            "files": _list_artifact_files(Path(artifact.path)),
+        }
+
+    @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}/files/{file_path:path}",
+             dependencies=auth)
+    def get_artifact_file(
+        session_id: str, artifact_id: str, file_path: str, version: str | None = None,
+    ) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
+        artifact = _resolve_artifact(registry, artifact_id, version or "0.1.0")
+        content = _read_artifact_file(Path(artifact.path), file_path)
+        return {"session_id": session_id, "artifact_id": artifact.artifact_id,
+                "path": file_path, "content": content}
+
+    @app.get("/api/sessions/{session_id}/results", dependencies=auth)
+    def list_session_results(session_id: str) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        paths = session_paths(session_id)
+        return {"session_id": session_id,
+                "results": _list_results_readonly(Path(paths["runs"]))}
+
+    @app.get("/api/sessions/{session_id}/results/{run_id}", dependencies=auth)
+    def get_session_result(session_id: str, run_id: str) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        store = ResultsStore(root=session_paths(session_id)["runs"])
+        try:
+            result = store.get(run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Result not found")
+        return {"session_id": session_id, "result": result.model_dump(),
+                "review": _review_for_result(session_id, run_id)}
+
+    @app.get("/api/sessions/{session_id}/state", dependencies=auth)
+    def get_session_state(session_id: str) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        return {"session_id": session_id, "state": load_state(session_id),
+                "meta": load_session_meta(session_id)}
+
+    @app.patch("/api/sessions/{session_id}/target", dependencies=auth)
+    def patch_session_target(session_id: str, body: TargetPatchRequest) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        meta = load_session_meta(session_id) or {}
+        current = dict(meta.get("target") or {})
+        if body.replace:
+            target = dict(body.target)
+        else:
+            target = {**current, **body.target}
+            for key in body.remove or []:
+                target.pop(key, None)
+        _save_session_fields(session_id, target=target)
+        return {"session_id": session_id, "target": target,
+                "session": _session_snapshot(session_id)}
+
+    @app.get("/api/strategies", dependencies=auth)
+    def list_strategies(session_id: str | None = None) -> dict[str, Any]:
+        return loop_actions.list_strategies_endpoint(
+            session_id=_safe_session_id(session_id) if session_id else "ui-default")
+
+    @app.put("/api/sessions/{session_id}/strategies/{role}", dependencies=auth)
+    def set_strategy(session_id: str, role: str, body: StrategySetRequest) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        if body.impl in (None, "", "reset", "clear"):
+            return loop_actions.clear_strategy_endpoint(role=role, session_id=session_id)
+        return loop_actions.set_strategy_endpoint(
+            role=role,
+            body=loop_actions.StrategyOverrideRequest(impl=body.impl),
+            session_id=session_id,
+        )
+
+    @app.get("/api/recipes", dependencies=auth)
+    def list_recipes(session_id: str | None = None) -> dict[str, Any]:
+        return loop_actions.list_recipes_endpoint(
+            session_id=_safe_session_id(session_id) if session_id else "ui-default")
+
+    @app.post("/api/sessions/{session_id}/recipes/{name}/apply", dependencies=auth)
+    def apply_recipe(session_id: str, name: str, body: RecipeApplyBody) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        return loop_actions.apply_recipe_endpoint(
+            name,
+            loop_actions.RecipeApplyRequest(force=body.force),
+            session_id=session_id,
+        )
+
+    # ── Phase 4: artifact authoring ──────────────────────────────────────
+
+    @app.post("/api/workflow/validate", dependencies=auth)
+    def validate_workflow(body: WorkflowValidateRequest) -> dict[str, Any]:
+        """Dry-run the workflow safety check on draft source — no file write."""
+        from arc.runtime.workflow_safety import check_workflow_source_safe
+        ok, message = check_workflow_source_safe(body.source)
+        return {"valid": ok, "message": message}
+
+    @app.post("/api/sessions/{session_id}/artifacts", dependencies=auth)
+    def create_artifact(session_id: str, body: ArtifactCreateRequest) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        # Safety-check any workflow.py before registering it.
+        source = body.files.get("workflow.py")
+        if source:
+            from arc.runtime.workflow_safety import check_workflow_source_safe
+            ok, message = check_workflow_source_safe(source)
+            if not ok:
+                raise HTTPException(status_code=400, detail=f"Unsafe workflow: {message}")
+        registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
+        from arc.schemas.artifact import ArtifactDraft
+        try:
+            record = registry.register(
+                ArtifactDraft(
+                    name=body.name, description=body.description,
+                    files=body.files, metadata=body.metadata,
+                ),
+                version=body.version,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        _append_thread(session_id, "tool", f"Created artifact {record.name}.",
+                       title="Artifact", payload=record.model_dump())
+        return {"session_id": session_id, "artifact": record.model_dump(),
+                "files": _list_artifact_files(Path(record.path)),
+                "session": _session_snapshot(session_id)}
+
+    @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}/diff", dependencies=auth)
+    def diff_artifact_versions(
+        session_id: str, artifact_id: str, left: str, right: str,
+    ) -> dict[str, Any]:
+        session_id = _safe_session_id(session_id)
+        registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
+        left_rec = _resolve_artifact(registry, artifact_id, left)
+        right_rec = _resolve_artifact(registry, artifact_id, right)
+        return {
+            "session_id": session_id, "artifact_id": left_rec.artifact_id,
+            "left": left, "right": right,
+            "diff": _diff_artifact_files(Path(left_rec.path), Path(right_rec.path)),
+        }
+
+    # ── Phase 3: async jobs + SSE ────────────────────────────────────────
+
+    @app.post("/api/jobs/research", dependencies=auth)
+    async def start_research_job(body: MessageRequest) -> dict[str, Any]:
+        session_id = _ensure_session(body.session_id, goal=body.content, target=body.target)
+
+        async def _body(job) -> dict[str, Any]:
+            return await _run_research_job(job, session_id, body)
+
+        job = jobs.registry.start("research", session_id, _body)
+        return {"job_id": job.job_id, "session_id": session_id, "status": job.status}
+
+    @app.get("/api/jobs", dependencies=auth)
+    def list_jobs() -> dict[str, Any]:
+        return {"jobs": jobs.registry.list()}
+
+    @app.get("/api/jobs/{job_id}", dependencies=auth)
+    def get_job(job_id: str) -> dict[str, Any]:
+        job = jobs.registry.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        payload = job.to_dict()
+        payload["events"] = job.events.buffered()
+        return payload
+
+    @app.post("/api/jobs/{job_id}/cancel", dependencies=auth)
+    async def cancel_job(job_id: str) -> dict[str, Any]:
+        if jobs.registry.get(job_id) is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        cancelled = await jobs.registry.cancel(job_id)
+        return {"job_id": job_id, "cancelled": cancelled,
+                "status": jobs.registry.get(job_id).status}
+
+    @app.get("/api/jobs/{job_id}/events", dependencies=[Depends(_require_token_header_or_query)])
+    async def job_events(job_id: str, request: Request, token: str | None = None) -> StreamingResponse:
+        job = jobs.registry.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return StreamingResponse(
+            _sse_event_generator(job, request),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return app
+
+
+def _require_token_header_or_query(
+    authorization: str | None = Header(default=None),
+    token: str | None = None,
+) -> None:
+    """Auth for SSE: a browser ``EventSource`` can't set an Authorization
+    header, so this dependency accepts the bearer token from either the
+    header *or* a ``?token=`` query param, validated against the same
+    configured ``ARC_API_TOKEN``. Default-open when no token is configured
+    (mirrors ``require_api_token``)."""
+    cfg = load_security_config()
+    if not cfg.token:
+        return
+    supplied = None
+    if authorization:
+        parts = authorization.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            supplied = parts[1]
+    supplied = supplied or token
+    if supplied != cfg.token:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
 def _safe_session_id(session_id: str | None) -> str:
@@ -645,6 +907,110 @@ def _list_results_readonly(root: Path) -> list[dict[str, Any]]:
     if not root.is_dir():
         return []
     return [result.model_dump() for result in ResultsStore(root=str(root)).list_all()]
+
+
+# Artifact files we expose to the browser viewer. A fixed allowlist of names
+# plus any *.py/*.yaml/*.yml/*.md/*.json/*.txt under the artifact dir, so we
+# never serve, e.g., a stray secret a workflow wrote. Internal record files are
+# excluded (they're returned via the artifact record endpoint already).
+_VIEWABLE_SUFFIXES = {".py", ".yaml", ".yml", ".md", ".json", ".txt", ".cfg", ".toml"}
+_HIDDEN_ARTIFACT_FILES = {"arc_record.json", "arc_metadata.json"}
+_MAX_VIEW_BYTES = 512 * 1024  # 512 KiB cap so the browser isn't handed a huge blob
+
+
+def _list_artifact_files(artifact_dir: Path) -> list[dict[str, Any]]:
+    """List viewable files inside an artifact directory (non-recursive +
+    one level deep), with size, relative to the artifact root."""
+    if not artifact_dir.is_dir():
+        return []
+    root = artifact_dir.resolve()
+    files: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name in _HIDDEN_ARTIFACT_FILES:
+            continue
+        if path.suffix.lower() not in _VIEWABLE_SUFFIXES:
+            continue
+        try:
+            rel = path.resolve().relative_to(root)
+        except ValueError:
+            continue  # symlink escaping the dir — skip
+        files.append({"path": str(rel), "size": path.stat().st_size})
+    return files
+
+
+def _read_artifact_file(artifact_dir: Path, rel_path: str) -> str:
+    """Read one file from inside the artifact dir, containing the path.
+
+    Resolves the requested path and verifies it stays within the artifact
+    directory (defeats ``../`` traversal and absolute paths). Refuses files
+    outside the viewable allowlist or above the size cap.
+    """
+    if not rel_path or rel_path.startswith(("/", "\\")) or "\x00" in rel_path:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    root = artifact_dir.resolve()
+    target = (root / rel_path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path escapes the artifact directory")
+    if target.name in _HIDDEN_ARTIFACT_FILES or target.suffix.lower() not in _VIEWABLE_SUFFIXES:
+        raise HTTPException(status_code=403, detail="File type is not viewable")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    if target.stat().st_size > _MAX_VIEW_BYTES:
+        raise HTTPException(status_code=413, detail="File too large to view")
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
+
+
+def _diff_artifact_files(left_dir: Path, right_dir: Path) -> list[dict[str, Any]]:
+    """Unified diff of each viewable file between two artifact versions.
+
+    Files present in either version are compared; a missing side reads as
+    empty so adds/removes show. Returns one entry per file with a unified
+    diff string (empty when unchanged)."""
+    import difflib
+
+    left_files = {f["path"] for f in _list_artifact_files(left_dir)}
+    right_files = {f["path"] for f in _list_artifact_files(right_dir)}
+    out: list[dict[str, Any]] = []
+    for rel in sorted(left_files | right_files):
+        try:
+            left_text = _read_artifact_file(left_dir, rel) if rel in left_files else ""
+        except HTTPException:
+            left_text = ""
+        try:
+            right_text = _read_artifact_file(right_dir, rel) if rel in right_files else ""
+        except HTTPException:
+            right_text = ""
+        diff = "".join(difflib.unified_diff(
+            left_text.splitlines(keepends=True),
+            right_text.splitlines(keepends=True),
+            fromfile=f"a/{rel}", tofile=f"b/{rel}",
+        ))
+        out.append({"path": rel, "changed": left_text != right_text, "diff": diff})
+    return out
+
+
+def _review_for_result(session_id: str, run_id: str) -> dict[str, Any]:
+    """Best-effort: find the review mapped to a run in this session's
+    run_history (the loop records review alongside each iteration)."""
+    meta = load_session_meta(session_id) or {}
+    for entry in meta.get("run_history") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_run = (
+            entry.get("run_id")
+            or _nested_value(entry, "execution", "run_id")
+            or _nested_value(entry, "result", "run_id")
+        )
+        if entry_run == run_id and isinstance(entry.get("review"), dict):
+            return entry["review"]
+    return {}
 
 
 def _save_workflow_meta(workflow: ResearchWorkflow, goal: str, target: dict[str, Any]) -> None:
@@ -909,6 +1275,72 @@ async def _run_research_iterations(
     return {"result": results[-1] if results else None, "iterations": results}
 
 
+async def _run_research_job(job, session_id: str, body: "MessageRequest") -> dict[str, Any]:
+    """Job body: run research iterations, emitting structured UI events per
+    iteration so the browser timeline updates live over SSE. Persists the
+    thread + summary the same way the synchronous route does."""
+    _append_thread(session_id, "user", body.content, title="You")
+    safe_base_url = validate_provider_base_url(body.base_url) if body.base_url else None
+    workflow = ResearchWorkflow(
+        provider_name=body.provider, token=body.token, model=body.model,
+        base_url=safe_base_url, session_id=session_id, workflow_name=body.workflow_name,
+    )
+    _hydrate_workflow_state(workflow)
+    goal = ResearchGoal(goal=body.content, domain=body.domain, target=body.target)
+    total = max(1, body.iterations)
+    results: list[dict[str, Any]] = []
+    for index in range(total):
+        job.events.emit("phase_start", f"Iteration {index + 1}/{total}",
+                        phase="iteration", index=index + 1)
+        result = await workflow.run_once(goal)
+        results.append(result)
+        job.progress = (index + 1) / total
+        execution = (result or {}).get("execution") or {}
+        review = (result or {}).get("review") or {}
+        job.events.emit("result", _assistant_summary(result), phase="iteration",
+                        index=index + 1, status=execution.get("status"))
+        if review.get("summary"):
+            job.events.emit("review", str(review["summary"]), index=index + 1)
+        job.events.emit("phase_end", f"Iteration {index + 1} done", phase="iteration",
+                        index=index + 1)
+        if review.get("approved"):
+            job.events.emit("status", "Goal approved — stopping early.")
+            break
+    _save_workflow_meta(workflow, body.content, body.target)
+    final = results[-1] if results else None
+    _append_thread(session_id, "assistant", _assistant_summary(final), title="ARC",
+                   payload=final, suggestions=_suggestions_for(final))
+    return {"result": final, "iterations": results, "session_id": session_id}
+
+
+async def _sse_event_generator(job, request: "Request"):
+    """Yield SSE frames for a job: buffered history first, then live events
+    until the stream closes or the client disconnects."""
+    queue, buffered = job.events.subscribe()
+    try:
+        for event in buffered:
+            yield _sse_frame(event.to_dict())
+        # If the job already finished, the buffer is the whole story.
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"   # comment frame to hold the connection
+                continue
+            if event is None:           # stream closed sentinel
+                yield _sse_frame({"kind": "done", "text": "", "meta": {}, "ts": 0})
+                break
+            yield _sse_frame(event.to_dict())
+    finally:
+        job.events.unsubscribe(queue)
+
+
+def _sse_frame(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
 async def _dispatch_ui_command(body: CommandRunRequest) -> dict[str, Any]:
     raw = body.command.strip()
     if not raw:
@@ -965,12 +1397,17 @@ async def _dispatch_ui_command(body: CommandRunRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc))
 
     if session_id:
+        # Research commands (run/continue/iterate) return {"result": …};
+        # surface next-step chips off that result. Other commands get none.
+        run_result = payload.get("result") if isinstance(payload, dict) else None
         _append_thread(
             session_id,
             "assistant",
             text,
             title=f"/{command}",
             payload=payload if isinstance(payload, dict) else {"value": payload},
+            suggestions=_suggestions_for(run_result) if command in
+            {"run", "continue", "iterate"} else [],
         )
     return _command_response(command, session_id, text, payload)
 
@@ -997,6 +1434,7 @@ async def _dispatch_free_text(body: MessageRequest) -> dict[str, Any]:
         text,
         title="ARC",
         payload=result["result"],
+        suggestions=_suggestions_for(result["result"]),
     )
     return _command_response("message", session_id, text, result)
 
@@ -1295,7 +1733,7 @@ def _handle_strategy_command(session_id: str, argv: list[str]) -> tuple[str, Any
             raise HTTPException(status_code=404, detail=f"unknown role: {role}")
         return f"Loaded strategies for {role}.", {"session_id": session_id, "role": matches[0]}
 
-    impl = argv[1].lower()
+    impl = " ".join(argv[1:]).lower()
     if impl in {"reset", "clear"}:
         payload = loop_actions.clear_strategy_endpoint(role=role, session_id=session_id)
         return f"Cleared strategy override for {role}.", payload
@@ -1495,8 +1933,6 @@ def _load_thread(session_id: str) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        import json
-
         raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
@@ -1504,11 +1940,21 @@ def _load_thread(session_id: str) -> list[dict[str, Any]]:
 
 
 def _save_thread(session_id: str, messages: list[dict[str, Any]]) -> None:
-    import json
-
     path = _thread_path(session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(messages[-200:], indent=2, default=str), encoding="utf-8")
+    # Atomic write: serialize to a temp file in the same dir, then os.replace
+    # (atomic on POSIX + Windows). A concurrent reader (e.g. a second browser
+    # tab polling the session) never observes a half-written/truncated file.
+    # NB: this prevents *corruption*, not a last-writer-wins race on the whole
+    # list — acceptable for the single-user dev UI; see ui_todo.md.
+    payload = json.dumps(messages[-200:], indent=2, default=str)
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def _append_thread(
@@ -1518,6 +1964,7 @@ def _append_thread(
     *,
     title: str | None = None,
     payload: dict[str, Any] | None = None,
+    suggestions: list[dict[str, Any]] | None = None,
 ) -> None:
     messages = _load_thread(session_id)
     messages.append({
@@ -1526,9 +1973,44 @@ def _append_thread(
         "title": title or role.title(),
         "content": content,
         "payload": payload or {},
+        # Contextual next-step chips the UI renders under this message — set
+        # only when the loop signals it wants user input (e.g. a run that
+        # wasn't approved). Empty for a fresh/goal-first turn.
+        "suggestions": suggestions or [],
         "ts": time.time(),
     })
     _save_thread(session_id, messages)
+
+
+def _suggestions_for(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Derive next-step suggestion chips from a run result.
+
+    The loop tells us what it needs: an *unapproved* review means the goal
+    isn't met yet, so offer to keep going; suggested ``next_parameters`` mean
+    the loop has a concrete next experiment to try. An approved/empty result
+    yields no chips (nothing for the user to decide). Each chip is
+    ``{label, command, prompt_steps?}`` — ``command`` is the slash command the
+    UI runs; ``prompt_steps`` asks the UI to collect an iteration count first.
+    """
+    if not result:
+        return []
+    review = result.get("review") or {}
+    # An explicit approval (or a final/approved status) means we're done —
+    # don't nudge the user to keep iterating.
+    if review.get("approved") is True or result.get("status") in ("approved", "final"):
+        return []
+    chips: list[dict[str, Any]] = [
+        {"label": "Continue (1 more)", "command": "/continue"},
+        {"label": "Iterate…", "command": "/iterate", "prompt_steps": True},
+    ]
+    next_params = result.get("next_parameters") or review.get("next_parameters")
+    if isinstance(next_params, dict) and next_params:
+        chips.insert(0, {
+            "label": "Run suggested next parameters",
+            "command": "/continue",
+            "note": ", ".join(f"{k}={v}" for k, v in list(next_params.items())[:4]),
+        })
+    return chips
 
 
 def _thread_for_session(session_id: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:

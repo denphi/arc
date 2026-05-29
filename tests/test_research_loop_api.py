@@ -112,6 +112,18 @@ def test_strategies_set_persists_override(session_id):
     assert state["strategy_overrides"]["planner"] == "mars_planner"
 
 
+def test_strategies_set_accepts_searcher_stack(session_id):
+    _run(set_strategy_endpoint(
+        role="searcher",
+        body=StrategyOverrideRequest(impl="default embeddings materials_project"),
+        session_id=session_id,
+    ))
+    payload = _run(list_strategies_endpoint(session_id=session_id))
+    searcher = next(r for r in payload["roles"] if r["role"] == "searcher")
+    assert searcher["active"] == "default embeddings materials_project"
+    assert searcher["session_override"] == "default embeddings materials_project"
+
+
 def test_strategies_set_rejects_unknown_role(session_id):
     with pytest.raises(Exception) as exc:
         _run(set_strategy_endpoint(

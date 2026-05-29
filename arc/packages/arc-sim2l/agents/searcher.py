@@ -141,6 +141,79 @@ class KeywordSearcherAgent(_BaseSearcher):
         return SearchResult(catalog_hits=catalog_hits, prior_results=prior_results)
 
 
+# ── Composite searcher ─────────────────────────────────────────────────
+
+
+class CompositeSearcherAgent(_BaseSearcher):
+    """Run several searcher strategies and merge their results.
+
+    ``arc.core.strategies.resolve_role("searcher")`` creates a lightweight
+    subclass with ``strategy_names`` set when the active selector contains
+    ``+`` (for example ``default+embeddings+materials_project``). Searchers
+    run in that order; earlier hits keep their rank, later strategies append
+    new evidence.
+    """
+
+    name = "searcher_composite"
+    description = "Runs multiple searcher strategies and merges their hits."
+    strategy_names: tuple[str, ...] = ()
+
+    async def search(self, goal: ResearchGoal) -> SearchResult:
+        from arc.core.strategies import resolve_role
+
+        hits: list[dict[str, Any]] = []
+        prior_results: list[dict[str, Any]] = []
+        seen_hits: set[str] = set()
+        seen_results: set[str] = set()
+
+        for strategy_name in self.strategy_names:
+            try:
+                SearcherCls = resolve_role(
+                    "searcher",
+                    overrides={"searcher": strategy_name},
+                    config={},
+                )
+                result = await SearcherCls(context=self.context).search(goal)
+            except Exception as exc:  # noqa: BLE001 — one source must not kill the stack
+                logger.debug(
+                    "composite searcher component %s failed: %s",
+                    strategy_name,
+                    exc,
+                )
+                continue
+
+            for hit in result.catalog_hits:
+                key = _dedupe_key(hit, ("source", "id", "name", "repo_path"))
+                if key in seen_hits:
+                    continue
+                seen_hits.add(key)
+                merged = dict(hit)
+                merged.setdefault("metadata", {})
+                if isinstance(merged["metadata"], dict):
+                    merged["metadata"] = {
+                        **merged["metadata"],
+                        "search_strategy": strategy_name,
+                    }
+                hits.append(merged)
+
+            for item in result.prior_results:
+                key = _dedupe_key(item, ("run_id", "execution_id", "id", "simulation_name"))
+                if key in seen_results:
+                    continue
+                seen_results.add(key)
+                prior_results.append(item)
+
+        return SearchResult(catalog_hits=hits, prior_results=prior_results)
+
+
+def _dedupe_key(record: dict[str, Any], fields: tuple[str, ...]) -> str:
+    for field in fields:
+        value = record.get(field)
+        if value not in (None, ""):
+            return f"{field}:{value}"
+    return repr(sorted(record.items()))
+
+
 # ── Embedding-based searcher ────────────────────────────────────────────
 
 

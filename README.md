@@ -132,6 +132,50 @@ GET  /health                 Health check
 
 ---
 
+## Browser UI
+
+A standalone browser dashboard runs over the same core primitives as the
+CLI and API (sessions, artifacts, results, the research workflow) — it does
+**not** import the terminal chat loop.
+
+```bash
+arc ui                              # → http://127.0.0.1:8888  (default port)
+# or directly, with overrides:
+python -m arc.ui --host 0.0.0.0 --port 8888
+```
+
+It binds to `127.0.0.1:8888` by default (8080 is avoided — it commonly
+collides with a Docker-proxied Jupyter on the same host). Open the UI at the
+explicit IPv4 address `http://127.0.0.1:8888`; `localhost` may resolve to IPv6
+and hit a different service. When exposed beyond localhost, set
+`ARC_API_TOKEN` to require a bearer token (the data + run endpoints are then
+gated; `/`, `/assets/*`, and `/api/health` stay open so the page can load and
+prompt for the token). Host/port also read from `ARC_UI_HOST` / `ARC_UI_PORT`.
+
+The UI offers a chat-style thread, a sessions drawer, an artifact/result
+inspector with a file viewer and schema-derived execution form, and live
+run progress over Server-Sent Events.
+
+### Session history: three distinct records
+
+These are easy to conflate; the UI uses all three:
+
+| Record | What it is | Where | Persisted by |
+|---|---|---|---|
+| **`run_history`** | Structured per-iteration run summaries (inputs, outputs, status, review). The authoritative experiment log. | `session.json` | workflow / API / CLI |
+| **Thread (transcript)** | The display timeline of typed messages and command results shown in the UI chat pane. The UI's transcript of record. | `<session>/ui_thread.json` | the browser UI |
+| **CLI line history** | A single *global* line-editing history for the REPL (up-arrow recall), not per session. | `~/.../.arc_chat_history` | the CLI chat loop |
+
+For a session with no `ui_thread.json` (e.g. one driven from the CLI before
+the UI existed), the UI **derives** a read-only timeline from `run_history`
+(the goal plus one message per iteration) so the pane isn't empty. That
+derived view is lossy — it reconstructs from run summaries, not the actual
+messages a user typed. A faithful CLI↔UI replay would require promoting a
+per-session transcript into core (`arc.session`/`arc.memory`, never
+`arc.chat`); deferred until CLI replay is an actual goal.
+
+---
+
 ## Packages
 
 | Package | Type | Description |

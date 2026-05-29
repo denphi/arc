@@ -16,6 +16,7 @@ from arc.core.strategies import (
     default_strategy,
     known_roles,
     list_strategies,
+    parse_strategy_names,
     register_strategy,
     resolve_role,
     resolve_strategy_name,
@@ -70,6 +71,15 @@ def test_resolve_strategy_name_unknown_role_returns_empty():
     assert resolve_strategy_name("not_a_role") == ""
 
 
+def test_parse_strategy_names_accepts_friendly_separators():
+    assert parse_strategy_names("default+embeddings materials_project,github") == [
+        "default",
+        "embeddings",
+        "materials_project",
+        "github",
+    ]
+
+
 # ── Class loading ──────────────────────────────────────────────────────
 
 
@@ -93,6 +103,22 @@ def test_resolve_role_falls_back_to_default_on_unknown_strategy(caplog):
     cls = resolve_role("planner", overrides={"planner": "does_not_exist"})
     assert cls.__name__ == "PlannerAgent"
     assert any("falling back" in r.getMessage() for r in caplog.records)
+
+
+def test_resolve_role_returns_composite_searcher_for_stack():
+    cls = resolve_role(
+        "searcher",
+        overrides={"searcher": "default embeddings materials_project"},
+    )
+    assert cls.__name__.startswith("CompositeSearcher_")
+    assert cls.strategy_names == ("default", "embeddings", "materials_project")
+
+
+def test_resolve_role_non_searcher_stack_falls_back_to_default(caplog):
+    cls = resolve_role("planner", overrides={"planner": "default mars_planner"})
+    assert cls.__name__ == "PlannerAgent"
+    assert any("Composite strategies are not supported" in r.getMessage()
+               for r in caplog.records)
 
 
 # ── Dynamic registration ──────────────────────────────────────────────
@@ -203,6 +229,23 @@ def test_strategy_command_sets_session_override(monkeypatch):
 
     asyncio.run(run(state, ["planner", "default"]))
     assert state.memory["strategy_overrides"]["planner"] == "default"
+
+
+def test_strategy_command_sets_space_separated_stack(monkeypatch):
+    import asyncio
+    from arc.chat.commands.strategy import run
+    from tests.fakes import make_workflow
+    from arc.chat.state import ChatState
+
+    workflow = make_workflow()
+    state = ChatState(workflow=workflow)
+    monkeypatch.setattr(ChatState, "persist", lambda self: None)
+
+    asyncio.run(run(state, ["searcher", "default", "embeddings", "materials_project"]))
+    assert (
+        state.memory["strategy_overrides"]["searcher"]
+        == "default embeddings materials_project"
+    )
 
 
 def test_strategy_command_reset_clears_override(monkeypatch):

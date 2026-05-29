@@ -8,6 +8,9 @@ const state = {
   selectedResultId: null,
   authToken: window.sessionStorage.getItem("arc.ui.apiToken") || "",
   busy: false,
+  configOpener: null,
+  activeJobId: null,
+  eventSource: null,
 };
 
 const el = {
@@ -53,6 +56,15 @@ const el = {
   executionInputs: document.getElementById("executionInputs"),
   runExecution: document.getElementById("runExecution"),
   detailView: document.getElementById("detailView"),
+  streamToggle: document.getElementById("streamToggle"),
+  activityList: document.getElementById("activityList"),
+  cancelJob: document.getElementById("cancelJob"),
+  authorName: document.getElementById("authorName"),
+  authorWorkflow: document.getElementById("authorWorkflow"),
+  authorSchema: document.getElementById("authorSchema"),
+  validateWorkflow: document.getElementById("validateWorkflow"),
+  createArtifact: document.getElementById("createArtifact"),
+  authorStatus: document.getElementById("authorStatus"),
   toast: document.getElementById("toast"),
 };
 
@@ -98,7 +110,9 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     const detail = data && data.detail ? data.detail : response.statusText;
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -118,6 +132,19 @@ function setBusy(isBusy, label = "idle") {
     control.disabled = isBusy;
   }
 }
+
+// Safety net: setBusy(true) disables every control, and a handler can throw
+// *after* a successful fetch but *before* its finally{setBusy(false)} (e.g. a
+// render error). Without this, the whole UI would stay frozen with no way out
+// but a reload. Any uncaught error / rejection force-clears the busy lock.
+function recoverFromUncaught(error) {
+  if (state.busy) {
+    setBusy(false);
+    showToast(error && error.message ? error.message : "Unexpected error", "error");
+  }
+}
+window.addEventListener("error", (event) => recoverFromUncaught(event.error || event));
+window.addEventListener("unhandledrejection", (event) => recoverFromUncaught(event.reason));
 
 function configFields() {
   return Array.from(document.querySelectorAll("[data-env-key]"));
@@ -212,6 +239,9 @@ function toggleTools() {
 
 function openConfigModal() {
   closeTools();
+  // Remember the control that opened the modal so focus returns there on
+  // close (a11y: don't strand keyboard/SR focus on a hidden element).
+  state.configOpener = document.activeElement;
   el.configModal.hidden = false;
   el.configModal.classList.add("show");
   loadConfig().catch((error) => showToast(error.message, "error"));
@@ -219,8 +249,36 @@ function openConfigModal() {
 }
 
 function closeConfigModal() {
+  const wasOpen = !el.configModal.hidden;
   el.configModal.classList.remove("show");
   el.configModal.hidden = true;
+  if (wasOpen && state.configOpener && typeof state.configOpener.focus === "function") {
+    state.configOpener.focus();
+  }
+  state.configOpener = null;
+}
+
+// Focus trap: while the config modal is open, keep Tab focus inside it.
+function trapConfigFocus(event) {
+  if (el.configModal.hidden || event.key !== "Tab") {
+    return;
+  }
+  const focusable = el.configModal.querySelectorAll(
+    'button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  );
+  const enabled = Array.from(focusable).filter((node) => !node.disabled && node.offsetParent !== null);
+  if (!enabled.length) {
+    return;
+  }
+  const first = enabled[0];
+  const last = enabled[enabled.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 async function loadConfig({ silent = false } = {}) {
@@ -270,6 +328,11 @@ async function saveConfig(event) {
     syncConfig(config);
     closeConfigModal();
     showToast("Configuration saved");
+    // A token may have just been supplied to unlock a locked server — (re)load
+    // the data the bootstrap probe skipped on a 401. Best-effort: a still-bad
+    // token surfaces its own toast.
+    loadSessions().catch((error) => showToast(error.message, "error"));
+    loadCommands().catch(() => {});
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -277,12 +340,16 @@ async function saveConfig(event) {
   }
 }
 
-function asJson(text, fallback) {
+function asJson(text, fallback, fieldName = "Value") {
   const value = text.trim();
   if (!value) {
     return fallback;
   }
-  return JSON.parse(value);
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${fieldName} must be valid JSON: ${error.message}`);
+  }
 }
 
 function renderJson(value) {
@@ -477,26 +544,64 @@ function renderSession() {
   renderJson({ session: detail.session_id, meta, state: detail.state || {} });
 }
 
+// Example research goals offered on an empty session. Clicking one fills the
+// composer (and focuses it) so the user can edit before sending — the
+// goal-first entry point. Kept domain-light so they read as starting points.
+const EXAMPLE_GOALS = [
+  "Maximize the band gap of a thin-film material by varying thickness",
+  "Find input parameters that drive the output toward a target value",
+  "Explore how a simulation's output changes across its input range",
+];
+
+function renderEmptyState() {
+  const empty = document.createElement("div");
+  empty.className = "thread-empty";
+  empty.innerHTML = `
+    <div class="welcome-mark">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2 2 7l10 5 10-5-10-5z"></path>
+        <path d="M2 17l10 5 10-5"></path>
+        <path d="M2 12l10 5 10-5"></path>
+      </svg>
+    </div>
+    <h2>What do you want to research?</h2>
+    <p>Describe a goal and ARC will plan, run, and iterate toward it. You can
+       refine the goal or adjust the target as it goes.</p>
+  `;
+  const examples = document.createElement("div");
+  examples.className = "example-goals";
+  const label = document.createElement("span");
+  label.className = "example-label";
+  label.textContent = "Try one to start:";
+  examples.appendChild(label);
+  for (const goal of EXAMPLE_GOALS) {
+    const chip = document.createElement("button");
+    chip.className = "example-goal";
+    chip.type = "button";
+    chip.textContent = goal;
+    chip.addEventListener("click", () => {
+      el.messageInput.value = goal;
+      el.messageInput.focus();
+      // Trigger the composer's auto-grow so the full goal is visible.
+      el.messageInput.dispatchEvent(new Event("input"));
+    });
+    examples.appendChild(chip);
+  }
+  empty.appendChild(examples);
+  el.threadList.appendChild(empty);
+}
+
 function renderThread(messages) {
   el.threadList.textContent = "";
   if (!messages.length) {
-    const empty = document.createElement("div");
-    empty.className = "thread-empty";
-    empty.innerHTML = `
-      <div class="welcome-mark">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 2 2 7l10 5 10-5-10-5z"></path>
-          <path d="M2 17l10 5 10-5"></path>
-          <path d="M2 12l10 5 10-5"></path>
-        </svg>
-      </div>
-      <h2>How can I help?</h2>
-      <p>Ask ARC to run research, inspect artifacts, or type a slash command.</p>
-    `;
-    el.threadList.appendChild(empty);
+    renderEmptyState();
     return;
   }
-  for (const message of messages) {
+  // Only the most recent message's suggestions are actionable — clear stale
+  // chips from earlier turns so the user isn't tempted to act on old advice.
+  const lastIndex = messages.length - 1;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
     const article = document.createElement("article");
     article.className = `message ${message.role || "system"}`;
     const hasPayload = message.payload && Object.keys(message.payload).length > 0;
@@ -513,9 +618,50 @@ function renderThread(messages) {
     if (hasPayload) {
       appendPayloadPills(article, message.payload);
     }
+    if (i === lastIndex && Array.isArray(message.suggestions) && message.suggestions.length) {
+      appendSuggestions(article, message.suggestions);
+    }
     el.threadList.appendChild(article);
   }
   el.threadList.scrollTop = el.threadList.scrollHeight;
+}
+
+// Render the loop's next-step suggestion chips under a message. Clicking a
+// chip runs its slash command; a chip with prompt_steps first asks how many
+// iterations (the "steps when the chat asks for it" flow).
+function appendSuggestions(article, suggestions) {
+  const wrap = document.createElement("div");
+  wrap.className = "suggestion-row";
+  const hint = document.createElement("span");
+  hint.className = "suggestion-hint";
+  hint.textContent = "Next:";
+  wrap.appendChild(hint);
+  for (const suggestion of suggestions) {
+    const chip = document.createElement("button");
+    chip.className = "suggestion-chip";
+    chip.type = "button";
+    const note = suggestion.note ? ` (${suggestion.note})` : "";
+    chip.textContent = `${suggestion.label}${note}`;
+    chip.addEventListener("click", () => runSuggestion(suggestion));
+    wrap.appendChild(chip);
+  }
+  article.appendChild(wrap);
+}
+
+async function runSuggestion(suggestion) {
+  let command = suggestion.command || "";
+  if (suggestion.prompt_steps) {
+    const raw = window.prompt("How many iterations?", "3");
+    if (raw === null) {
+      return;   // cancelled
+    }
+    const steps = Math.max(1, Math.min(20, Number(raw) || 1));
+    command = `${command} ${steps}`.trim();
+  }
+  if (!command) {
+    return;
+  }
+  runCommandText(command, "running").catch((error) => showToast(error.message, "error"));
 }
 
 function appendPayloadPills(article, payload) {
@@ -658,9 +804,87 @@ function renderArtifacts(artifacts) {
       el.executionInputs.value = JSON.stringify(defaultInputs(artifact), null, 2);
       renderArtifacts(artifacts);
       renderJson(artifact);
+      loadArtifactFiles(artifact);
     });
     el.artifactList.appendChild(button);
   }
+}
+
+// Fetch the artifact's file list and render a viewer in the detail pane:
+// a row of file chips that, when clicked, fetch + show that file's contents.
+async function loadArtifactFiles(artifact) {
+  if (!state.activeSessionId) {
+    return;
+  }
+  let files = [];
+  try {
+    const detail = await api(
+      `/api/sessions/${encodeURIComponent(state.activeSessionId)}` +
+      `/artifacts/${encodeURIComponent(artifact.artifact_id)}` +
+      `?version=${encodeURIComponent(artifact.version)}`,
+    );
+    files = detail.files || [];
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
+  renderArtifactFiles(artifact, files);
+}
+
+function renderArtifactFiles(artifact, files) {
+  el.detailView.textContent = "";
+  const wrap = document.createElement("div");
+  wrap.className = "file-viewer";
+  if (!files.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No viewable files";
+    wrap.appendChild(empty);
+  } else {
+    const chips = document.createElement("div");
+    chips.className = "file-chips";
+    const pane = document.createElement("pre");
+    pane.className = "file-contents";
+    pane.textContent = "Select a file";
+    for (const file of files) {
+      const chip = document.createElement("button");
+      chip.className = "file-chip";
+      chip.type = "button";
+      chip.innerHTML = `<span>${escapeHtml(file.path)}</span><strong>${formatBytes(file.size)}</strong>`;
+      chip.addEventListener("click", async () => {
+        for (const other of chips.querySelectorAll(".file-chip")) {
+          other.classList.remove("active");
+        }
+        chip.classList.add("active");
+        pane.textContent = "Loading…";
+        try {
+          const result = await api(
+            `/api/sessions/${encodeURIComponent(state.activeSessionId)}` +
+            `/artifacts/${encodeURIComponent(artifact.artifact_id)}` +
+            `/files/${file.path.split("/").map(encodeURIComponent).join("/")}` +
+            `?version=${encodeURIComponent(artifact.version)}`,
+          );
+          pane.textContent = result.content || "(empty)";
+        } catch (error) {
+          pane.textContent = `Error: ${error.message}`;
+        }
+      });
+      chips.appendChild(chip);
+    }
+    wrap.appendChild(chips);
+    wrap.appendChild(pane);
+  }
+  el.detailView.appendChild(wrap);
+}
+
+function formatBytes(size) {
+  if (!Number.isFinite(size)) {
+    return "";
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  return `${(size / 1024).toFixed(1)} KB`;
 }
 
 function renderResults(results) {
@@ -686,8 +910,32 @@ function renderResults(results) {
       state.selectedResultId = result.run_id;
       renderResults(results);
       renderJson(result);
+      loadResultDetail(result.run_id);
     });
     el.resultList.appendChild(button);
+  }
+}
+
+// Fetch a result's full record + the review mapped to its run, and show both
+// in the detail pane (review first, then the raw execution JSON).
+async function loadResultDetail(runId) {
+  if (!state.activeSessionId) {
+    return;
+  }
+  try {
+    const detail = await api(
+      `/api/sessions/${encodeURIComponent(state.activeSessionId)}` +
+      `/results/${encodeURIComponent(runId)}`,
+    );
+    const review = detail.review || {};
+    if (Object.keys(review).length) {
+      const merged = { review, result: detail.result };
+      el.detailView.textContent = JSON.stringify(merged, null, 2);
+    } else {
+      renderJson(detail.result);
+    }
+  } catch (error) {
+    showToast(error.message, "error");
   }
 }
 
@@ -710,7 +958,7 @@ function runPayload() {
     provider: el.providerInput.value || null,
     model: el.modelInput.value.trim() || null,
     base_url: el.baseUrlInput.value.trim() || null,
-    target: asJson(el.targetInput.value, {}),
+    target: asJson(el.targetInput.value, {}, "Target"),
   };
 }
 
@@ -722,6 +970,14 @@ async function sendMessage(event) {
   }
   if (content.startsWith("/") || content.startsWith("\\")) {
     await runCommandText(content, "running");
+    return;
+  }
+  // Research runs go through the background job + SSE timeline by DEFAULT: a
+  // real run (with an LLM provider) takes minutes, and a synchronous request
+  // would leave the browser on a dead spinner with no feedback or way to
+  // cancel. Untick "Run as a background job" to force the old blocking path.
+  if (el.streamToggle.checked) {
+    await startResearchJob(content);
     return;
   }
   setBusy(true, "running");
@@ -744,8 +1000,173 @@ async function sendMessage(event) {
   }
 }
 
-async function runResearch(event) {
-  return sendMessage(event);
+// ── Background research jobs + SSE timeline ──────────────────────────────
+
+async function startResearchJob(content) {
+  try {
+    const started = await api("/api/jobs/research", {
+      method: "POST",
+      body: JSON.stringify({ ...runPayload(), content }),
+    });
+    state.activeSessionId = started.session_id;
+    state.activeJobId = started.job_id;
+    el.messageInput.value = "";
+    clearActivity();
+    appendActivity({ kind: "status", text: `Job ${started.job_id} started`, ts: Date.now() / 1000 });
+    el.cancelJob.hidden = false;
+    el.busyState.textContent = "job running";
+    el.busyState.classList.add("busy");
+    streamJobEvents(started.job_id);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+function streamJobEvents(jobId) {
+  // EventSource can't set headers, so a locked server needs the token in the
+  // query string (the SSE route accepts ?token=, see server.py).
+  const token = (state.authToken || el.apiTokenInput.value).trim();
+  const url = `/api/jobs/${encodeURIComponent(jobId)}/events` +
+    (token ? `?token=${encodeURIComponent(token)}` : "");
+  if (state.eventSource) {
+    state.eventSource.close();
+  }
+  const source = new EventSource(url);
+  state.eventSource = source;
+  source.onmessage = (event) => {
+    let data;
+    try {
+      data = JSON.parse(event.data);
+    } catch (error) {
+      return;
+    }
+    if (data.kind === "done") {
+      finishJob(jobId);
+      return;
+    }
+    appendActivity(data);
+  };
+  source.onerror = () => {
+    // The stream closes on completion; treat an error after we've seen 'done'
+    // as benign. Otherwise surface it once and stop.
+    if (state.activeJobId === jobId) {
+      finishJob(jobId);
+    }
+  };
+}
+
+async function finishJob(jobId) {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  state.activeJobId = null;
+  el.cancelJob.hidden = true;
+  el.busyState.textContent = "idle";
+  el.busyState.classList.remove("busy");
+  // Reload the session so the thread + artifacts/results reflect the run.
+  try {
+    await loadSessions();
+    if (state.activeSessionId) {
+      await selectSession(state.activeSessionId);
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+function appendActivity(event) {
+  const row = document.createElement("div");
+  row.className = `activity-row activity-${escapeHtml(event.kind || "status")}`;
+  row.innerHTML = `
+    <span class="activity-kind">${escapeHtml(event.kind || "status")}</span>
+    <span class="activity-text">${escapeHtml(event.text || "")}</span>
+    <span class="activity-time">${formatTime(event.ts)}</span>
+  `;
+  el.activityList.appendChild(row);
+  el.activityList.scrollTop = el.activityList.scrollHeight;
+}
+
+function clearActivity() {
+  el.activityList.textContent = "";
+}
+
+async function cancelActiveJob() {
+  if (!state.activeJobId) {
+    return;
+  }
+  const jobId = state.activeJobId;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+    appendActivity({ kind: "status", text: "Cancellation requested", ts: Date.now() / 1000 });
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+// ── Artifact authoring ───────────────────────────────────────────────────
+
+function setAuthorStatus(message, kind = "info") {
+  el.authorStatus.textContent = message;
+  el.authorStatus.classList.toggle("error", kind === "error");
+  el.authorStatus.classList.toggle("ok", kind === "ok");
+}
+
+async function validateWorkflowSource() {
+  const source = el.authorWorkflow.value.trim();
+  if (!source) {
+    setAuthorStatus("Enter workflow.py source to validate.", "error");
+    return false;
+  }
+  try {
+    const result = await api("/api/workflow/validate", {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    });
+    setAuthorStatus(
+      result.valid ? "Workflow is valid." : `Invalid: ${result.message}`,
+      result.valid ? "ok" : "error",
+    );
+    return result.valid;
+  } catch (error) {
+    setAuthorStatus(error.message, "error");
+    return false;
+  }
+}
+
+async function createArtifactFromDraft() {
+  if (!state.activeSessionId) {
+    setAuthorStatus("Select or create a session first.", "error");
+    return;
+  }
+  const name = el.authorName.value.trim();
+  if (!name) {
+    setAuthorStatus("Name is required.", "error");
+    return;
+  }
+  const files = {};
+  if (el.authorWorkflow.value.trim()) {
+    files["workflow.py"] = el.authorWorkflow.value;
+  }
+  if (el.authorSchema.value.trim()) {
+    files["sim2l.yaml"] = el.authorSchema.value;
+  }
+  setBusy(true, "creating artifact");
+  try {
+    const result = await api(
+      `/api/sessions/${encodeURIComponent(state.activeSessionId)}/artifacts`,
+      { method: "POST", body: JSON.stringify({ name, files }) },
+    );
+    state.activeSession = result.session;
+    await selectSession(state.activeSessionId);
+    setAuthorStatus(`Created ${result.artifact.name}.`, "ok");
+    showToast("Artifact created");
+  } catch (error) {
+    setAuthorStatus(error.message, "error");
+    showToast(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function runCommandText(command, label = "command") {
@@ -787,7 +1208,7 @@ async function runExecution() {
       session_id: state.activeSessionId,
       artifact_id: state.selectedArtifactId,
       version: state.selectedArtifactVersion,
-      inputs: asJson(el.executionInputs.value, {}),
+      inputs: asJson(el.executionInputs.value, {}, "Inputs"),
     };
     const result = await api("/api/executions/run", {
       method: "POST",
@@ -840,6 +1261,13 @@ el.reloadSession.addEventListener("click", () => {
 });
 el.messageForm.addEventListener("submit", sendMessage);
 el.runExecution.addEventListener("click", runExecution);
+el.cancelJob.addEventListener("click", cancelActiveJob);
+el.validateWorkflow.addEventListener("click", () => {
+  validateWorkflowSource().catch((error) => showToast(error.message, "error"));
+});
+el.createArtifact.addEventListener("click", () => {
+  createArtifactFromDraft().catch((error) => showToast(error.message, "error"));
+});
 el.toolsToggle.addEventListener("click", toggleTools);
 el.openConfig.addEventListener("click", openConfigModal);
 el.openConfigFooter.addEventListener("click", openConfigModal);
@@ -875,6 +1303,7 @@ document.addEventListener("keydown", (event) => {
     closeTools();
     closeConfigModal();
   }
+  trapConfigFocus(event);
 });
 
 for (const tab of document.querySelectorAll(".tab-button")) {
@@ -888,8 +1317,32 @@ for (const tab of document.querySelectorAll(".tab-button")) {
   });
 }
 
-applyLayoutPrefs();
-loadHealth();
-loadConfig({ silent: true });
-loadCommands().catch((error) => showToast(error.message, "error"));
-loadSessions().catch((error) => showToast(error.message, "error"));
+// When ARC_API_TOKEN is set (locked mode) and no token has been entered, the
+// data endpoints 401. Rather than spamming an error toast for every bootstrap
+// call, detect the 401 once, prompt for a token via the config modal, and stop.
+function promptForToken() {
+  showToast("This ARC server requires an API token. Enter it to continue.", "error");
+  openConfigModal();
+  window.setTimeout(() => el.apiTokenInput.focus(), 0);
+}
+
+async function init() {
+  applyLayoutPrefs();
+  await loadHealth();          // open endpoint — establishes server reachability
+  try {
+    // /api/sessions is auth-gated: it's our probe for locked mode.
+    await loadSessions();
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      promptForToken();
+      return;
+    }
+    showToast(error.message, "error");
+    return;
+  }
+  // Authenticated (or default-open): load the rest.
+  loadConfig({ silent: true });
+  loadCommands().catch((error) => showToast(error.message, "error"));
+}
+
+init();

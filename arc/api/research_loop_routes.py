@@ -147,15 +147,16 @@ def set_strategy_endpoint(
 ) -> dict[str, Any]:
     """Set the session override for ``role`` to ``body.impl``."""
     session_id = _session(session_id)
-    from arc.core.strategies import known_roles, list_strategies
+    from arc.core.strategies import known_roles, list_strategies, unknown_strategy_names
 
     if role not in known_roles():
         raise HTTPException(status_code=404, detail=f"unknown role: {role}")
     available = {s.name for s in list_strategies(role)}
-    if body.impl not in available:
+    unknown = unknown_strategy_names(role, body.impl)
+    if unknown:
         raise HTTPException(
             status_code=400,
-            detail=f"unknown strategy {body.impl!r} for {role}; "
+            detail=f"unknown strategy component(s) {unknown!r} for {role}; "
                    f"available: {sorted(available)}",
         )
 

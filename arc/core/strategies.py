@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -439,6 +440,27 @@ def default_strategy(role: str) -> str | None:
     return _ROLE_CATALOGUE[role][0]
 
 
+def parse_strategy_names(value: str | None) -> list[str]:
+    """Split a strategy selector into ordered component names.
+
+    A selector is usually a single name (``"default"``), but roles that can
+    sensibly combine strategies may use ``+``, commas, or whitespace as an
+    ordered stack separator, e.g. ``"default+embeddings+materials_project"``
+    or ``"default embeddings materials_project"``.
+    """
+    if not value:
+        return []
+    return [part.strip() for part in re.split(r"[+,\s]+", str(value)) if part.strip()]
+
+
+def unknown_strategy_names(role: str, value: str | None) -> list[str]:
+    """Return component names in ``value`` that are not valid for ``role``."""
+    if role not in _ROLE_CATALOGUE:
+        return parse_strategy_names(value)
+    available = {s.name for s in list_strategies(role)}
+    return [name for name in parse_strategy_names(value) if name not in available]
+
+
 def register_strategy(role: str, spec: StrategySpec, *, make_default: bool = False) -> None:
     """Add a new strategy at runtime.
 
@@ -513,6 +535,10 @@ def resolve_role(
         raise KeyError(f"Unknown research role: {role!r}")
 
     selected = resolve_strategy_name(role, overrides=overrides, config=config)
+    selected_names = parse_strategy_names(selected)
+    if len(selected_names) > 1:
+        return _resolve_composite_role(role, selected_names)
+
     spec = _find_spec(role, selected)
     if spec is None:
         default_name = _ROLE_CATALOGUE[role][0]
@@ -539,6 +565,49 @@ def resolve_role(
             )
             return _load_spec(_find_spec(role, default_name))
         raise
+
+
+def _resolve_composite_role(role: str, selected_names: list[str]) -> Any:
+    """Resolve an ordered strategy stack.
+
+    Only roles with an explicit composite implementation are supported. Today
+    that is the ``searcher`` role, where multiple independent sources can be
+    queried and merged. Other roles still fall back to their single default
+    because "run three optimizers/reviewers/planners" needs role-specific
+    merge semantics before it can be safe.
+    """
+    default_name = _ROLE_CATALOGUE[role][0]
+    valid: list[str] = []
+    for name in selected_names:
+        if _find_spec(role, name) is None:
+            logger.warning(
+                "Unknown strategy %r in composite for role %r — skipping",
+                name, role,
+            )
+            continue
+        if name not in valid:
+            valid.append(name)
+
+    if len(valid) <= 1:
+        return resolve_role(role, overrides={role: valid[0] if valid else default_name})
+
+    if role != "searcher":
+        logger.warning(
+            "Composite strategies are not supported for role %r — falling back to %r",
+            role, default_name,
+        )
+        return resolve_role(role, overrides={role: default_name})
+
+    composite_spec = StrategySpec(
+        name="+".join(valid),
+        package_dir="arc-sim2l",
+        module_path="agents/searcher.py",
+        attr="CompositeSearcherAgent",
+        description="Ordered composite searcher.",
+    )
+    base_cls = _load_spec(composite_spec)
+    class_name = "CompositeSearcher_" + "_".join(name.replace("-", "_") for name in valid)
+    return type(class_name, (base_cls,), {"strategy_names": tuple(valid)})
 
 
 def _find_spec(role: str, name: str) -> StrategySpec | None:

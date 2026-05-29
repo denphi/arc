@@ -201,7 +201,15 @@ async def _maybe_run_pycma(
         "verbose": -9,
         "verb_disp": 0,
     }
-    es = cma.CMAEvolutionStrategy(mean, init_sigma, opts)
+    try:
+        es = cma.CMAEvolutionStrategy(mean, init_sigma, opts)
+    except Exception as exc:  # noqa: BLE001
+        # cma can fail to construct on degenerate problems (e.g. it leaks
+        # per-dimension state across instances in one process, breaking a
+        # later low-dimensional run). Degrade to the coordinate-descent
+        # fallback rather than crashing the caller's /optimize run.
+        logger.warning("pycma init failed (%s) — using coordinate-descent fallback", exc)
+        return None
 
     best_inputs: dict = {}
     best_outputs: dict = {}
@@ -221,7 +229,16 @@ async def _maybe_run_pycma(
             # CMA-ES does not accept inf — clamp.
             fits.append(fit if fit != float("inf") else 1e18)
             outputs_list.append(out)
-        es.tell(xs, fits)
+        try:
+            es.tell(xs, fits)
+        except Exception as exc:  # noqa: BLE001
+            # A cma-internal failure mid-run (again, the cross-instance
+            # state leak). If we've already found a candidate, keep it;
+            # otherwise signal a fallback by returning None.
+            logger.warning("pycma tell() failed (%s) at gen %d", exc, gen)
+            if not history:
+                return None
+            break
 
         # Best of this generation.
         idx = min(range(len(fits)), key=lambda i: fits[i])
