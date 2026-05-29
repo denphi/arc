@@ -14,8 +14,20 @@ class StructureStabilityEvaluator:
         flags = []
         if energy is None:
             flags.append("total_energy missing from outputs")
-        if forces_max is not None and float(forces_max) > 0.05:
-            flags.append(f"Max force {forces_max} eV/Å exceeds convergence threshold 0.05 eV/Å")
+        if forces_max is not None:
+            # Tolerate a non-numeric max_force rather than raising — match
+            # the other evaluators, which never crash the validate step on a
+            # bad output value.
+            try:
+                forces_val = float(forces_max)
+            except (TypeError, ValueError):
+                flags.append(f"max_force is not numeric: {forces_max!r}")
+            else:
+                if forces_val > 0.05:
+                    flags.append(
+                        f"Max force {forces_val} eV/Å exceeds convergence "
+                        "threshold 0.05 eV/Å"
+                    )
         if not converged:
             flags.append("Simulation did not converge")
 

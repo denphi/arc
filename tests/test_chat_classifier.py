@@ -69,6 +69,11 @@ pytestmark = pytest.mark.chat
     ("silicon at 300K",                     None),
     ("GaN bandgap near 3.4 eV",             None),
     ("just some random text",               None),
+
+    # empty / whitespace-only → None (must not raise IndexError on words[0])
+    ("",                                    None),
+    ("   ",                                 None),
+    ("\t\n",                                None),
 ])
 def test_is_question(text, expected):
     assert chat._is_question(text) is expected

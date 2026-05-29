@@ -71,6 +71,11 @@ def is_question(text: str) -> bool | None:
     lower = stripped.lower()
     words = lower.split()
     n = len(words)
+    if n == 0:
+        # Whitespace-only input: nothing to classify. The REPL guards empty
+        # input upstream, but is_question is a public helper, so don't crash
+        # on words[0] for callers that don't.
+        return None
 
     # Single conversational token, or short greeting phrase ("hi there", "hey!")
     if words[0].rstrip("!.,") in CONVERSATIONAL and (

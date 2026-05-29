@@ -65,6 +65,20 @@ def test_load_vocab_yaml_returns_none_for_missing_package():
 # ── _render_vocabulary_block ───────────────────────────────────────────
 
 
+def _property_names(block: str) -> list[str]:
+    """Canonical property names, in order, from a rendered vocab block.
+
+    Only the property bullets (before the "Simulation methods" heading) —
+    method bullets share the ``  - `` prefix but come after.
+    """
+    props_section = block.split("Simulation methods", 1)[0]
+    return [
+        line.strip()[2:].split(":", 1)[0]   # drop the "- " bullet, take name
+        for line in props_section.splitlines()
+        if line.startswith("  - ")
+    ]
+
+
 def test_vocabulary_block_empty_for_unknown_domain():
     assert _render_vocabulary_block("ornithology", []) == ""
 
@@ -84,26 +98,46 @@ def test_vocabulary_block_includes_simulation_methods():
 
 
 def test_vocabulary_block_promotes_target_properties():
-    """A goal targeting ``band_gap`` should see band_gap before
-    ``magnetic_moment`` in the prompt block — relevance ordering."""
-    block = _render_vocabulary_block("materials", ["band_gap"])
-    bg = block.find("band_gap")
-    mm = block.find("magnetic_moment")
-    if mm == -1:
-        pytest.skip("vocabulary lacks magnetic_moment; nothing to order")
-    assert bg < mm
+    """The terms in the target dict are promoted to the top of the prompt.
+
+    Targeting ``density`` (which sits ~7th in the natural vocabulary order)
+    must float it to the *first* property bullet, ahead of ``band_gap``
+    (naturally first). This is the core "force the named target terms in
+    front of the LLM" behaviour — a target deep in the list still leads.
+
+    ``density`` is used deliberately: it stays inside the 12-property cap
+    whether or not it's promoted, so the assertion always runs (the old
+    version targeted band_gap vs magnetic_moment and skipped whenever the
+    comparison property fell outside the cap)."""
+    names = _property_names(_render_vocabulary_block("materials", ["density"]))
+    # The target term leads, ahead of the property that was naturally first.
+    assert names[0] == "density"
+    assert names.index("density") < names.index("band_gap")
 
 
-def test_vocabulary_block_highlights_relevant_methods_for_target():
-    """When the target is band_gap, DFT (suitable_for=band_gap) should
-    appear before molecular_dynamics (not suitable)."""
+def test_vocabulary_block_promotes_multiple_target_terms():
+    """A target *dict* with several terms promotes all of them above the
+    untargeted entries (promoted entries keep their natural relative order)."""
+    names = _property_names(
+        _render_vocabulary_block("materials", ["density", "poisson_ratio"])
+    )
+    # Both targets are promoted ahead of a non-targeted property (band_gap).
+    assert set(names[:2]) == {"density", "poisson_ratio"}
+    assert names.index("band_gap") > 1
+
+
+def test_vocabulary_block_filters_methods_by_target():
+    """The methods list is filtered to those ``suitable_for`` the target.
+
+    For target ``band_gap``, DFT and GW (both list band_gap) must be
+    included and MD (suitable for thermal_conductivity etc., not band_gap)
+    must be dropped — so the LLM is only offered methods relevant to the
+    goal. (Previously this test asserted DFT-before-MD ordering, but MD is
+    filtered out entirely, so it only ever skipped and tested nothing.)"""
     block = _render_vocabulary_block("materials", ["band_gap"])
-    # Find positions in the method list.
-    dft_idx = block.find("dft (Density Functional Theory)")
-    md_idx = block.find("md (Molecular Dynamics)")
-    if md_idx == -1:
-        pytest.skip("vocabulary lacks md; nothing to order")
-    assert 0 <= dft_idx < md_idx
+    assert "dft (Density Functional Theory)" in block
+    assert "gw (GW Approximation)" in block
+    assert "md (Molecular Dynamics)" not in block
 
 
 def test_vocabulary_block_caps_property_count():
@@ -237,22 +271,25 @@ def test_run_works_without_provider():
 
 
 def test_run_promotes_target_property_in_prompt():
-    """An ``band_gap`` target → band_gap appears in the rendered vocab
-    *before* unrelated properties like ``magnetic_moment``."""
+    """End-to-end: a target dict forces its terms to the front of the
+    prompt the LLM actually sees.
+
+    Targeting ``density`` (naturally ~7th in the vocabulary) must surface
+    it ahead of ``band_gap`` (naturally first) in the captured prompt — so
+    the agent genuinely steers the model toward the user's target terms,
+    not just the alphabetically/declaration-first ones."""
     provider = _CapturingProvider()
     ctx = _context(provider=provider)
     agent = _resolve_agent()(context=ctx)
     asyncio.run(agent.run(ResearchGoal(
         goal="design something",
         domain="materials",
-        target={"band_gap": 1.5},
+        target={"density": 5.0},
     )))
     p = provider.prompts[0]
-    bg_idx = p.find("band_gap")
-    mm_idx = p.find("magnetic_moment")
-    if mm_idx == -1:
-        pytest.skip("vocabulary lacks magnetic_moment; nothing to order")
-    assert bg_idx < mm_idx
+    density_idx = p.find("density:")
+    band_gap_idx = p.find("band_gap:")
+    assert 0 <= density_idx < band_gap_idx
 
 
 def test_vocab_wrapper_exposes_underlying_provider_attributes():

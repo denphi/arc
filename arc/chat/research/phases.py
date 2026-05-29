@@ -163,7 +163,14 @@ class ExecutionPhase:
                 for ok_name, ov in execution.outputs.items():
                     if _keys_match(tk, ok_name):
                         matched = True
-                        if isinstance(ov, (int, float)):
+                        # ``bool`` is an int subclass — exclude it so a
+                        # boolean output (e.g. converged) isn't treated as a
+                        # number. Guard the arithmetic too: the target value
+                        # may be a string the user typed.
+                        if (
+                            isinstance(ov, (int, float)) and not isinstance(ov, bool)
+                            and isinstance(tv, (int, float)) and not isinstance(tv, bool)
+                        ):
                             pct = abs(ov - tv) / max(abs(tv), 1e-12) * 100
                             diffs.append(
                                 f"{ok_name}={ov:.4g}  target={tv}  ({pct:.1f}% off)"

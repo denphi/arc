@@ -33,7 +33,12 @@ def pct_off(
                 schema_registry and registry_keys_match(tk, ok_name, schema_registry)
             )
             if matched:
-                if isinstance(ov, (int, float)) and ov is not None:
+                # Exclude bool (an int subclass) and guard against a
+                # non-numeric target value the user may have typed.
+                if (
+                    isinstance(ov, (int, float)) and not isinstance(ov, bool)
+                    and isinstance(tv, (int, float)) and not isinstance(tv, bool)
+                ):
                     pct = abs(ov - tv) / max(abs(tv), 1e-12) * 100
                     parts.append(f"{ok_name}={ov:.4g} ({pct:.1f}% off)")
                 break

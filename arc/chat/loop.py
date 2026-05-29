@@ -1844,9 +1844,22 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
                 await _handle_refinement(state, route, max_iterations=max_iterations)
                 continue
 
+        except _QuitRequested:
+            break
         except (asyncio.CancelledError, KeyboardInterrupt):
             print(f"\n{c('  Interrupted.', YELLOW)}  Session saved. Type a new goal or /quit.")
             _save_session(workflow, state.primary_goal)
+        except Exception as exc:  # noqa: BLE001
+            # A single bad turn (a command handler, a goal/refinement run, a
+            # provider hiccup) must not kill the whole REPL. Surface a clean
+            # message, log the detail, save, and keep going.
+            import logging
+            err(f"Something went wrong handling that input: {exc}")
+            logging.getLogger(__name__).exception("chat turn failed")
+            try:
+                _save_session(workflow, state.primary_goal)
+            except Exception:  # noqa: BLE001 — never fail inside the failure path
+                pass
 
 
 

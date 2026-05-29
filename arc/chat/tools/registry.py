@@ -107,7 +107,12 @@ class ToolRegistry:
         if tool is None:
             raise ToolValidationError(f"unknown tool {name!r}")
 
-        if allowed_tools is not None and tool.name not in allowed_tools:
+        if allowed_tools is not None and tool.name.lower() not in {
+            t.lower() for t in allowed_tools
+        }:
+            # Tool names are registered/resolved case-insensitively, so the
+            # allowlist (from agent-definition YAML) must match the same way —
+            # otherwise a capitalised entry silently denies an allowed tool.
             raise ToolValidationError(
                 f"tool {tool.name!r} is not in allowed_tools {allowed_tools!r}"
             )
