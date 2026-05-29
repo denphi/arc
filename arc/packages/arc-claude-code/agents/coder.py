@@ -336,7 +336,10 @@ class ClaudeCodeCoderAgent(AgentContract):
                     msg = _progress_from_event(event, delta_buffers, delta_emitted)
                     if msg:
                         progress(msg)
-                except (json.JSONDecodeError, Exception):
+                except Exception:  # noqa: BLE001 — progress is best-effort
+                    # A non-JSON line, or a fault in the progress callback,
+                    # must never break stdout draining. (JSONDecodeError is a
+                    # subclass of Exception — the previous tuple was redundant.)
                     pass
         return "\n".join(lines)
 

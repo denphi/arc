@@ -370,7 +370,16 @@ class CodexCoderAgent(AgentContract):
                                 "decision": decision,
                             },
                         }) + "\n"
-                        os.write(stdin_master_fd, response.encode())
+                        # The PTY may already be closed if Codex exited
+                        # between emitting the request and our reply. Writing
+                        # to a dead fd raises OSError; swallow it and stop
+                        # reading rather than letting a clean decline turn
+                        # into an unhandled crash — the decision is already
+                        # recorded in approval_decisions above.
+                        try:
+                            os.write(stdin_master_fd, response.encode())
+                        except OSError:
+                            break
 
             async def read_stderr() -> None:
                 while True:
