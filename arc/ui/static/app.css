@@ -1772,3 +1772,11 @@ pre {
   cursor: pointer; font-size: 13px; line-height: 1.35;
 }
 .example-goal:hover { border-color: var(--primary); background: var(--primary-soft); }
+
+/* ── sim2l services prompt banner ── */
+.services-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; background: var(--warning-bg); color: var(--warning);
+  border-bottom: 1px solid var(--warning-border); font-size: 13px;
+}
+.services-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }

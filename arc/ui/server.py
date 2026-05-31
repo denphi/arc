@@ -689,6 +689,48 @@ def create_app() -> FastAPI:
         return {"job_id": job_id, "cancelled": cancelled,
                 "status": jobs.registry.get(job_id).status}
 
+    # ── sim2l services: status + on-demand start (mirrors the CLI prompt) ──
+
+    @app.get("/api/services", dependencies=auth)
+    def services_status() -> dict[str, Any]:
+        """Status of the local sim2l services + whether the UI should offer to
+        start them. ``prompt_start`` is True when sim2l is installed but no
+        services are running — the same condition the CLI chat uses to ask
+        'Start sim2l services now?'."""
+        from arc.services import sim2l_available, status_all
+        services = status_all()
+        any_running = any(
+            (s.get("running") if isinstance(s, dict) else bool(s))
+            for s in services.values()
+        )
+        available = sim2l_available()
+        return {
+            "available": available,
+            "any_running": any_running,
+            "prompt_start": available and not any_running,
+            "services": services,
+        }
+
+    @app.post("/api/services/start", dependencies=auth)
+    async def services_start() -> dict[str, Any]:
+        """Start the (non-optional) sim2l services, like '/services start'."""
+        from arc.services import sim2l_available, start_all, status_all
+        if not sim2l_available():
+            raise HTTPException(status_code=400, detail="sim2l package is not installed")
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(None, start_all)
+        reports = [{"service": n, "ok": ok, "message": m} for (n, ok, m) in results]
+        # Give freshly-spawned Flask services a moment to answer /health.
+        for _ in range(10):
+            services = await loop.run_in_executor(None, status_all)
+            if all(
+                (s.get("running") if isinstance(s, dict) else bool(s))
+                for s in services.values()
+            ):
+                break
+            await asyncio.sleep(0.5)
+        return {"reports": reports, "services": status_all()}
+
     @app.get("/api/jobs/{job_id}/events", dependencies=[Depends(_require_token_header_or_query)])
     async def job_events(job_id: str, request: Request, token: str | None = None) -> StreamingResponse:
         job = jobs.registry.get(job_id)

@@ -11,6 +11,7 @@ const state = {
   configOpener: null,
   activeJobId: null,
   eventSource: null,
+  servicesDismissed: false,
 };
 
 const el = {
@@ -65,6 +66,9 @@ const el = {
   validateWorkflow: document.getElementById("validateWorkflow"),
   createArtifact: document.getElementById("createArtifact"),
   authorStatus: document.getElementById("authorStatus"),
+  servicesBanner: document.getElementById("servicesBanner"),
+  startServices: document.getElementById("startServices"),
+  dismissServices: document.getElementById("dismissServices"),
   toast: document.getElementById("toast"),
 };
 
@@ -1250,6 +1254,44 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// ── sim2l services: prompt-to-start banner (mirrors the CLI chat) ─────────
+
+// Show the banner when sim2l is installed but no services are running — the
+// same condition the CLI uses to ask "Start sim2l services now?". Dismissible
+// per page load; reappears on reload until services are up.
+async function checkServices() {
+  if (state.servicesDismissed) {
+    return;
+  }
+  let info;
+  try {
+    info = await api("/api/services");
+  } catch (error) {
+    return;   // services status is advisory — never block the UI on it
+  }
+  el.servicesBanner.hidden = !info.prompt_start;
+}
+
+async function startServices() {
+  el.startServices.disabled = true;
+  el.startServices.textContent = "Starting…";
+  try {
+    const result = await api("/api/services/start", { method: "POST" });
+    const failed = (result.reports || []).filter((r) => !r.ok);
+    if (failed.length) {
+      showToast(`Some services failed: ${failed.map((r) => r.service).join(", ")}`, "error");
+    } else {
+      showToast("sim2l services started");
+    }
+    el.servicesBanner.hidden = true;
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    el.startServices.disabled = false;
+    el.startServices.textContent = "Start services";
+  }
+}
+
 el.refreshSessions.addEventListener("click", () => {
   loadSessions().catch((error) => showToast(error.message, "error"));
 });
@@ -1262,6 +1304,11 @@ el.reloadSession.addEventListener("click", () => {
 el.messageForm.addEventListener("submit", sendMessage);
 el.runExecution.addEventListener("click", runExecution);
 el.cancelJob.addEventListener("click", cancelActiveJob);
+el.startServices.addEventListener("click", startServices);
+el.dismissServices.addEventListener("click", () => {
+  state.servicesDismissed = true;
+  el.servicesBanner.hidden = true;
+});
 el.validateWorkflow.addEventListener("click", () => {
   validateWorkflowSource().catch((error) => showToast(error.message, "error"));
 });
@@ -1343,6 +1390,9 @@ async function init() {
   // Authenticated (or default-open): load the rest.
   loadConfig({ silent: true });
   loadCommands().catch((error) => showToast(error.message, "error"));
+  // Mirror the CLI's startup prompt: offer to start sim2l services if
+  // installed but not running.
+  checkServices();
 }
 
 init();

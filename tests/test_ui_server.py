@@ -43,6 +43,8 @@ def test_ui_health_and_static_index_load():
     assert "renderEmptyState" in script.text          # research-question first-run state
     assert "EXAMPLE_GOALS" in script.text             # clickable example goals
     assert "Describe your research goal" in index.text  # research-framed composer
+    assert "checkServices" in script.text             # services prompt-to-start
+    assert 'id="servicesBanner"' in index.text
     # HTML hosts the new panels.
     assert 'id="activityList"' in index.text
     assert 'id="authorWorkflow"' in index.text
@@ -559,6 +561,64 @@ def test_ui_fresh_session_thread_has_no_suggestions():
     session_id = client.post("/api/sessions", json={"prefix": "ui", "goal": "g"}).json()["session_id"]
     thread = client.get(f"/api/sessions/{session_id}").json()["thread"]
     assert all(not msg.get("suggestions") for msg in thread)
+
+
+def test_ui_services_status_prompts_when_installed_but_down(monkeypatch):
+    """GET /api/services flags prompt_start when sim2l is installed but no
+    services run — the condition that drives the 'Start services' banner."""
+    import arc.services as svc
+
+    monkeypatch.setattr(svc, "sim2l_available", lambda: True)
+    monkeypatch.setattr(svc, "status_all", lambda: {
+        "catalog": {"running": False, "pid": None, "port": 8002, "url": "x"},
+        "results": {"running": False, "pid": None, "port": 8003, "url": "y"},
+    })
+    client = TestClient(ui_server.create_app())
+    info = client.get("/api/services").json()
+    assert info["available"] is True
+    assert info["any_running"] is False
+    assert info["prompt_start"] is True
+
+
+def test_ui_services_no_prompt_when_running(monkeypatch):
+    import arc.services as svc
+
+    monkeypatch.setattr(svc, "sim2l_available", lambda: True)
+    monkeypatch.setattr(svc, "status_all", lambda: {
+        "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
+    })
+    client = TestClient(ui_server.create_app())
+    info = client.get("/api/services").json()
+    assert info["prompt_start"] is False
+    assert info["any_running"] is True
+
+
+def test_ui_services_start_invokes_start_all(monkeypatch):
+    import arc.services as svc
+
+    calls = {"start_all": 0}
+
+    def fake_start_all(*args, **kwargs):
+        calls["start_all"] += 1
+        return [("catalog", True, "started catalog"), ("results", True, "started results")]
+
+    monkeypatch.setattr(svc, "sim2l_available", lambda: True)
+    monkeypatch.setattr(svc, "start_all", fake_start_all)
+    monkeypatch.setattr(svc, "status_all", lambda: {
+        "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
+    })
+    client = TestClient(ui_server.create_app())
+    result = client.post("/api/services/start").json()
+    assert calls["start_all"] == 1
+    assert all(r["ok"] for r in result["reports"])
+
+
+def test_ui_services_start_refused_when_not_installed(monkeypatch):
+    import arc.services as svc
+
+    monkeypatch.setattr(svc, "sim2l_available", lambda: False)
+    client = TestClient(ui_server.create_app())
+    assert client.post("/api/services/start").status_code == 400
 
 
 def test_ui_rejects_bad_session_id():
