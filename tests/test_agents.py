@@ -10,10 +10,10 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from arc.contracts.agent import AgentContext
-from arc.packages import load_ideator, load_planner, load_builder, load_reviewer
-from arc.schemas.research import ResearchGoal, ResearchProposal, ExperimentPlan
-from arc.schemas.execution import ExecutionResult
+from arc.contracts.agent import AgentContext  # noqa: E402
+from arc.packages import load_builder, load_ideator, load_planner, load_reviewer  # noqa: E402
+from arc.schemas.execution import ExecutionResult  # noqa: E402
+from arc.schemas.research import ExperimentPlan, ResearchGoal, ResearchProposal  # noqa: E402
 
 
 @pytest.fixture
@@ -77,6 +77,34 @@ async def test_builder_generates_files(context):
     assert "Inputs:" in draft.description
     assert "Outputs:" in draft.description
     assert draft.metadata["description"] == draft.description
+
+
+@pytest.mark.asyncio
+async def test_builder_fallback_honors_required_outputs(context):
+    Sim2LBuilderAgent = load_builder().Sim2LBuilderAgent
+    context.memory["required_outputs"] = ["bandgap_ev", "compliance"]
+    plan = ExperimentPlan(
+        proposal=ResearchProposal(
+            hypothesis="Test",
+            objective="test required output fallback",
+            variables=["x"],
+            methodology="compute",
+            expected_outcomes="x*2",
+            evaluation_metrics=["bandgap_ev", "compliance"],
+        ),
+        artifact_strategy="create_new_sim2l",
+        parameters={"input_parameter": 1.0},
+        parameter_constraints={"input_parameter": {"min": 0.0, "max": 10.0}},
+        experimental_design=["single run"],
+        success_criteria=["produce requested outputs"],
+    )
+
+    draft = await Sim2LBuilderAgent(context=context).run(plan)
+
+    assert set(draft.metadata["sim2l_outputs"]) == {"bandgap_ev", "compliance"}
+    workflow = draft.files["workflow.py"]
+    assert '"bandgap_ev": result' in workflow
+    assert '"compliance": result' in workflow
 
 
 @pytest.mark.asyncio

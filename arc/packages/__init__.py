@@ -49,9 +49,20 @@ def resolve_role(role: str, workflow: Any = None) -> Any:
     """
     from arc.core.strategies import resolve_role as _core_resolve
     overrides: dict[str, str] | None = None
+    disabled_packages: set[str] = set()
+    loaded_packages: set[str] | None = None
     if workflow is not None:
         try:
-            overrides = workflow._context.memory.get("strategy_overrides") or None
+            memory = workflow._context.memory
+            overrides = memory.get("strategy_overrides") or None
+            # The session's ``/package disable`` set becomes a real runtime
+            # filter: a strategy from a disabled package is not selectable
+            # (design/todo.md item 4).
+            disabled_packages = set(
+                (memory.get("packages", {}) or {}).get("disabled", []) or []
+            )
+            registry = getattr(workflow, "registry", None)
+            loaded_packages = set(registry.list_packages()) if registry is not None else None
         except AttributeError:
             overrides = None
     try:
@@ -59,7 +70,10 @@ def resolve_role(role: str, workflow: Any = None) -> Any:
         _path, config = load_arc_toml()
     except Exception:
         config = {}
-    return _core_resolve(role, overrides=overrides, config=config)
+    return _core_resolve(
+        role, overrides=overrides, config=config, disabled_packages=disabled_packages,
+        loaded_packages=loaded_packages,
+    )
 
 
 def load_ideator():

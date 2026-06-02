@@ -10,7 +10,6 @@ from arc.runtime.workflow_safety import (
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 
-
 # ── sim2l.yaml template ──────────────────────────────────────────────────────
 
 _SIM2L_YAML_TEMPLATE = """\
@@ -235,7 +234,11 @@ async def _extract_schema(provider, code: str) -> tuple[dict, dict]:
         if m:
             parsed = json.loads(m.group())
             llm_inputs = {
-                k: {"type": "Number", "default": v.get("default", 1.0), "description": v.get("description", k)}
+                k: {
+                    "type": "Number",
+                    "default": v.get("default", 1.0),
+                    "description": v.get("description", k),
+                }
                 for k, v in parsed.get("inputs", {}).items()
             }
             llm_outputs = {
@@ -249,15 +252,34 @@ async def _extract_schema(provider, code: str) -> tuple[dict, dict]:
     return _default_inputs({}), _default_outputs()
 
 
+def _yaml_scalar(value) -> str:
+    """Render ``value`` as a YAML-safe inline scalar.
+
+    The sim2l.yaml is assembled from a string template, so any free-text
+    field (a proposal objective, a description) that contains a colon, ``#``,
+    quote, or other YAML metacharacter would otherwise produce a document
+    that fails to parse downstream. ``yaml.safe_dump`` does the quoting/
+    escaping correctly; we strip its trailing newline and the implicit
+    document markers so the result drops cleanly into ``key: <scalar>``.
+    """
+    import yaml
+    dumped = yaml.safe_dump(value, default_flow_style=True, allow_unicode=True).strip()
+    # safe_dump of a bare scalar yields e.g. "'Map ... for: x'\n...". Drop the
+    # trailing "..." document-end marker if present.
+    if dumped.endswith("\n..."):
+        dumped = dumped[:-4].strip()
+    return dumped
+
+
 def _build_yaml_section(fields: dict) -> str:
     lines = []
     for name, meta in fields.items():
         lines.append(f"  {name}:")
-        lines.append(f"    type: {meta.get('type', 'Number')}")
+        lines.append(f"    type: {_yaml_scalar(meta.get('type', 'Number'))}")
         if "default" in meta:
-            lines.append(f"    default: {meta['default']}")
+            lines.append(f"    default: {_yaml_scalar(meta['default'])}")
         if "description" in meta:
-            lines.append(f"    description: {meta['description']}")
+            lines.append(f"    description: {_yaml_scalar(meta['description'])}")
     return "\n".join(lines)
 
 
@@ -269,8 +291,34 @@ def _default_inputs(parameters: dict) -> dict:
     } or {"input_parameter": {"type": "Number", "default": 1.0}}
 
 
-def _default_outputs() -> dict:
-    return {"result": {"type": "Number", "description": "Computed result"}}
+def _fallback_workflow(required_outputs: list[str] | None = None) -> str:
+    outputs = [str(k) for k in (required_outputs or []) if str(k).isidentifier()]
+    if not outputs:
+        return _WORKFLOW_FALLBACK
+    lines = [
+        '"""ARC-generated Sim2L workflow."""',
+        "",
+        "",
+        "def simulate(**inputs):",
+        '    """Sim2L workflow entry point."""',
+        '    input_parameter = inputs.get("input_parameter", 1.0)',
+        "    result = input_parameter * 2",
+        "    return {",
+    ]
+    for key in outputs:
+        lines.append(f'        "{key}": result,')
+    lines.extend(["    }", ""])
+    return "\n".join(lines)
+
+
+def _default_outputs(required_outputs: list[str] | None = None) -> dict:
+    outputs = [str(k) for k in (required_outputs or []) if str(k).isidentifier()]
+    if not outputs:
+        outputs = ["result"]
+    return {
+        key: {"type": "Number", "description": f"Computed {key}"}
+        for key in outputs
+    }
 
 
 def _artifact_description(plan: ExperimentPlan, inputs_spec: dict, outputs_spec: dict) -> str:
@@ -344,28 +392,30 @@ class Sim2LBuilderAgent(AgentContract):
                 code = await provider.complete(prompt)
                 code = _strip_fences(code)
                 if "def simulate" not in code:
-                    code = _WORKFLOW_FALLBACK
+                    code = _fallback_workflow(required_outputs)
                 else:
                     valid, reason = _validate_simulate(code)
                     if not valid:
                         import logging
                         logging.getLogger(__name__).warning(
-                            "Generated simulate() failed pre-validation (%s) — using fallback", reason
+                            "Generated simulate() failed pre-validation (%s) — "
+                            "using fallback",
+                            reason,
                         )
-                        code = _WORKFLOW_FALLBACK
+                        code = _fallback_workflow(required_outputs)
             except Exception:
-                code = _WORKFLOW_FALLBACK
+                code = _fallback_workflow(required_outputs)
 
             # Ask the LLM to extract the schema from the generated code.
             inputs_spec, outputs_spec = await _extract_schema(provider, code)
         else:
-            code = _WORKFLOW_FALLBACK
+            code = _fallback_workflow(required_outputs)
             inputs_spec = _default_inputs(plan.parameters)
-            outputs_spec = _default_outputs()
+            outputs_spec = _default_outputs(required_outputs)
 
         sim2l_yaml = _SIM2L_YAML_TEMPLATE.format(
-            name=artifact_name,
-            description=plan.proposal.objective[:200],
+            name=_yaml_scalar(artifact_name),
+            description=_yaml_scalar(plan.proposal.objective[:200]),
             inputs_yaml=_build_yaml_section(inputs_spec),
             outputs_yaml=_build_yaml_section(outputs_spec),
         )

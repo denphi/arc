@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 from arc.contracts.agent import AgentContext
-from arc.core.config import load_arc_toml, resolve_package_paths
+from arc.core.config import filter_package_paths, load_arc_toml, resolve_package_paths
 from arc.core.loader import load_packages
 from arc.core.registry import ComponentRegistry
 from arc.memory.artifact_registry import ArtifactRegistry
@@ -23,8 +23,20 @@ from arc.session import session_paths
 from arc.runtime.backend import safe_backend_action
 
 
-def _build_adapter(db_path: str | None = None, session_id: str | None = None):
-    """Build the runtime adapter requested by ARC_RUNTIME_ADAPTER."""
+def _build_adapter(
+    db_path: str | None = None,
+    session_id: str | None = None,
+    registry: ComponentRegistry | None = None,
+    disabled_packages: set[str] | None = None,
+):
+    """Build the runtime adapter requested by ARC_RUNTIME_ADAPTER.
+
+    ``disabled_packages`` (the session ``/package disable`` set) makes the
+    package-owned adapter lookup honour disable: a default adapter selected by
+    ``ARC_RUNTIME_ADAPTER`` whose package is disabled falls through to the
+    built-in local adapter (review finding P3). Core adapters (local/sim2l/
+    service) are never package-owned, so they're unaffected.
+    """
     adapter_name = os.environ.get("ARC_RUNTIME_ADAPTER", "local").lower()
     if adapter_name in {"local", "python"}:
         from arc.runtime.local import LocalRuntimeAdapter
@@ -43,22 +55,31 @@ def _build_adapter(db_path: str | None = None, session_id: str | None = None):
     if adapter_name in {"auto"}:
         return _build_auto_adapter(db_path=db_path, session_id=session_id)
 
-    # Package-provided remote adapters (docker/slurm/k8s) resolved by
-    # entrypoint so core never imports them — they live in packages.
-    _REMOTE_ADAPTERS = {
-        "docker": "arc.packages.arc-docker.adapter:DockerRuntimeAdapter",
-        "slurm": "arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter",
-        "k8s": "arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter",
-        "kubernetes": "arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter",
-    }
-    if adapter_name in _REMOTE_ADAPTERS:
+    if registry is None:
         try:
-            from arc.core.loader import _import_class
-            cls = _import_class(_REMOTE_ADAPTERS[adapter_name])
+            registry = _default_registry()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not build registry for adapter lookup: %s", exc)
+
+    if registry is not None:
+        try:
+            cls = registry.get_adapter(adapter_name, disabled_packages=disabled_packages)
             logger.info("Using %s", cls.__name__)
             return _instantiate_adapter(cls, db_path=db_path, session_id=session_id)
+        except KeyError:
+            # Either unknown, or owned by a session-disabled package — both
+            # fall through to the local adapter below.
+            pass
+        except TypeError:
+            # Registry without the disabled_packages-aware signature.
+            try:
+                cls = registry.get_adapter(adapter_name)
+                logger.info("Using %s", cls.__name__)
+                return _instantiate_adapter(cls, db_path=db_path, session_id=session_id)
+            except KeyError:
+                pass
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not load %s adapter (%s); falling back to local",
+            logger.warning("Could not instantiate %s adapter (%s); falling back to local",
                            adapter_name, exc)
 
     logger.warning("Unknown ARC_RUNTIME_ADAPTER=%s; falling back to local", adapter_name)
@@ -102,16 +123,20 @@ def _default_registry() -> ComponentRegistry:
     """Build the registry used when a caller doesn't inject one.
 
     Loads the same ``arc.toml`` the kernel uses (cached via
-    ``arc.core.config.load_arc_toml``), resolves its package paths, and
-    loads them. The orchestrator does NOT apply enabled/disabled filtering —
-    it loads everything declared in the config.
+    ``arc.core.config.load_arc_toml``), resolves its package paths, applies
+    the shared ``[packages].enabled/disabled`` filter, and loads the
+    survivors. This used to skip filtering — so a package disabled in
+    ``arc.toml`` was still active on the CLI/UI/test path that instantiates a
+    ``ResearchWorkflow``. Sharing ``filter_package_paths`` with ``Kernel``
+    keeps both runtime paths loading an identical package set (todo.md item 3).
     """
     from arc.core.env import load_env
     load_env()  # populate os.environ from .env before packages read it
     registry = ComponentRegistry()
     config_path, config = load_arc_toml()
     package_paths = resolve_package_paths(config, config_path) if config else []
-    load_packages(package_paths, registry)
+    package_config = config.get("packages", {}) if config else {}
+    load_packages(filter_package_paths(package_paths, package_config), registry)
     return registry
 
 
@@ -139,17 +164,21 @@ def _build_provider(
     model: str | None = None,
     base_url: str | None = None,
     registry: Any = None,
+    disabled_packages: set[str] | None = None,
 ):
     """Resolve the LLM provider through the package-aware factory.
 
     Core ships only ``openwebui``; anthropic/openai (and any third-party
     provider) come from a package's ``provides.providers`` and are looked
-    up on ``registry``. Returns ``None`` (stub mode) when unset/unknown.
+    up on ``registry``. A provider from a session-disabled package is not
+    selectable (review finding 1). Returns ``None`` (stub mode) when
+    unset/unknown.
     """
     from arc.providers import build_provider
     name = provider_name or os.environ.get("ARC_PROVIDER", "")
     return build_provider(
         name, token=token, model=model, base_url=base_url, registry=registry,
+        disabled_packages=disabled_packages,
     )
 
 
@@ -176,7 +205,17 @@ class ResearchWorkflow:
         db_path         = paths["db"]
         self._db_path = db_path
 
-        self.adapter = _build_adapter(db_path=db_path, session_id=self.session_id)
+        self.registry = registry or _default_registry()
+        # Retained so the provider/adapter can be rebuilt if a provider/adapter
+        # package is disabled mid-session (review finding P2).
+        self._provider_build_args = {
+            "provider_name": provider_name, "token": token,
+            "model": model, "base_url": base_url,
+        }
+        self.adapter = _build_adapter(
+            db_path=db_path, session_id=self.session_id, registry=self.registry,
+            disabled_packages=self._disabled_packages(),
+        )
         # The backend handles the loop's publish actions (register /
         # persist / record). Resolves to a sim2l backend when sim2l is
         # active + the adapter supports it, else a silent no-op so ARC
@@ -187,14 +226,19 @@ class ResearchWorkflow:
         self.artifacts = ArtifactRegistry(root=artifact_root)
         self.results = ResultsStore(root=results_root)
         self.provenance = ProvenanceLog(log_path=provenance_path)
-        self.registry = registry or _default_registry()
         self.provider = _build_provider(
             provider_name=provider_name,
             token=token,
             model=model,
             base_url=base_url,
             registry=self.registry,
+            disabled_packages=self._disabled_packages(),
         )
+
+        # Wire the optional vector-memory + knowledge-graph extensions into
+        # the loop. A clean no-op when neither extension is enabled.
+        from arc.memory.hooks import MemoryHooks
+        self.memory_hooks = MemoryHooks(self.registry, self.session_id)
 
         self._context = AgentContext(
             session_id=self.session_id,
@@ -205,11 +249,68 @@ class ResearchWorkflow:
                 "results": self.results,
                 "provenance": self.provenance,
                 "adapter": self.adapter,
+                # The component registry (distinct from the artifact registry
+                # above) so audit actions can reach extensions/strategies.
+                "component_registry": self.registry,
+                # Agents query indexed memory through these without needing
+                # to know whether the extensions are enabled (search returns
+                # [] when disabled). See arc/memory/hooks.py.
+                "memory_hooks": self.memory_hooks,
+                "memory_search": self.memory_hooks.search,
             },
         )
 
+        # Package-provided audit hooks fire at lifecycle phases (item 7). A
+        # clean no-op when no package registered any audit action.
+        from arc.runtime.audit import AuditDispatcher
+        self.audit = AuditDispatcher(self.registry, self._context, self.provenance)
+
+    def refresh_disabled_packages(self) -> None:
+        """Re-resolve the provider + runtime adapter against the current
+        session ``/package disable`` set (review finding P2).
+
+        The provider and default adapter are built at construction, *before*
+        session-disabled state is hydrated, so a package disabled mid-session
+        would otherwise keep a live provider/adapter instance from that
+        package. Chat/UI ``/package disable`` handlers call this after updating
+        session state so the references are rebuilt (dropping a now-disabled
+        package's provider/adapter back to stub/local). Safe to call any time;
+        a no-op when nothing changes.
+        """
+        disabled = self._disabled_packages()
+
+        # Rebuild the provider — a disabled provider package degrades to stub
+        # mode (None). Keep context.memory["provider"] in sync.
+        self.provider = _build_provider(
+            registry=self.registry,
+            disabled_packages=disabled,
+            **self._provider_build_args,
+        )
+        self._context.memory["provider"] = self.provider
+
+        # Rebuild the runtime adapter — a disabled adapter package degrades to
+        # the local adapter. The backend is derived from the adapter, so
+        # rebuild it too.
+        self.adapter = _build_adapter(
+            db_path=self._db_path, session_id=self.session_id, registry=self.registry,
+            disabled_packages=disabled,
+        )
+        self._context.memory["adapter"] = self.adapter
+        from arc.runtime.backend import resolve_backend
+        self.backend = resolve_backend(self.adapter)
+
     def _agent(self, agent_class):
         return agent_class(context=self._context)
+
+    def _disabled_packages(self) -> set[str]:
+        """Session ``/package disable`` set — a runtime filter for every
+        package-owned component the workflow resolves (review finding 1)."""
+        try:
+            return set(
+                (self._context.memory.get("packages", {}) or {}).get("disabled", []) or []
+            )
+        except AttributeError:
+            return set()
 
     def _resolve_agent_class(self, name: str):
         """Resolve a workflow step's ``agent:`` name to a class.
@@ -233,6 +334,7 @@ class ResearchWorkflow:
 
         if name in known_roles():
             overrides = None
+            disabled_packages = self._disabled_packages()
             try:
                 overrides = self._context.memory.get("strategy_overrides") or None
             except AttributeError:
@@ -242,13 +344,20 @@ class ResearchWorkflow:
             except Exception:
                 config = {}
             try:
-                return resolve_role(name, overrides=overrides, config=config)
+                return resolve_role(
+                    name, overrides=overrides, config=config,
+                    disabled_packages=disabled_packages,
+                    loaded_packages=set(self.registry.list_packages()),
+                )
             except Exception as exc:
                 logger.warning(
                     "resolve_role(%r) failed (%s) — falling back to registry",
                     name, exc,
                 )
-        return self.registry.get_agent(name)
+        # Non-role / explicit package agents (e.g. ``coscientist_supervisor``,
+        # ``arc-coscientist:supervisor``) still honour /package disable — a
+        # disabled package's agent can't be run directly (review finding P2-1).
+        return self.registry.get_agent(name, disabled_packages=self._disabled_packages())
 
     def _dump(self, value):
         if hasattr(value, "model_dump"):
@@ -407,12 +516,14 @@ class ResearchWorkflow:
             if isinstance(input_data, ArtifactDraft):
                 artifact = self.artifacts.register(input_data)
                 self._context.memory["current_artifact"] = artifact
+                self.memory_hooks.on_artifact_registered(artifact)
                 state["backend_register"] = await safe_backend_action(
                     self.backend, "register_artifact", artifact,
                 )
                 return artifact
             if isinstance(input_data, ArtifactRecord):
                 self._context.memory["current_artifact"] = input_data
+                self.memory_hooks.on_artifact_registered(input_data)
                 state["backend_register"] = await safe_backend_action(
                     self.backend, "register_artifact", input_data,
                 )
@@ -423,7 +534,9 @@ class ResearchWorkflow:
                 "reason": "No built-in improve implementation",
                 "input": self._dump(input_data),
             }
-        skill = self.registry.get_skill(name)
+        # A skill from a session-disabled package is not executable
+        # (review finding 1) — get_skill raises KeyError in that case.
+        skill = self.registry.get_skill(name, disabled_packages=self._disabled_packages())
         return await skill.execute(
             input_data if isinstance(input_data, dict) else {"input": self._dump(input_data)},
             self._context,
@@ -452,7 +565,14 @@ class ResearchWorkflow:
             agent = self._agent(self._resolve_agent_class(step["agent"]))
             if step["agent"] == "reflector" and "run" in state["steps"]:
                 return await agent.run(input_data, execution=state["steps"]["run"]["output"])
-            return await agent.run(input_data)
+            output = await agent.run(input_data)
+            if step["agent"] == "reviewer" and isinstance(output, ReviewResult):
+                run_output = self._get_field(state["steps"].get("run", {}), "output")
+                run_id = self._get_field(run_output, "run_id")
+                self.memory_hooks.on_review_completed(
+                    self._context.memory.get("current_artifact"), output, run_id,
+                )
+            return output
         if "skill" in step:
             return await self._execute_skill(step["skill"], input_data, state)
         if "adapter" in step:
@@ -480,6 +600,7 @@ class ResearchWorkflow:
                         "outputs": result.outputs,
                         "metrics": result.metrics,
                     })
+                    self.memory_hooks.on_result_saved(artifact, result, prepared)
                     state["backend_persist"] = await safe_backend_action(
                         self.backend, "persist_result", artifact, result, prepared,
                     )
@@ -495,7 +616,11 @@ class ResearchWorkflow:
         if not adapter_name:
             return self.adapter
         try:
-            adapter_class = self.registry.get_adapter(adapter_name)
+            # An adapter from a session-disabled package is not selectable
+            # (review finding 1).
+            adapter_class = self.registry.get_adapter(
+                adapter_name, disabled_packages=self._disabled_packages(),
+            )
         except KeyError:
             if adapter_name == type(self.adapter).__name__:
                 return self.adapter
@@ -519,6 +644,58 @@ class ResearchWorkflow:
             return {"status": "skipped", "error": str(last_exc)}
         raise last_exc or RuntimeError(f"Step failed: {step.get('id')}")
 
+    # Map a workflow step id to the audit phase that fires *after* it
+    # (design/todo.md item 7). Steps not in the map don't dispatch.
+    _STEP_AUDIT_PHASE = {
+        "ideate": "ideation.after",
+        "search": "search.after",
+        "plan": "planning.after",
+        "build": "build.after",
+        "validate": "validation.after",
+        "register": "register.after",
+        "run": "execution.after",
+        "review": "review.after",
+        "reflect": "reflection.after",
+    }
+
+    # …and the *before* phase fired ahead of a step (the AUDIT_PHASES that
+    # have a `.before` form). Lets package audits block a step pre-flight.
+    _STEP_AUDIT_BEFORE_PHASE = {
+        "ideate": "ideation.before",
+        "validate": "validation.before",
+        "run": "execution.before",
+    }
+
+    async def _dispatch_step_audit_before(self, step: dict, step_id: str, state: dict) -> None:
+        """Fire the `.before` audit phase for a step that's about to run."""
+        phase = self._STEP_AUDIT_BEFORE_PHASE.get(step_id)
+        if phase is None or not self.audit.has_actions():
+            return
+        artifact = self._context.memory.get("current_artifact")
+        await self.audit.dispatch(
+            phase,
+            iteration=self._context.iteration,
+            role=step.get("agent"),
+            artifact_id=self._get_field(artifact, "artifact_id"),
+        )
+
+    async def _dispatch_step_audit(self, step: dict, step_id: str, output, state: dict) -> None:
+        """Fire the audit phase associated with a completed workflow step."""
+        phase = self._STEP_AUDIT_PHASE.get(step_id)
+        if phase is None or not self.audit.has_actions():
+            return
+        artifact = self._context.memory.get("current_artifact")
+        run_output = self._get_field(state["steps"].get("run", {}), "output")
+        await self.audit.dispatch(
+            phase,
+            iteration=self._context.iteration,
+            role=step.get("agent"),
+            artifact_id=self._get_field(artifact, "artifact_id"),
+            run_id=self._get_field(run_output, "run_id"),
+            output_summary=self._dump(output) if not isinstance(output, ArtifactRecord)
+            else output.model_dump(),
+        )
+
     async def _run_workflow_definition(self, workflow: dict, goal: ResearchGoal) -> dict:
         session_id = self._context.session_id
         workflow_config = workflow.get("config", {})
@@ -537,6 +714,7 @@ class ResearchWorkflow:
                 break
             step = steps[idx]
             step_id = step["id"]
+            await self._dispatch_step_audit_before(step, step_id, state)
             output = await self._execute_step_with_policy(step, state, workflow_config)
             state["steps"][step_id] = {"definition": step, "output": output}
             self.provenance.record(
@@ -545,6 +723,7 @@ class ResearchWorkflow:
                 step.get("agent") or step.get("skill") or step.get("adapter", "workflow"),
                 outputs=self._dump(output) if not isinstance(output, ArtifactRecord) else output.model_dump(),
             )
+            await self._dispatch_step_audit(step, step_id, output, state)
 
             jumped = False
             for condition in conditions:
@@ -588,6 +767,14 @@ class ResearchWorkflow:
         if artifact:
             validation = await self.adapter.validate_artifact(artifact)
         self._context.iteration += 1
+        if self.audit.has_actions():
+            await self.audit.dispatch(
+                "iteration.after",
+                iteration=self._context.iteration,
+                artifact_id=self._get_field(artifact, "artifact_id"),
+                run_id=self._get_field(execution, "run_id"),
+                output_summary={"status": status},
+            )
         return {
             "status": status,
             "session_id": session_id,
@@ -612,6 +799,13 @@ class ResearchWorkflow:
         if goal.target:
             self._context.memory["target"] = goal.target
 
+        if self.audit.has_actions():
+            await self.audit.dispatch(
+                "goal.received",
+                iteration=self._context.iteration,
+                input_summary=goal.model_dump(),
+            )
+
         try:
             workflow = self.registry.get_workflow(self.workflow_name)
         except KeyError as exc:
@@ -628,4 +822,29 @@ class ResearchWorkflow:
                 f"package loading."
             ) from exc
 
-        return await self._run_workflow_definition(workflow, goal)
+        try:
+            return await self._run_workflow_definition(workflow, goal)
+        except Exception as exc:
+            # Let package audits observe a failed run (e.g. record an error
+            # in a lab notebook) before the exception propagates. The
+            # workflow.error dispatch is itself best-effort.
+            if self.audit.has_actions():
+                try:
+                    await self.audit.dispatch(
+                        "workflow.error",
+                        iteration=self._context.iteration,
+                        output_summary={"error": str(exc)},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
+    def assemble_report(self, **extra_sections) -> dict:
+        """Assemble a structured research report from accumulated state.
+
+        Thin pass-through to :func:`arc.runtime.audit.assemble_report` using
+        this workflow's context. Packages contribute sections via
+        ``extra_sections`` (item 7).
+        """
+        from arc.runtime.audit import assemble_report
+        return assemble_report(self._context, extra_sections=extra_sections or None)

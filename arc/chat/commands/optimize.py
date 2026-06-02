@@ -28,7 +28,23 @@ async def run(state: ChatState, argv: list[str]) -> None:
     GeneticOptimizerAgent = resolve_role("optimizer", workflow)
     workflow._context.memory["adapter"] = workflow.adapter
 
-    header(f"Genetic Optimisation  {c(current_artifact.name, CYAN)}")
+    # Provenance: which optimizer is running + where its search space comes
+    # from (design/todo.md item 8).
+    from arc.core.strategies import resolve_strategy_name
+    overrides = workflow._context.memory.get("strategy_overrides") or {}
+    try:
+        from arc.core.config import load_arc_toml
+        _p, _config = load_arc_toml()
+    except Exception:  # noqa: BLE001
+        _config = {}
+    optimizer_key = resolve_strategy_name("optimizer", overrides=overrides, config=_config)
+    planner_prov = workflow._context.memory.get("planner_provenance") or {}
+    planner_key = planner_prov.get("planner", "unknown")
+
+    header(f"Optimisation  {c(current_artifact.name, CYAN)}")
+    step("Optimizer", f"{c(optimizer_key, CYAN)}; search space from "
+                      f"planner={c(planner_key, DIM)}, "
+                      f"target={c(str(target or 'magnitude'), DIM)}")
     step("Generations", n_gen)
     step("Pop size",    pop)
     if target:
@@ -48,6 +64,17 @@ async def run(state: ChatState, argv: list[str]) -> None:
         max_generations=n_gen, pop_size=pop,
         on_generation=_on_gen,
     )
+    # Record optimizer provenance on the result + session memory.
+    optimizer_provenance = {
+        "optimizer": optimizer_key,
+        "generations": n_gen,
+        "population": pop,
+        "target": target or None,
+        "search_space_from_planner": planner_key,
+    }
+    if isinstance(ga_result, dict):
+        ga_result.setdefault("provenance", optimizer_provenance)
+    workflow._context.memory["optimizer_provenance"] = optimizer_provenance
     hr()
     ok(f"Done — {ga_result['generations_run']} generations")
     step("Best inputs",  {k: round(v, 6) for k, v in ga_result["best_inputs"].items()})

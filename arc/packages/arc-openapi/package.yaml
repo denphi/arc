@@ -18,3 +18,8 @@ config:
 requires:
   integrations:
     - requests   # core dependency; used to fetch the spec + call operations
+
+provides:
+  extensions:
+    - name: openapi
+      entrypoint: arc.packages.arc-openapi.extension:OpenApiExtension

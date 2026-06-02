@@ -86,3 +86,7 @@ markers = [
     "chat: fast tests for the arc.chat REPL (no LLM, no disk beyond tmp_path)",
     "integration: slow tests that spawn real services or hit the network",
 ]
+filterwarnings = [
+    "ignore:websockets\\.legacy is deprecated:DeprecationWarning:websockets\\.legacy",
+    "ignore:websockets\\.server\\.WebSocketServerProtocol is deprecated:DeprecationWarning:uvicorn\\.protocols\\.websockets\\.websockets_impl",
+]

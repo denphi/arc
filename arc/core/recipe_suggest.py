@@ -81,25 +81,35 @@ def _goal_target(goal: Any) -> dict[str, Any]:
     return {}
 
 
-# Reuse the element detector from the MP searcher so triggers using
-# ``elements: [Si, Ge]`` line up with the same detection logic.
-def _detect_elements(goal_text: str) -> set[str]:
-    try:
-        # Loaded by file path because arc-materials uses a hyphen in
-        # the directory name. Same trick the strategy resolver uses.
-        import importlib.util
-        from pathlib import Path
-        path = (
-            Path(__file__).resolve().parent.parent
-            / "packages" / "arc-materials" / "agents" / "mp_searcher.py"
-        )
-        spec = importlib.util.spec_from_file_location("_arc_mp_for_suggest", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return set(module.detect_elements(goal_text))
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("element detection unavailable: %s", exc)
-        return set()
+def _detect_elements(goal_text: str, memory: dict[str, Any] | None = None) -> set[str]:
+    """Detect element symbols through package-declared detectors.
+
+    Domain packages can register detectors in ``provides.detectors``. This
+    keeps recipe suggestion from importing a specific package file directly.
+    """
+    registry = (memory or {}).get("component_registry") if isinstance(memory, dict) else None
+    if registry is not None:
+        try:
+            detector = registry.get_detector("materials_elements")
+            return set(detector(goal_text))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("element detector unavailable: %s", exc)
+    symbols = {
+        "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al",
+        "Si", "P", "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn",
+        "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr",
+        "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag",
+        "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce",
+        "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm",
+        "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+        "Tl", "Pb", "Bi", "Po", "At", "Rn",
+    }
+    names = {"silicon": "Si", "germanium": "Ge", "carbon": "C", "oxygen": "O"}
+    text = goal_text.lower()
+    found = {symbol for name, symbol in names.items() if re.search(rf"\b{name}\b", text)}
+    tokens = re.findall(r"\b[A-Z][a-z]?\b", goal_text)
+    found.update(t for t in tokens if t in symbols)
+    return found
 
 
 def _latest_output_keys(memory: dict[str, Any]) -> set[str]:
@@ -186,7 +196,7 @@ def _trigger_matches(
         reasons.append(f"target {hits[0]!r}")
 
     if elements:
-        found = _detect_elements(_goal_text(goal))
+        found = _detect_elements(_goal_text(goal), memory)
         # Element symbols in YAML may be cased ("Si") or lower ("si").
         wanted = {e.title() if len(e) <= 2 else e for e in elements}
         if not (wanted & found):

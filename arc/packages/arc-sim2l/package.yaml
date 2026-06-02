@@ -6,6 +6,115 @@ description: >
   Provides the full lifecycle for building and running Sim2L artifacts within ARC.
 
 provides:
+  strategies:
+    - role: ideator
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.ideator:IdeatorAgent
+      default: true
+      description: LLM ideator with catalog + results lookup.
+    - role: ideator
+      name: constraint_aware
+      entrypoint: arc.packages.arc-sim2l.agents.ideator_constraint_aware:ConstraintAwareIdeatorAgent
+      description: Domain vocabulary-aware ideator.
+    - role: searcher
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.searcher:KeywordSearcherAgent
+      default: true
+      description: Keyword search against the Sim2L catalog.
+    - role: searcher
+      name: embeddings
+      entrypoint: arc.packages.arc-sim2l.agents.searcher:EmbeddingSearcherAgent
+      description: Embedding/TF re-ranked catalog search.
+    - role: searcher
+      name: negative_results
+      entrypoint: arc.packages.arc-sim2l.agents.searcher_negative:NegativeResultsSearcherAgent
+      description: Search failed or far-from-target prior runs.
+    - role: searcher
+      name: github
+      entrypoint: arc.packages.arc-sim2l.agents.searcher:GitHubSearcherAgent
+      description: Search artifacts published to a configured GitHub repo.
+    - role: planner
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.planner:PlannerAgent
+      default: true
+      description: LLM planner with parameter-sweep fallback.
+    - role: planner
+      name: active_learning
+      entrypoint: arc.packages.arc-sim2l.agents.planner_active_learning:ActiveLearningPlannerAgent
+      description: Maximin-distance active-learning planner.
+    - role: planner
+      name: doe_lhs
+      entrypoint: arc.packages.arc-sim2l.agents.planner_doe:LatinHypercubePlannerAgent
+      description: Latin hypercube design-of-experiments planner.
+    - role: planner
+      name: doe_factorial
+      entrypoint: arc.packages.arc-sim2l.agents.planner_doe:FractionalFactorialPlannerAgent
+      description: Fractional-factorial design-of-experiments planner.
+    - role: planner
+      name: doe_sobol
+      entrypoint: arc.packages.arc-sim2l.agents.planner_doe:SobolPlannerAgent
+      description: Sobol low-discrepancy design-of-experiments planner.
+    - role: reviewer
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.reviewer:ReviewerAgent
+      default: true
+      description: LLM reviewer judging approval + next params.
+    - role: reviewer
+      name: comparative
+      entrypoint: arc.packages.arc-sim2l.agents.reviewer_comparative:ComparativeReviewerAgent
+      description: Deterministic reviewer based on relative fitness.
+    - role: reflector
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.reflector:ReflectorAgent
+      default: true
+      description: LLM reflector extracting lessons from a review.
+    - role: reflector
+      name: skill_extracting
+      entrypoint: arc.packages.arc-sim2l.agents.reflector_skill_extracting:SkillExtractingReflectorAgent
+      description: Reflector that writes durable markdown skills.
+    - role: reflector
+      name: failure_clustering
+      entrypoint: arc.packages.arc-sim2l.agents.reflector_failure_clustering:FailureClusteringReflectorAgent
+      description: Reflector that clusters recent failure modes.
+    - role: curator
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.curator:CuratorAgent
+      default: true
+      description: Canonicalises output keys against the registry.
+    - role: builder
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.builder:Sim2LBuilderAgent
+      default: true
+      description: Built-in LLM artifact builder.
+      aliases: [builder, builtin, built-in, sim2l]
+      backend_label: builder
+    - role: validator
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.validator:NoopValidatorAgent
+      default: true
+      description: No-op post-execution validator.
+    - role: validator
+      name: dry_run
+      entrypoint: arc.packages.arc-sim2l.agents.validator_dry_run:DryRunValidatorAgent
+      description: Domain-neutral output sanity validator.
+    - role: optimizer
+      name: default
+      entrypoint: arc.packages.arc-sim2l.agents.optimizer:GeneticOptimizerAgent
+      default: true
+      description: Genetic algorithm over the artifact input space.
+    - role: optimizer
+      name: bayesopt
+      entrypoint: arc.packages.arc-sim2l.agents.optimizer_bayes:BayesOptOptimizerAgent
+      description: Bayesian optimization over artifact inputs.
+    - role: optimizer
+      name: cmaes
+      entrypoint: arc.packages.arc-sim2l.agents.optimizer_cmaes:CMAESOptimizerAgent
+      description: CMA-ES optimizer for continuous parameter spaces.
+    - role: optimizer
+      name: llm_guided
+      entrypoint: arc.packages.arc-sim2l.agents.optimizer_llm:LLMGuidedOptimizerAgent
+      description: LLM-guided optimizer.
+
   agents:
     - name: ideator
       entrypoint: arc.packages.arc-sim2l.agents.ideator:IdeatorAgent
@@ -31,8 +140,10 @@ provides:
   runtime_adapters:
     - name: sim2l
       entrypoint: arc.runtime.sim2l_adapter:Sim2LRuntimeAdapter
+      aliases: [sim2l-local, service, services, sim2l-service, sim2l-services]
     - name: local
       entrypoint: arc.runtime.local:LocalRuntimeAdapter
+      aliases: [python]
 
 requires:
   runtime_adapter: any

@@ -19,3 +19,8 @@ config:
 requires:
   integrations:
     - chromadb   # only needed when backend = "chroma"; default backend is dep-free
+
+provides:
+  extensions:
+    - name: vector-memory
+      entrypoint: arc.packages.arc-vector-memory.extension:VectorMemoryExtension

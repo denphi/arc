@@ -60,6 +60,7 @@ def build_provider(
     model: str | None = None,
     base_url: str | None = None,
     registry: Any = None,
+    disabled_packages: set[str] | None = None,
 ):
     """Resolve and instantiate an LLM provider by ``name``.
 
@@ -84,7 +85,13 @@ def build_provider(
 
     if registry is not None:
         try:
-            provider_class = registry.get_provider(name)
+            # A provider from a session-disabled package is not selectable
+            # (review finding 1). get_provider raises KeyError in that case.
+            try:
+                provider_class = registry.get_provider(name, disabled_packages=disabled_packages)
+            except TypeError:
+                # Registry without the disabled_packages-aware signature.
+                provider_class = registry.get_provider(name)
         except KeyError:
             provider_class = None
         if provider_class is not None:

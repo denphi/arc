@@ -21,7 +21,7 @@ async def list_handler(state: ChatState, argv: list[str]) -> None:
             marker = c(" disabled", YELLOW)
         print(f"    {c(name, CYAN)}{marker}")
     print(c(f"  Coder: {_selected_coder(state.workflow)}", DIM))
-    print(c("  Use: /coder codex | /coder builder | /package enable arc-codex", DIM))
+    print(c("  Use: /coder <backend> | /package enable <package>", DIM))
 
 
 async def toggle_handler(state: ChatState, argv: list[str]) -> None:

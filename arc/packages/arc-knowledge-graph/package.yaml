@@ -17,3 +17,8 @@ config:
     default: ""
 
 requires: {}
+
+provides:
+  extensions:
+    - name: knowledge-graph
+      entrypoint: arc.packages.arc-knowledge-graph.extension:KnowledgeGraphExtension

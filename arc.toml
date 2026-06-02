@@ -13,6 +13,7 @@ paths = [
   "arc/packages/arc-mcp",
   "arc/packages/arc-openapi",
   "arc/packages/arc-vector-memory",
+  "arc/packages/arc-coscientist",
   "arc/packages/arc-docker",
   "arc/packages/arc-slurm",
   "arc/packages/arc-k8s",
@@ -56,7 +57,6 @@ reload = false
 # Implementation: arc-mcp package. Set enabled=true and configure either a
 # single server_url, or an `apps` list for multiple MCP servers (ext-apps).
 enabled = false
-entrypoint = "arc.packages.arc-mcp.extension:McpExtension"
 # server_url = "http://localhost:8080/mcp"      # single-server shortcut
 # [[extensions.mcp.apps]]                         # …or multiple ext-apps:
 #   name = "files"
@@ -72,7 +72,6 @@ entrypoint = "arc.packages.arc-mcp.extension:McpExtension"
 # Expose OpenAPI 3.x operations as skills (openapi::<spec>::<operationId>).
 # Implementation: arc-openapi package.
 enabled = false
-entrypoint = "arc.packages.arc-openapi.extension:OpenApiExtension"
 # spec_url = "https://api.example.com/openapi.json"   # single-spec shortcut
 # [[extensions.openapi.specs]]                          # …or multiple:
 #   name = "materials_project"
@@ -84,7 +83,6 @@ entrypoint = "arc.packages.arc-openapi.extension:OpenApiExtension"
 # "default" is a zero-dep JSON/TF-cosine store (works out of the box);
 # set backend = "chroma" (and `pip install chromadb`) for a real vector DB.
 enabled = false
-entrypoint = "arc.packages.arc-vector-memory.extension:VectorMemoryExtension"
 backend = "default"
 persist_path = "workspace/memory/vectors"
 
@@ -92,29 +90,25 @@ persist_path = "workspace/memory/vectors"
 # Registers the `docker` runtime adapter (arc-docker package) so a workflow
 # step can use `adapter: docker`. Also reachable via ARC_RUNTIME_ADAPTER=docker.
 enabled = false
-entrypoint = "arc.packages.arc-docker.extension:DockerRuntimeExtension"
 image = "python:3.11-slim"
 
 [extensions.slurm-runtime]
 # Registers the `slurm` runtime adapter (arc-slurm package).
 # Also reachable via ARC_RUNTIME_ADAPTER=slurm.
 enabled = false
-entrypoint = "arc.packages.arc-slurm.extension:SlurmRuntimeExtension"
 partition = "general"
 
 [extensions.k8s-runtime]
 # Registers the `k8s` runtime adapter (arc-k8s package).
 # Also reachable via ARC_RUNTIME_ADAPTER=k8s.
 enabled = false
-entrypoint = "arc.packages.arc-k8s.extension:KubernetesRuntimeExtension"
 
 [extensions.knowledge-graph]
 # Relationships between experiments/artifacts/variables. Implementation:
 # arc-knowledge-graph package (zero-dep persistent directed graph).
 enabled = false
-entrypoint = "arc.packages.arc-knowledge-graph.extension:KnowledgeGraphExtension"
 persist_path = "workspace/memory/graph.json"
 
-[extensions.web-ui]
-enabled = false
-port = 8501
+# NOTE: there is no [extensions.web-ui] block. The browser UI is a
+# standalone FastAPI app, not an ExtensionContract — run it with
+# `python -m arc.ui` (or `arc ui`). See design/extensions.md.

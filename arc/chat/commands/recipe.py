@@ -1,14 +1,22 @@
-"""``/recipe`` — apply named bundles of research-loop strategy choices.
+"""``/preset`` (formerly ``/recipe``) — apply named bundles of
+research-loop strategy choices.
+
+"Recipe" reads like a fixed lab protocol or a hard package dependency to
+experimentalists; these files are really *strategy presets*. The primary
+command is now ``/preset`` and ``/recipe`` is kept as a backward-compatible
+alias. The on-disk format is unchanged (``arc/recipes/*.yaml`` /
+``~/.arc/recipes/*.yaml``), so existing files keep working
+(design/todo.md item 6).
 
 Usage:
-    /recipe                          list every discoverable recipe
-    /recipe show <name>              show a recipe's roles + description
-    /recipe apply <name>             apply a recipe to the session
-    /recipe apply <name> --force     apply, overwriting manual /strategy choices
-    /recipe save <name>              snapshot current /strategy overrides
-    /recipe delete <name>            remove a user-saved recipe (asks to confirm)
-    /recipe delete <name> --force    delete without confirmation
-    /recipe clear                    drop the keys the last applied recipe set
+    /preset                          list every discoverable preset
+    /preset show <name>              show a preset's roles + description
+    /preset apply <name>             apply a preset to the session
+    /preset apply <name> --force     apply, overwriting manual /strategy choices
+    /preset save <name>              snapshot current /strategy overrides
+    /preset delete <name>            remove a user-saved preset (asks to confirm)
+    /preset delete <name> --force    delete without confirmation
+    /preset clear                    drop the keys the last applied preset set
 """
 
 from __future__ import annotations
@@ -24,10 +32,10 @@ def _list_recipes(state: ChatState) -> None:
 
     recipes = list_recipes()
     if not recipes:
-        warn("No recipes found.")
+        warn("No presets found.")
         return
 
-    header("Available recipes")
+    header("Available presets")
     applied = state.memory.get("recipe_applied") or {}
     applied_recipe_name = state.memory.get("active_recipe")
 
@@ -43,7 +51,7 @@ def _list_recipes(state: ChatState) -> None:
                 print(f"    {c(line, DIM)}")
         print(f"    {c(recipe.display_strategies(), DIM)}")
     print()
-    print(c("  /recipe show <name> to inspect, /recipe apply <name> to switch.", DIM))
+    print(c("  /preset show <name> to inspect, /preset apply <name> to switch.", DIM))
 
 
 def _show_recipe(state: ChatState, name: str) -> None:
@@ -51,10 +59,10 @@ def _show_recipe(state: ChatState, name: str) -> None:
 
     recipe = get_recipe(name)
     if recipe is None:
-        err(f"Unknown recipe: {name}")
+        err(f"Unknown preset: {name}")
         return
 
-    header(f"Recipe: {recipe.name}")
+    header(f"Preset: {recipe.name}")
     if recipe.description:
         from textwrap import fill
         step("Description", fill(recipe.description, 60, subsequent_indent=" " * 16))
@@ -71,7 +79,7 @@ def _apply_recipe(state: ChatState, name: str, *, force: bool) -> None:
 
     recipe = get_recipe(name)
     if recipe is None:
-        err(f"Unknown recipe: {name}")
+        err(f"Unknown preset: {name}")
         return
 
     errors = validate_recipe(recipe)
@@ -84,7 +92,7 @@ def _apply_recipe(state: ChatState, name: str, *, force: bool) -> None:
     result = apply_recipe(recipe, state.memory, overwrite_manual=force)
     state.memory["active_recipe"] = recipe.name
 
-    ok(f"Applied recipe {c(recipe.name, CYAN, BOLD)}")
+    ok(f"Applied preset {c(recipe.name, CYAN, BOLD)}")
     if result.overrides_set:
         for role, impl in result.overrides_set.items():
             print(f"    {c(role, CYAN)} → {c(impl, CYAN, BOLD)}")
@@ -124,7 +132,7 @@ def _save_recipe(
     if not overrides:
         warn(
             "No strategy overrides set — nothing to save. Tweak strategies with "
-            "/strategy first, then re-run /recipe save."
+            "/strategy first, then re-run /preset save."
         )
         return
 
@@ -138,11 +146,11 @@ def _save_recipe(
         err(str(exc))
         return
 
-    ok(f"Saved recipe {c(path.stem, CYAN, BOLD)}")
+    ok(f"Saved preset {c(path.stem, CYAN, BOLD)}")
     print(f"    {c(str(path), DIM)}")
     for role, impl in overrides.items():
         print(f"    {c(role, CYAN)} = {c(impl, CYAN, BOLD)}")
-    print(c("  Apply later with /recipe apply " + path.stem, DIM))
+    print(c("  Apply later with /preset apply " + path.stem, DIM))
 
 
 async def _delete_recipe(state: ChatState, name: str, *, force: bool) -> None:
@@ -173,7 +181,7 @@ async def _delete_recipe(state: ChatState, name: str, *, force: bool) -> None:
         err(str(exc))
         return
 
-    ok(f"Removed recipe {c(path.stem, CYAN, BOLD)}")
+    ok(f"Removed preset {c(path.stem, CYAN, BOLD)}")
     print(f"    {c(str(path), DIM)}")
 
     # If we just deleted the active recipe, clear its applied overrides
@@ -202,18 +210,18 @@ async def run(state: ChatState, argv: list[str]) -> None:
         return
     if sub == "show":
         if not rest:
-            err("Usage: /recipe show <name>")
+            err("Usage: /preset show <name>")
             return
         _show_recipe(state, rest[0])
         return
     if sub == "apply":
         if not rest:
-            err("Usage: /recipe apply <name> [--force]")
+            err("Usage: /preset apply <name> [--force]")
             return
         force = "--force" in rest
         name = next((r for r in rest if not r.startswith("--")), None)
         if name is None:
-            err("Usage: /recipe apply <name> [--force]")
+            err("Usage: /preset apply <name> [--force]")
             return
         _apply_recipe(state, name, force=force)
         return
@@ -222,12 +230,12 @@ async def run(state: ChatState, argv: list[str]) -> None:
         return
     if sub == "save":
         if not rest:
-            err("Usage: /recipe save <name> [<description>] [--force]")
+            err("Usage: /preset save <name> [<description>] [--force]")
             return
         force = "--force" in rest
         positional = [r for r in rest if not r.startswith("--")]
         if not positional:
-            err("Usage: /recipe save <name> [<description>] [--force]")
+            err("Usage: /preset save <name> [<description>] [--force]")
             return
         save_name = positional[0]
         description = " ".join(positional[1:]) if len(positional) > 1 else ""
@@ -235,12 +243,12 @@ async def run(state: ChatState, argv: list[str]) -> None:
         return
     if sub in ("delete", "remove", "rm"):
         if not rest:
-            err("Usage: /recipe delete <name> [--force]")
+            err("Usage: /preset delete <name> [--force]")
             return
         force = "--force" in rest
         name = next((r for r in rest if not r.startswith("--")), None)
         if name is None:
-            err("Usage: /recipe delete <name> [--force]")
+            err("Usage: /preset delete <name> [--force]")
             return
         await _delete_recipe(state, name, force=force)
         return
@@ -251,9 +259,10 @@ async def run(state: ChatState, argv: list[str]) -> None:
 
 COMMANDS = [
     SlashCommand(
-        name="recipe",
-        summary="List/apply/save/delete named bundles of research-loop strategy choices.",
+        name="preset",
+        summary="List/apply/save/delete strategy presets (formerly /recipe).",
         handler=run,
+        aliases=("recipe",),
         args_help="[list|show <n>|apply <n>|save <n>|delete <n>|clear]",
     ),
 ]

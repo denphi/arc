@@ -25,6 +25,25 @@ from arc.chat.ui import (
 from arc.runtime.backend import safe_backend_action
 
 
+async def _dispatch_audit(state: PipelineState, phase: str, **fields) -> None:
+    """Fire a package audit phase from the chat path (item 7).
+
+    Defensive: ``state.workflow`` is duck-typed (test stubs may lack an
+    ``audit`` dispatcher) and audit failures must never break the chat loop.
+    """
+    dispatcher = getattr(state.workflow, "audit", None)
+    if dispatcher is None or not getattr(dispatcher, "has_actions", lambda: False)():
+        return
+    from arc.runtime.audit import AuditBlockedError
+    try:
+        await dispatcher.dispatch(phase, **fields)
+    except AuditBlockedError:
+        # A blocking audit failure intentionally aborts the run.
+        raise
+    except Exception:  # noqa: BLE001 — non-blocking audit must never break the loop
+        pass
+
+
 # ── Validation ────────────────────────────────────────────────────────────
 
 
@@ -42,6 +61,8 @@ class ValidationPhase:
 
     async def run(self, state: PipelineState) -> PipelineState:
         header("Validation")
+        artifact_id = getattr(state.artifact, "artifact_id", None)
+        await _dispatch_audit(state, "validation.before", artifact_id=artifact_id)
         validation = await state.workflow.adapter.validate_artifact(state.artifact)
         if validation.valid:
             ok("Artifact is valid")
@@ -52,6 +73,11 @@ class ValidationPhase:
                 warn(w)
             print()
             state.aborted = True
+        await _dispatch_audit(
+            state, "validation.after",
+            artifact_id=artifact_id,
+            output_summary={"valid": validation.valid, "errors": validation.errors},
+        )
         return state
 
 
@@ -84,8 +110,22 @@ class ExecutionPhase:
 
         inputs = await workflow.adapter.prepare_inputs(state.artifact, run_inputs)
         step("Inputs", inputs)
+        await _dispatch_audit(
+            state, "execution.before",
+            artifact_id=getattr(state.artifact, "artifact_id", None),
+            input_summary=inputs,
+        )
         execution = await workflow.adapter.run(state.artifact, inputs)
         workflow.results.save(execution)
+        _memory_hooks = getattr(workflow, "memory_hooks", None)
+        if _memory_hooks is not None:
+            _memory_hooks.on_result_saved(state.artifact, execution, inputs)
+        await _dispatch_audit(
+            state, "execution.after",
+            artifact_id=getattr(state.artifact, "artifact_id", None),
+            run_id=execution.run_id,
+            output_summary={"status": execution.status, "outputs": execution.outputs},
+        )
         step("Run ID",  execution.run_id[:8] + "...")
         step("Status",  c(execution.status,
                           GREEN if execution.status == "completed" else RED))
@@ -247,6 +287,18 @@ class ReviewPhase:
         if review.next_parameters:
             step("Next params", review.next_parameters)
 
+        _memory_hooks = getattr(state.workflow, "memory_hooks", None)
+        if _memory_hooks is not None:
+            run_id = getattr(state.execution, "run_id", None)
+            _memory_hooks.on_review_completed(state.artifact, review, run_id)
+
+        await _dispatch_audit(
+            state, "review.after",
+            artifact_id=getattr(state.artifact, "artifact_id", None),
+            run_id=getattr(state.execution, "run_id", None),
+            output_summary={"approved": review.approved, "summary": review.summary},
+        )
+
         state.review = review
         return state
 
@@ -270,6 +322,11 @@ class ReflectionPhase:
             state.review, execution=state.execution
         )
         state.reflection = lessons
+        await _dispatch_audit(
+            state, "reflection.after",
+            artifact_id=getattr(state.artifact, "artifact_id", None),
+            run_id=getattr(state.execution, "run_id", None),
+        )
         return state
 
 
@@ -306,6 +363,12 @@ class ProvenancePhase:
             outputs=state.review.model_dump(),
         )
         ctx.iteration += 1
+        await _dispatch_audit(
+            state, "iteration.after",
+            artifact_id=state.artifact.artifact_id,
+            run_id=state.execution.run_id,
+            output_summary={"approved": state.review.approved},
+        )
         return state
 
 

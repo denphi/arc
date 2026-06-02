@@ -334,15 +334,20 @@ def test_composite_searcher_merges_ordered_sources(stub_catalog, monkeypatch):
 
 
 def test_ideator_delegates_catalog_lookup_to_searcher_strategy(stub_catalog):
-    """Without a provider, the ideator falls through to the stub
-    proposal but still records the searcher's hits into context.memory."""
+    """Without a provider, the ideator still delegates catalog lookup to the
+    searcher strategy and records its hits into context.memory. (Stub-mode
+    ideation now returns the top-*ranked* candidate — item 2 — so the
+    objective is no longer the verbatim goal; this test pins the searcher
+    delegation, which is what it's actually exercising.)"""
     from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.schemas.research import ResearchProposal
 
     ctx = _context()
     proposal = asyncio.run(IdeatorAgent(context=ctx).run(
         ResearchGoal(goal="silicon nanowire bandgap", domain="materials"),
     ))
-    assert proposal.objective == "silicon nanowire bandgap"
+    assert isinstance(proposal, ResearchProposal)
+    assert "silicon nanowire bandgap" in proposal.objective  # goal still flows through
     assert ctx.memory["catalog_hits"]
     assert ctx.memory["catalog_hits"][0]["name"] == "silicon_quantum_well"
 

@@ -1231,7 +1231,7 @@ async function runExecution() {
 
 function isDestructiveCommand(command) {
   const value = command.trim().toLowerCase();
-  return /^\/(recipe|recipes|skills|skill)\s+(delete|remove|rm)\b/.test(value);
+  return /^\/(preset|presets|recipe|recipes|skills|skill)\s+(delete|remove|rm)\b/.test(value);
 }
 
 function formatTime(ts) {

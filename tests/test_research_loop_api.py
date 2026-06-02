@@ -322,6 +322,32 @@ def test_recipes_clear_drops_active_overrides(session_id):
     assert "strategy_overrides" not in state or not state["strategy_overrides"]
 
 
+# ── /presets (alias of /recipes — todo.md item 6) ───────────────────────
+
+
+def test_presets_list_mirrors_recipes(session_id):
+    from arc.api.research_loop_routes import list_presets_endpoint
+    payload = _run(list_presets_endpoint(session_id=session_id))
+    names = {r["name"] for r in payload["recipes"]}
+    assert "mp-discovery" in names
+
+
+def test_presets_apply_and_show_delegate(session_id):
+    from arc.api.research_loop_routes import (
+        apply_preset_endpoint,
+        show_preset_endpoint,
+    )
+    show = _run(show_preset_endpoint(name="mp-discovery", session_id=session_id))
+    assert show["name"] == "mp-discovery"
+    applied = _run(apply_preset_endpoint(
+        name="bayesian-materials",
+        body=RecipeApplyRequest(),
+        session_id=session_id,
+    ))
+    assert applied["applied"] == "bayesian-materials"
+    assert load_state(session_id)["strategy_overrides"]["optimizer"] == "bayesopt"
+
+
 # ── /clusters ──────────────────────────────────────────────────────────
 
 
@@ -589,6 +615,7 @@ def test_server_includes_research_loop_router():
     app = create_app()
     routes = {getattr(r, "path", None) for r in app.routes}
     assert "/strategies" in routes
-    assert "/recipes" in routes
+    assert "/recipes" in routes  # compatibility alias
+    assert "/presets" in routes  # primary user-facing name (item 6)
     assert "/clusters" in routes
     assert "/skills" in routes

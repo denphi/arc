@@ -21,10 +21,12 @@ sister modules; this file imports them at module top so call sites
 inside ``chat_loop`` can use the legacy underscored names.
 """
 
+# ruff: noqa: E402
+
 
 import argparse
 import asyncio
-import json
+import logging
 import os
 import sys
 import textwrap
@@ -39,53 +41,100 @@ try:
 except Exception:
     pass
 
-from arc.orchestrator.workflow import ResearchWorkflow
-from arc.schemas.research import ResearchGoal
-from arc.session import (
-    new_session_id, list_sessions,
-    save_session_meta, load_session_meta,
-    delete_session, delete_all_sessions,
-)
-
 # Phase 1: input helpers extracted into arc.chat.input.
 # The legacy names are re-exported here so existing call sites and tests
 # in this module keep resolving them at module scope.
+# Hoisted leaf imports — these submodules have no cycle risk with
+# loop.py and are read at the top so static analysis sees the real
+# dependency graph.
+from arc.chat._env import env_flag
+from arc.chat.events import emit
 from arc.chat.input import (
+    _prompt_session,
     chat_input,
     chat_input_async,
-    _prompt_session,
+)
+from arc.chat.input import (
     chat_history_path as _chat_history_path,
 )
-
+from arc.chat.plan_mode import is_plan_mode
 
 # Target-distance helpers — canonical home is arc.chat.research.targets.
 # Re-exported under the legacy underscored names for callers in this
 # file and in commands/optimize.py.
 from arc.chat.research.targets import (
     pct_off as _pct_off,
+)
+from arc.chat.research.targets import (
     registry_keys_match as _registry_km,
 )
-
-# Hoisted leaf imports — these submodules have no cycle risk with
-# loop.py and are read at the top so static analysis sees the real
-# dependency graph.
-from arc.chat._env import env_flag
-from arc.chat.events import emit
-from arc.chat.plan_mode import is_plan_mode
-
 
 # ── ANSI colours / UI helpers (extracted to arc.chat.ui) ──────────────────
 # Re-imported here so existing module-level references keep working.
 from arc.chat.ui import (
-    RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED, BLUE, GREY,
-    c, header, step, ok, warn, err, hr,
+    BLUE,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    GREY,
+    RED,
+    RESET,
+    YELLOW,
+    c,
+    err,
+    header,
+    hr,
+    ok,
+    step,
+    warn,
 )
+from arc.orchestrator.workflow import ResearchWorkflow
+from arc.schemas.artifact import ArtifactRecord
+from arc.schemas.research import ResearchGoal
+from arc.session import (
+    delete_all_sessions,
+    delete_session,
+    list_sessions,
+    load_session_meta,
+    new_session_id,
+    save_session_meta,
+)
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "BLUE",
+    "GREY",
+    "RESET",
+    "_CONVERSATIONAL",
+    "_INTENT_SYSTEM",
+    "_NOISE",
+    "_QUESTION_STARTERS",
+    "_RESEARCH_STARTERS",
+    "_SIM2L_SERVICES",
+    "_chat_history_path",
+    "_is_question",
+    "_is_related_refinement",
+    "_parse_target_command",
+    "_prompt_session",
+    "_tokens_for_relevance",
+    "chat_loop",
+    "main",
+    "run_artifact",
+    "run_research",
+]
 
 
 def _make_permission_callback():
     """Return an async callback that surfaces Claude Code permission requests in the arc chat UI."""
 
-    async def _callback(request_id: str, tool_name: str, description: str, input_preview: str) -> bool:
+    async def _callback(
+        request_id: str,
+        tool_name: str,
+        description: str,
+        input_preview: str,
+    ) -> bool:
         print()
         print(f"  {c('◆ Claude Code permission request', BOLD, YELLOW)}")
         print(f"    {c('Tool:', DIM)}    {tool_name}")
@@ -237,7 +286,10 @@ async def _review_plan_with_user(
         print(f"  {c('refining...', DIM)}", end="\r")
         feedback = raw
         if required_outputs:
-            feedback += f"\n\nIMPORTANT: the simulation workflow MUST produce output keys: {required_outputs}"
+            feedback += (
+                "\n\nIMPORTANT: the simulation workflow MUST produce output keys: "
+                f"{required_outputs}"
+            )
         try:
             plan = await planner.refine(plan, feedback)
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -252,7 +304,8 @@ async def _review_plan_with_user(
             dict.fromkeys(list(plan.proposal.variables or []) + required_outputs)
         )
         if not hasattr(plan, '_required_outputs'):
-            object.__setattr__(plan, '_required_outputs', required_outputs) if hasattr(plan, '__setattr__') else None
+            if hasattr(plan, '__setattr__'):
+                object.__setattr__(plan, '_required_outputs', required_outputs)
         try:
             plan._required_outputs = required_outputs
         except Exception:
@@ -265,7 +318,9 @@ async def _review_plan_with_user(
 
 async def _post_approval_menu(workflow, artifact, result, target: dict):
     """Offer exploration options after the goal is approved."""
-    import csv, io, asyncio
+    import asyncio
+    import csv
+    import io
 
     ctx = workflow._context
     run_history = ctx.memory.get("run_history", [])
@@ -328,8 +383,16 @@ async def _post_approval_menu(workflow, artifact, result, target: dict):
                     execution = await workflow.adapter.run(artifact, {param: v})
                     workflow.results.save(execution)
                     outs = execution.outputs or {}
-                    pct = _pct_off(outs, target, ctx.memory.get("schema_registry", {})) if target else ""
-                    cols = "  ".join(f"{k}={val:.4g}" for k, val in outs.items() if isinstance(val, (int, float)))
+                    pct = (
+                        _pct_off(outs, target, ctx.memory.get("schema_registry", {}))
+                        if target
+                        else ""
+                    )
+                    cols = "  ".join(
+                        f"{k}={val:.4g}"
+                        for k, val in outs.items()
+                        if isinstance(val, (int, float))
+                    )
                     status_c = GREEN if execution.status == "completed" else RED
                     print(f"    {c('●', status_c)} {param}={v}  {cols}  {c(pct, YELLOW)}")
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -393,7 +456,11 @@ async def run_artifact(workflow: ResearchWorkflow, artifact_id: str, params: dic
     records = workflow.artifacts.list_all()
     artifact = None
     for r in records:
-        if r.artifact_id == artifact_id or r.artifact_id.startswith(artifact_id) or r.name == artifact_id:
+        if (
+            r.artifact_id == artifact_id
+            or r.artifact_id.startswith(artifact_id)
+            or r.name == artifact_id
+        ):
             artifact = r
             break
 
@@ -432,43 +499,90 @@ async def run_artifact(workflow: ResearchWorkflow, artifact_id: str, params: dic
 # Legacy underscored names re-exported for backwards compatibility.
 from arc.chat.parsers import (
     NOISE_WORDS as _NOISE,
-    parse_target as _parse_target,
-    parse_refinement_target as _parse_refinement_target,
-    parse_target_command as _parse_target_command,
-    refinement_needs_artifact_rebuild as _refinement_needs_artifact_rebuild,
-    normalize_chat_command as _normalize_chat_command,
-    tokens_for_relevance as _tokens_for_relevance,
-    is_related_refinement as _is_related_refinement,
+)
+from arc.chat.parsers import (
     build_refined_goal as _build_refined_goal,
 )
-
-
-# Session persistence — canonical home is arc.chat.session_io.
-# Re-exported here under the legacy underscored names for callers.
+from arc.chat.parsers import (
+    is_related_refinement as _is_related_refinement,
+)
+from arc.chat.parsers import (
+    normalize_chat_command as _normalize_chat_command,
+)
+from arc.chat.parsers import (
+    parse_refinement_target as _parse_refinement_target,
+)
+from arc.chat.parsers import (
+    parse_target as _parse_target,
+)
+from arc.chat.parsers import (
+    parse_target_command as _parse_target_command,
+)
+from arc.chat.parsers import (
+    refinement_needs_artifact_rebuild as _refinement_needs_artifact_rebuild,
+)
+from arc.chat.parsers import (
+    tokens_for_relevance as _tokens_for_relevance,
+)
+from arc.chat.session_io import (
+    restore_session as _restore_session,
+)
 from arc.chat.session_io import (
     save_session as _save_session,
-    restore_session as _restore_session,
 )
 
 
 # The builder is now a strategy role (catalogue role ``builder``), so coder
-# selection flows through the same resolver as every other role. We keep the
-# loop's historical *backend label* (``builder`` / ``arc-codex:coder`` /
-# ``arc-claude-code:coder``) as the public surface — the build step keys its
-# permission/progress callbacks off that label — and map it to/from the
-# catalogue key the resolver understands.
-#
-#   backend label          catalogue key
-#   ---------------------  -------------
-#   builder                default
-#   arc-codex:coder        codex
-#   arc-claude-code:coder  claude_code
-_CODER_LABEL_TO_KEY = {
-    "builder": "default",
-    "arc-codex:coder": "codex",
-    "arc-claude-code:coder": "claude_code",
-}
-_CODER_KEY_TO_LABEL = {v: k for k, v in _CODER_LABEL_TO_KEY.items()}
+# selection flows through the same resolver as every other role. Coder
+# packages declare backend labels, aliases, and callback profiles in
+# ``provides.strategies``; the chat loop derives its UI labels from that
+# metadata instead of hard-coding package names.
+def _builder_strategy_specs() -> list:
+    try:
+        from arc.core.strategies import list_strategies
+        return list_strategies("builder")
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _coder_label_to_key() -> dict[str, str]:
+    mapping = {"builder": "default"}
+    for spec in _builder_strategy_specs():
+        label = getattr(spec, "backend_label", None)
+        if label:
+            mapping[label] = spec.name
+    return mapping
+
+
+def _coder_key_to_label() -> dict[str, str]:
+    mapping = {v: k for k, v in _coder_label_to_key().items()}
+    mapping.setdefault("default", "builder")
+    return mapping
+
+
+def _coder_aliases() -> dict[str, str]:
+    aliases = {
+        "builder": "builder",
+        "builtin": "builder",
+        "built-in": "builder",
+        "sim2l": "builder",
+        "default": "builder",
+    }
+    for spec in _builder_strategy_specs():
+        label = getattr(spec, "backend_label", None) or _coder_key_to_label().get(spec.name)
+        if not label:
+            continue
+        aliases[spec.name.lower()] = label
+        for alias in getattr(spec, "aliases", ()) or ():
+            aliases[str(alias).lower()] = label
+    return aliases
+
+
+def _coder_callback_profile(strategy_key: str | None, backend_label: str) -> str:
+    for spec in _builder_strategy_specs():
+        if spec.name == strategy_key or getattr(spec, "backend_label", None) == backend_label:
+            return getattr(spec, "callback_profile", None) or ""
+    return ""
 
 
 def _available_coding_backends(workflow: ResearchWorkflow) -> list[str]:
@@ -489,30 +603,22 @@ def _selected_coder(workflow: ResearchWorkflow) -> str:
     memory = workflow._context.memory
     key = (memory.get("strategy_overrides") or {}).get("builder")
     if key:
-        return _CODER_KEY_TO_LABEL.get(key, key)
+        return _coder_key_to_label().get(key, key)
     legacy = (memory.get("agent_overrides") or {}).get("coder")
     return legacy or "builder"
 
 
 def _set_selected_coder(workflow: ResearchWorkflow, backend: str) -> str:
-    aliases = {
-        "builtin": "builder",
-        "built-in": "builder",
-        "sim2l": "builder",
-        "default": "builder",
-        "codex": "arc-codex:coder",
-        "claude": "arc-claude-code:coder",
-        "claude-code": "arc-claude-code:coder",
-    }
-    backend = aliases.get(backend, backend)
+    backend = _coder_aliases().get(backend.lower(), backend)
     if backend not in _available_coding_backends(workflow):
+        available = ", ".join(_available_coding_backends(workflow))
         raise ValueError(
-            f"Unknown coder backend '{backend}'. Available: {', '.join(_available_coding_backends(workflow))}"
+            f"Unknown coder backend '{backend}'. Available: {available}"
         )
     memory = workflow._context.memory
     strategy_overrides = memory.setdefault("strategy_overrides", {})
     agent_overrides = memory.setdefault("agent_overrides", {})
-    key = _CODER_LABEL_TO_KEY.get(backend, backend)
+    key = _coder_label_to_key().get(backend, backend)
     if backend == "builder":
         # Default: clear both stores so the resolver uses the catalogue default.
         strategy_overrides.pop("builder", None)
@@ -542,7 +648,7 @@ def _coder_agent_class(workflow: ResearchWorkflow):
     memory = workflow._context.memory
     session_key = (
         (memory.get("strategy_overrides") or {}).get("builder")
-        or _CODER_LABEL_TO_KEY.get((memory.get("agent_overrides") or {}).get("coder"))
+        or _coder_label_to_key().get((memory.get("agent_overrides") or {}).get("coder"))
     )
     # Explicit session choice → force it. No session choice → let the
     # resolver consult env + arc.toml (don't pin to a key here).
@@ -553,7 +659,10 @@ def _coder_agent_class(workflow: ResearchWorkflow):
     except Exception:  # noqa: BLE001 — arc.toml is optional
         config = {}
     try:
-        cls = _core_resolve("builder", overrides=overrides, config=config)
+        cls = _core_resolve(
+            "builder", overrides=overrides, config=config,
+            loaded_packages=set(workflow.registry.list_packages()),
+        )
     except Exception:  # noqa: BLE001 — never let coder resolution break the build
         from arc.packages import load_builder
         return "builder", load_builder().Sim2LBuilderAgent
@@ -568,19 +677,17 @@ def _coder_agent_class(workflow: ResearchWorkflow):
 def _label_for_class(cls, session_key: str | None) -> str:
     """Best-effort backend label for a resolved builder class.
 
-    Maps the known coder classes to their loop labels; falls back to the
+    Uses package-declared builder strategy metadata first; falls back to the
     session-derived label, then ``builder``.
     """
-    by_class = {
-        "CodexCoderAgent": "arc-codex:coder",
-        "ClaudeCodeCoderAgent": "arc-claude-code:coder",
-        "Sim2LBuilderAgent": "builder",
-    }
-    label = by_class.get(cls.__name__)
-    if label:
-        return label
+    for spec in _builder_strategy_specs():
+        if spec.attr == cls.__name__:
+            return (
+                getattr(spec, "backend_label", None)
+                or _coder_key_to_label().get(spec.name, "builder")
+            )
     if session_key:
-        return _CODER_KEY_TO_LABEL.get(session_key, "builder")
+        return _coder_key_to_label().get(session_key, "builder")
     return "builder"
 
 
@@ -626,7 +733,11 @@ def _registration_success_parts(registration: dict, artifact) -> tuple[str, str,
     if backend_name == "sim2l":
         name = registration.get("sim_name", artifact.name)
         version = registration.get("sim_version", artifact.version)
-        return "Sim2L registered", f"{name}/{version}", not registration.get("catalog_persisted", True)
+        return (
+            "Sim2L registered",
+            f"{name}/{version}",
+            not registration.get("catalog_persisted", True),
+        )
     return f"{backend_name} registered", artifact.name, False
 
 
@@ -639,7 +750,84 @@ def _registration_failure_label(registration: dict) -> str:
     return backend_name
 
 
-def _set_session_package_state(workflow: ResearchWorkflow, package_name: str, enabled: bool) -> None:
+def _attach_chat_audit_sink(workflow: ResearchWorkflow) -> None:
+    """Wire audit results into the chat event bus.
+
+    ``arc.runtime.audit`` no longer imports ``arc.chat`` (review finding B);
+    each front-end attaches its own sink. This bridges persisted audit
+    records into ``arc.chat.events.emit`` so terminal + JSONL consumers see
+    them. Idempotent — set once per workflow.
+    """
+    dispatcher = getattr(workflow, "audit", None)
+    if dispatcher is None or getattr(dispatcher, "_chat_sink_attached", False):
+        return
+    from arc.chat.events import emit
+
+    def _sink(record: dict) -> None:
+        kind = {"fail": "err", "warn": "warn", "pass": "ok"}.get(record.get("status"), "info")
+        emit(kind,
+             f"audit[{record.get('phase')}] {record.get('name')}: {record.get('summary', '')}",
+             audit=record)
+
+    try:
+        dispatcher.set_event_sink(_sink)
+        dispatcher._chat_sink_attached = True  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _audit(workflow: ResearchWorkflow, phase: str, **fields) -> None:
+    """Fire a package audit phase from the chat loop (item 7).
+
+    Gives the chat path the same lifecycle coverage as the YAML engine
+    (goal.received, ideation.*, search/planning/build/register .after).
+    Defensive — a blocking audit (``AuditBlockedError``) aborts the run;
+    everything else is swallowed so a buggy audit can't break chat.
+    """
+    dispatcher = getattr(workflow, "audit", None)
+    if dispatcher is None or not getattr(dispatcher, "has_actions", lambda: False)():
+        return
+    from arc.runtime.audit import AuditBlockedError
+    try:
+        await dispatcher.dispatch(phase, **fields)
+    except AuditBlockedError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _stamp_planner_provenance(workflow: ResearchWorkflow, plan) -> None:
+    """Record which planner produced the current plan + its design source.
+
+    Stored on ``memory['planner_provenance']`` so ``/sweep`` can explain
+    where its parameter sweep came from (design/todo.md item 8). Best-effort:
+    a failure here must not break planning.
+    """
+    try:
+        from arc.core.strategies import resolve_strategy_name
+        ctx = workflow._context
+        overrides = ctx.memory.get("strategy_overrides") or {}
+        try:
+            from arc.core.config import load_arc_toml
+            _p, config = load_arc_toml()
+        except Exception:  # noqa: BLE001
+            config = {}
+        key = resolve_strategy_name("planner", overrides=overrides, config=config)
+        ctx.memory["planner_provenance"] = {
+            "planner": key,
+            "experimental_design": list(getattr(plan, "experimental_design", []) or []),
+            "iteration": getattr(ctx, "iteration", 0),
+            "has_sweep": bool(getattr(plan, "parameter_sweep", {}) or {}),
+        }
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _set_session_package_state(
+    workflow: ResearchWorkflow,
+    package_name: str,
+    enabled: bool,
+) -> None:
     state = workflow._context.memory.setdefault("packages", {})
     enabled_set = set(state.get("enabled", []))
     disabled_set = set(state.get("disabled", []))
@@ -656,17 +844,35 @@ def _set_session_package_state(workflow: ResearchWorkflow, package_name: str, en
     state["enabled"] = sorted(enabled_set)
     state["disabled"] = sorted(disabled_set)
 
+    # A disabled provider/adapter package's already-built instance would
+    # otherwise stay live (review finding P2) — rebuild them against the new
+    # disabled set so a disabled provider degrades to stub mode and a disabled
+    # adapter to local.
+    refresh = getattr(workflow, "refresh_disabled_packages", None)
+    if callable(refresh):
+        refresh()
+
 
 
 
 # Intent classifier — canonical home is arc.chat.classifier. Legacy
 # underscored names re-exported here so existing call sites keep working.
 from arc.chat.classifier import (
-    QUESTION_STARTERS as _QUESTION_STARTERS,
-    RESEARCH_STARTERS as _RESEARCH_STARTERS,
     CONVERSATIONAL as _CONVERSATIONAL,
+)
+from arc.chat.classifier import (
     INTENT_SYSTEM_PROMPT as _INTENT_SYSTEM,
+)
+from arc.chat.classifier import (
+    QUESTION_STARTERS as _QUESTION_STARTERS,
+)
+from arc.chat.classifier import (
+    RESEARCH_STARTERS as _RESEARCH_STARTERS,
+)
+from arc.chat.classifier import (
     is_question as _is_question,
+)
+from arc.chat.classifier import (
     llm_classify_intent,
 )
 
@@ -732,19 +938,16 @@ async def run_research(
     workflow: ResearchWorkflow,
     goal_text: str,
     domain: str = None,
-    artifact: "ArtifactRecord | None" = None,
+    artifact: ArtifactRecord | None = None,
     refinement: str | None = None,
 ):
-    from arc.schemas.artifact import ArtifactRecord as _AR  # noqa: F401
-
     from arc.packages import resolve_role
 
     ctx = workflow._context
+    _attach_chat_audit_sink(workflow)
 
     IdeatorAgent   = resolve_role("ideator",   workflow)
     PlannerAgent   = resolve_role("planner",   workflow)
-    ReviewerAgent  = resolve_role("reviewer",  workflow)
-    ReflectorAgent = resolve_role("reflector", workflow)
     CuratorAgent   = resolve_role("curator",   workflow)
 
     def agent(cls):
@@ -769,8 +972,14 @@ async def run_research(
     if target:
         ctx.memory["target"] = target
 
+    await _audit(workflow, "goal.received",
+                 iteration=getattr(ctx, "iteration", 0),
+                 input_summary=goal.model_dump())
+
     preserved_output_keys: list[str] = []
-    rebuild_for_refinement = bool(refinement and artifact and _refinement_needs_artifact_rebuild(refinement))
+    rebuild_for_refinement = bool(
+        refinement and artifact and _refinement_needs_artifact_rebuild(refinement)
+    )
     if rebuild_for_refinement:
         preserved_output_keys = list((artifact.metadata.get("sim2l_outputs", {}) or {}).keys())
         if preserved_output_keys:
@@ -785,11 +994,18 @@ async def run_research(
     if is_new_artifact:
         # ── Ideation ──────────────────────────────────────────────────────
         header("Ideation")
+        await _audit(workflow, "ideation.before", iteration=getattr(ctx, "iteration", 0))
         print(f"  {c('searching catalog + thinking...', DIM)}", end="\r")
         proposal = await agent(IdeatorAgent).run(goal)
         print(" " * 40, end="\r")
         step("Hypothesis", textwrap.fill(proposal.hypothesis, 60, subsequent_indent=" " * 16))
         step("Objective",  textwrap.fill(proposal.objective,  60, subsequent_indent=" " * 16))
+        await _audit(workflow, "ideation.after",
+                     iteration=getattr(ctx, "iteration", 0),
+                     output_summary={"hypothesis": proposal.hypothesis})
+        await _audit(workflow, "search.after",
+                     iteration=getattr(ctx, "iteration", 0),
+                     output_summary={"catalog_hits": len(ctx.memory.get("catalog_hits", []) or [])})
 
         # ── Recipe auto-suggest ──────────────────────────────────────────
         await _maybe_suggest_recipe(workflow, goal, ctx)
@@ -820,11 +1036,6 @@ async def run_research(
                 from arc.schemas.artifact import ArtifactDraft
                 input_schema  = best.get("input_schema") or {}
                 output_schema = best.get("output_schema") or {}
-                # Build default parameters from schema defaults.
-                default_params = {
-                    k: v.get("default", 1.0) if isinstance(v, dict) else 1.0
-                    for k, v in input_schema.items()
-                }
                 catalog_draft = ArtifactDraft(
                     name=best_name,
                     description=best_desc,
@@ -849,6 +1060,7 @@ async def run_research(
                     },
                 )
                 catalog_artifact = workflow.artifacts.register(catalog_draft)
+                workflow.memory_hooks.on_artifact_registered(catalog_artifact)
                 ok(f"Reusing catalog artifact  {c(best_name, CYAN)}")
                 if prior_results:
                     ok(f"Prior results available: "
@@ -875,8 +1087,14 @@ async def run_research(
                 ctx.memory["current_artifact"] = catalog_artifact
                 ctx.memory["current_plan"] = None
                 artifact = catalog_artifact
-                # Skip build — jump straight to validation.
-                is_new_artifact = False  # prevents double-validation below
+                # Skip build AND validation — jump straight to execution.
+                # A catalog artifact was already validated when it was
+                # published, and it has no local files to re-validate
+                # (files={}, fetched via the sim2l repo at run time). Setting
+                # is_new_artifact=False makes ValidationPhase.should_run()
+                # return False so we don't re-validate something we can't
+                # see locally; ExecutionPhase still runs (review finding D).
+                is_new_artifact = False
 
         if catalog_artifact is None:
             # ── Planning ──────────────────────────────────────────────────
@@ -893,9 +1111,17 @@ async def run_research(
                 required_outputs=preserved_output_keys,
             )
             # Inject confirmed required outputs into context for the builder.
-            required_outputs = getattr(plan, '_required_outputs', list(target.keys()) if target else [])
+            required_outputs = getattr(
+                plan,
+                '_required_outputs',
+                list(target.keys()) if target else [],
+            )
             if required_outputs:
                 ctx.memory["required_outputs"] = required_outputs
+            await _audit(workflow, "planning.after",
+                         iteration=getattr(ctx, "iteration", 0),
+                         output_summary={"experimental_design":
+                                         list(getattr(plan, "experimental_design", []) or [])})
 
             # ── Building artifact ──────────────────────────────────────────
             coder_backend, CoderAgent = _coder_agent_class(workflow)
@@ -903,12 +1129,22 @@ async def run_research(
             print(f"  {c('generating workflow...', DIM)}", end="\r")
             try:
                 _coder_agent = CoderAgent(context=ctx)
-                if "arc-codex" in coder_backend:
-                    _coder_agent.context.config["permission_callback"] = _make_codex_approval_callback()
-                    _coder_agent.context.config["progress_callback"] = _make_codex_progress_callback()
-                elif "arc-claude-code" in coder_backend:
-                    _coder_agent.context.config["permission_callback"] = _make_permission_callback()
-                    _coder_agent.context.config["progress_callback"] = _make_claude_progress_callback()
+                strategy_key = (ctx.memory.get("strategy_overrides") or {}).get("builder")
+                profile = _coder_callback_profile(strategy_key, coder_backend)
+                if profile == "codex":
+                    _coder_agent.context.config[
+                        "permission_callback"
+                    ] = _make_codex_approval_callback()
+                    _coder_agent.context.config[
+                        "progress_callback"
+                    ] = _make_codex_progress_callback()
+                elif profile == "claude_code":
+                    _coder_agent.context.config[
+                        "permission_callback"
+                    ] = _make_permission_callback()
+                    _coder_agent.context.config[
+                        "progress_callback"
+                    ] = _make_claude_progress_callback()
                 draft = await _coder_agent.run(plan)
             except Exception as _coder_exc:
                 print(" " * 40, end="\r")
@@ -925,7 +1161,14 @@ async def run_research(
                 else:
                     raise
             print(" " * 40, end="\r")
+            await _audit(workflow, "build.after",
+                         iteration=getattr(ctx, "iteration", 0),
+                         output_summary={"coder": coder_backend})
             artifact = workflow.artifacts.register(draft)
+            workflow.memory_hooks.on_artifact_registered(artifact)
+            await _audit(workflow, "register.after",
+                         iteration=getattr(ctx, "iteration", 0),
+                         artifact_id=artifact.artifact_id)
             ok(f"Artifact registered  {c(artifact.artifact_id[:8] + '...', DIM)}")
             ok(f"Path: {c(artifact.path, DIM)}")
 
@@ -944,13 +1187,26 @@ async def run_research(
                 )
                 ok(f"{label}  {c(detail, DIM)}")
                 if show_catalog_warning:
-                    print(f"  {c('ℹ', CYAN)} Catalog service not reachable — artifact is saved locally only.")
+                    print(
+                        f"  {c('ℹ', CYAN)} Catalog service not reachable — "
+                        "artifact is saved locally only."
+                    )
             elif sim2l_registration:
                 error_msg = sim2l_registration.get("error", "unknown error")
                 backend_label = _registration_failure_label(sim2l_registration)
-                _conn_errors = ("connection refused", "max retries", "newconnectionerror", "failed to establish")
-                if backend_label == "Sim2L" and any(e in error_msg.lower() for e in _conn_errors):
-                    print(f"  {c('ℹ', CYAN)} Sim2L services are not running — artifact saved to local ARC session only.")
+                _conn_errors = (
+                    "connection refused",
+                    "max retries",
+                    "newconnectionerror",
+                    "failed to establish",
+                )
+                if backend_label == "Sim2L" and any(
+                    e in error_msg.lower() for e in _conn_errors
+                ):
+                    print(
+                        f"  {c('ℹ', CYAN)} Sim2L services are not running — "
+                        "artifact saved to local ARC session only."
+                    )
                     print(f"  {c('  Start sim2l services to enable catalog/results sync.', DIM)}")
                 else:
                     warn(f"{backend_label} registration skipped: {error_msg}")
@@ -958,6 +1214,7 @@ async def run_research(
             # Save for later iterations
             ctx.memory["current_artifact"] = artifact
             ctx.memory["current_plan"] = plan
+            _stamp_planner_provenance(workflow, plan)
     else:
         # ── Reuse existing artifact, optionally re-plan for a refinement ───
         plan = ctx.memory.get("current_plan")
@@ -992,7 +1249,12 @@ async def run_research(
             print(" " * 40, end="\r")
             plan = await _review_plan_with_user(agent(_PlannerCls), plan, target=target)
             ctx.memory["current_plan"] = plan
-            required_outputs = getattr(plan, '_required_outputs', list(target.keys()) if target else [])
+            _stamp_planner_provenance(workflow, plan)
+            required_outputs = getattr(
+                plan,
+                '_required_outputs',
+                list(target.keys()) if target else [],
+            )
             if required_outputs:
                 ctx.memory["required_outputs"] = required_outputs
 
@@ -1017,9 +1279,9 @@ async def run_research(
     # Wraps the legacy inline code in the Phase 3 ``POST_BUILD_PHASES``.
     # The pipeline runs each phase, dispatches hooks, and aborts cleanly
     # when validation fails.
-    from arc.chat.research.pipeline import PipelineState, Pipeline
-    from arc.chat.research.phases import POST_BUILD_PHASES
     from arc.chat.research.hooks import phase_events
+    from arc.chat.research.phases import POST_BUILD_PHASES
+    from arc.chat.research.pipeline import Pipeline, PipelineState
 
     pstate = PipelineState(
         workflow=workflow,
@@ -1106,7 +1368,12 @@ async def _run_with_continuation(
     _first_refinement = refinement
 
     while True:
-        result = await run_research(workflow, goal_text, artifact=artifact, refinement=_first_refinement)
+        result = await run_research(
+            workflow,
+            goal_text,
+            artifact=artifact,
+            refinement=_first_refinement,
+        )
         _first_refinement = None  # consumed after first call
         iterations_done += 1
 
@@ -1118,7 +1385,10 @@ async def _run_with_continuation(
         artifact = result["artifact"]  # reuse on next pass
 
         if execution.status != "completed":
-            warn("Execution failed; stopping continuation so the artifact can be repaired before optimization.")
+            warn(
+                "Execution failed; stopping continuation so the artifact can be "
+                "repaired before optimization."
+            )
             break
 
         # ── Auto-rebuild on schema mismatch ───────────────────────────────
@@ -1127,6 +1397,15 @@ async def _run_with_continuation(
         # rebuild whose builder is told exactly which keys are missing.
         unmatched = result.get("unmatched_target_keys", []) or []
         if unmatched:
+            _remember_schema_mismatch(
+                workflow,
+                goal_text=goal_text,
+                artifact=artifact,
+                execution=execution,
+                review=review,
+                reflection=result.get("reflection"),
+                unmatched=list(unmatched),
+            )
             warn(
                 f"Schema mismatch detected — artifact outputs {list(execution.outputs.keys())} "
                 f"don't include {unmatched}. Rebuilding the artifact."
@@ -1167,23 +1446,44 @@ async def _run_with_continuation(
         if confirmed_budget is None:
             remaining_display = max_iterations
             if strategy == "explore":
-                print(f"\n{c('●', BOLD, CYAN)} {c('Reviewer suggests:', BOLD)} broad GA exploration")
+                print(
+                    f"\n{c('●', BOLD, CYAN)} "
+                    f"{c('Reviewer suggests:', BOLD)} broad GA exploration"
+                )
                 print(f"   {c(review.summary, DIM)}")
-                print(f"   {c(f'Default: 10 generations × pop 8  |  or type N to change  |  n to stop', DIM)}")
-                raw = (await chat_input_async(c("  Confirm? [Y / N / <gens> <pop>] > ", BOLD))).strip()
+                default_msg = (
+                    "Default: 10 generations × pop 8  |  "
+                    "or type N to change  |  n to stop"
+                )
+                raw_prompt = c("  Confirm? [Y / N / <gens> <pop>] > ", BOLD)
+                print(
+                    f"   {c(default_msg, DIM)}"
+                )
+                raw = (await chat_input_async(raw_prompt)).strip()
             else:
-                print(f"\n{c('●', BOLD, CYAN)} {c('Reviewer suggests:', BOLD)} continue iterating")
+                print(
+                    f"\n{c('●', BOLD, CYAN)} "
+                    f"{c('Reviewer suggests:', BOLD)} continue iterating"
+                )
                 print(f"   {c(review.summary, DIM)}")
                 if next_p:
                     print(f"   Next params: {c(str(next_p), YELLOW)}")
-                print(f"   {c(f'Will run up to {remaining_display} more iterations automatically', DIM)}")
-                raw = (await chat_input_async(c("  Confirm? [Y / N / <iterations> / explore] > ", BOLD))).strip()
+                auto_msg = (
+                    f"Will run up to {remaining_display} more iterations automatically"
+                )
+                raw_prompt = c("  Confirm? [Y / N / <iterations> / explore] > ", BOLD)
+                print(f"   {c(auto_msg, DIM)}")
+                raw = (
+                    await chat_input_async(raw_prompt)
+                ).strip()
 
             rl = raw.lower()
             if rl in ("n", "no"):
                 print(c("  Stopping.", DIM))
                 break
-            elif rl in ("explore", "ga") or (strategy == "explore" and rl in ("y", "yes", "")):
+            elif rl in ("explore", "ga") or (
+                strategy == "explore" and rl in ("y", "yes", "")
+            ):
                 strategy = "explore"
                 confirmed_budget = 0  # GA handles its own budget
             elif rl.split() and rl.split()[0].isdigit():
@@ -1246,7 +1546,10 @@ async def _run_with_continuation(
             ctx.memory["adapter"] = workflow.adapter
             target = ctx.memory.get("target", {})
 
-            header(f"Genetic Optimisation  {c(artifact.name, CYAN)}  {c(f'[{gens} gen × pop {pop}]', DIM)}")
+            header(
+                f"Genetic Optimisation  {c(artifact.name, CYAN)}  "
+                f"{c(f'[{gens} gen × pop {pop}]', DIM)}"
+            )
             if target:
                 step("Target", target)
             hr()
@@ -1297,9 +1600,13 @@ async def _run_with_continuation(
 # for callers that imported them from arc.chat (now arc.chat.loop).
 from arc.chat.io_utils import (
     _SIM2L_SERVICES,
-    check_sim2l_services as _check_sim2l_services,
-    install_sigint_handler as _install_sigint_handler,
     print_banner,
+)
+from arc.chat.io_utils import (
+    check_sim2l_services as _check_sim2l_services,
+)
+from arc.chat.io_utils import (
+    install_sigint_handler as _install_sigint_handler,
 )
 
 
@@ -1461,10 +1768,15 @@ def _materialise_pending_sink(workflow) -> None:
     path-traversal) rather than a raw ``sim2l_home() / session_id`` join.
     """
     from arc.chat.events import (
-        AnsiSink, JsonlSink, MultiSink, StdoutJsonSink,
-        get_sink_config, set_sink, set_sink_config,
+        AnsiSink,
+        JsonlSink,
+        MultiSink,
+        StdoutJsonSink,
+        get_sink_config,
+        set_sink,
+        set_sink_config,
     )
-    from arc.session import session_paths, sim2l_home, validate_session_id
+    from arc.session import sim2l_home, validate_session_id
     cfg = get_sink_config()
     if cfg is None:
         return
@@ -1497,6 +1809,35 @@ class RouterBudgetExceeded(RuntimeError):
     """Raised when ``ChatState.router_calls`` exceeds ``router_call_budget``."""
 
 
+def _remember_schema_mismatch(
+    workflow: ResearchWorkflow,
+    *,
+    goal_text: str,
+    artifact,
+    execution,
+    review,
+    reflection,
+    unmatched: list[str],
+) -> None:
+    """Record why the next fresh ideation/build is a retry, not a new blank run."""
+    memory = workflow._context.memory
+    note = {
+        "reason": "schema_mismatch",
+        "goal": goal_text,
+        "artifact_id": getattr(artifact, "artifact_id", None),
+        "artifact_name": getattr(artifact, "name", None),
+        "run_id": getattr(execution, "run_id", None),
+        "required_outputs": list(unmatched),
+        "actual_outputs": dict(getattr(execution, "outputs", {}) or {}),
+        "review_summary": getattr(review, "summary", "") if review is not None else "",
+        "reflection": reflection,
+    }
+    history = memory.setdefault("retry_context", [])
+    history.append(note)
+    memory["retry_context"] = history[-5:]
+    memory["last_retry_context"] = note
+
+
 async def _route_via_v2(raw: str, *, registry, provider, has_active_goal: bool,
                           tool_registry=None, state=None):
     """Adapter: run the v2 tool-call router and return a Phase-1-compatible Route.
@@ -1513,7 +1854,8 @@ async def _route_via_v2(raw: str, *, registry, provider, has_active_goal: bool,
     ``state.router_call_budget``. The counter is bumped once per LLM
     round-trip — slash commands don't tick it.
     """
-    from arc.chat.router import Route, route_input as _heuristic_route
+    from arc.chat.router import Route
+    from arc.chat.router import route_input as _heuristic_route
     from arc.chat.router_v2 import route_via_tools
     from arc.chat.tools import build_tool_registry
 
@@ -1585,9 +1927,10 @@ async def _authenticate_and_prompt(workflow) -> bool:
     ``_cache_session_id`` fields are populated so subsequent pushes
     carry the right headers and the executor reaches the cache service.
     """
+    import asyncio
+
     from arc.chat.sim2l_auth import login_to_services
 
-    import asyncio
     auth = await asyncio.get_event_loop().run_in_executor(None, login_to_services)
 
     # Attach to the adapter (if any) regardless of partial success — the
@@ -1630,7 +1973,13 @@ async def _authenticate_and_prompt(workflow) -> bool:
     return answer in {"y", "yes"}
 
 
-async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_iterations: int = 20):
+async def chat_loop(
+    workflow: ResearchWorkflow,
+    provider,
+    model,
+    base_url,
+    max_iterations: int = 20,
+):
     """Main REPL — dispatch via CommandRegistry, fall back to the router for
     free text.
 
@@ -1638,7 +1987,6 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
     through ``arc.chat.commands.build_registry``; free text classifies via
     ``arc.chat.router.route_input`` and the corresponding handlers below.
     """
-    import asyncio
     from arc.chat.commands import build_registry
     from arc.chat.commands.builtins import _QuitRequested
     from arc.chat.router import route_input
@@ -1652,6 +2000,9 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
 
     # Restore any previously saved session state.
     saved_goal = _restore_session(workflow)
+    refresh = getattr(workflow, "refresh_disabled_packages", None)
+    if callable(refresh):
+        refresh()
 
     # Materialise any deferred event sink config now that we know the
     # session id — so --events jsonl writes to <session>/events.jsonl
@@ -1659,14 +2010,29 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
     _materialise_pending_sink(workflow)
 
     # Check sim2l service availability once at startup (fast, 1s timeout each).
-    sim2l_status = await asyncio.get_event_loop().run_in_executor(None, _check_sim2l_services)
-    print_banner(provider, model, base_url, workflow.session_id, _selected_coder(workflow),
-                 sim2l_status=sim2l_status)
+    sim2l_status = await asyncio.get_event_loop().run_in_executor(
+        None,
+        _check_sim2l_services,
+    )
+    print_banner(
+        provider,
+        model,
+        base_url,
+        workflow.session_id,
+        _selected_coder(workflow),
+        sim2l_status=sim2l_status,
+    )
 
     from arc.services import (
-        sim2l_available,
         is_running as _service_running,
+    )
+    from arc.services import (
+        sim2l_available,
+    )
+    from arc.services import (
         start as _start_service,
+    )
+    from arc.services import (
         start_all as _start_all,
     )
 
@@ -1692,13 +2058,20 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
             # moment after Popen returns before /health and /session/login are
             # reachable, especially the last service in the startup batch.
             for _ in range(10):
-                sim2l_status = await asyncio.get_event_loop().run_in_executor(None, _check_sim2l_services)
+                sim2l_status = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _check_sim2l_services,
+                )
                 if all(sim2l_status.values()):
                     break
                 await asyncio.sleep(0.5)
             print()
         else:
-            print(f"  {c('Continuing without sim2l services — use /services start to start them later.', DIM)}")
+            msg = (
+                "Continuing without sim2l services — use /services start "
+                "to start them later."
+            )
+            print(f"  {c(msg, DIM)}")
             print()
     elif not any(sim2l_status.values()):
         print(f"  {c('ℹ', CYAN)}  No sim2l services running. Install sim2l or use /services start.")
@@ -1810,7 +2183,10 @@ async def chat_loop(workflow: ResearchWorkflow, provider, model, base_url, max_i
             if route.kind == "command":
                 # Apply the requires_* gates.
                 if route.command.requires_provider and workflow.provider is None:
-                    err(f"/{route.command.name} requires a live LLM provider. Start without --stub.")
+                    err(
+                        f"/{route.command.name} requires a live LLM provider. "
+                        "Start without --stub."
+                    )
                 elif route.command.requires_artifact and state.current_artifact is None:
                     err(f"/{route.command.name} needs an active artifact. Set a goal first.")
                 else:
@@ -1868,7 +2244,8 @@ def main():
     parser.add_argument("--provider", default=None,
                         help="Provider name. Defaults to ARC_PROVIDER or openwebui.")
     parser.add_argument("--token",    default=None,
-                        help="Provider token. Defaults to OPENWEBUI_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.")
+                        help=("Provider token. Defaults to OPENWEBUI_KEY, "
+                              "OPENAI_API_KEY, or ANTHROPIC_API_KEY."))
     parser.add_argument("--model",    default=None,
                         help="Model name. Defaults to ARC_MODEL or provider-specific model env.")
     parser.add_argument("--url",      default=None,
@@ -1940,7 +2317,11 @@ def main():
         )
         if provider == "openwebui":
             token = args.token or os.environ.get("OPENWEBUI_KEY")
-            base_url = args.url or os.environ.get("OPENWEBUI_URL") or "https://genai.rcac.purdue.edu/api"
+            base_url = (
+                args.url
+                or os.environ.get("OPENWEBUI_URL")
+                or "https://genai.rcac.purdue.edu/api"
+            )
         elif provider == "openai":
             token = args.token or os.environ.get("OPENAI_API_KEY")
             base_url = args.url
@@ -1963,7 +2344,11 @@ def main():
         session_id = args.session
         meta = load_session_meta(session_id)
         if not meta:
-            print(f"ERROR: session '{session_id}' not found. Use --list-sessions to see available sessions.", file=sys.stderr)
+            print(
+                f"ERROR: session '{session_id}' not found. "
+                "Use --list-sessions to see available sessions.",
+                file=sys.stderr,
+            )
             sys.exit(1)
     else:
         session_id = new_session_id()

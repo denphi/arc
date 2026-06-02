@@ -12,10 +12,13 @@ except ImportError:
 
 if HAS_TYPER:
     import typer
+
+    from arc.cli.packages import package_app
     from arc.ui.__main__ import DEFAULT_HOST as DEFAULT_UI_HOST
     from arc.ui.__main__ import DEFAULT_PORT as DEFAULT_UI_PORT
 
     app = typer.Typer(name="arc", help="ARC-Sim2L — Autonomous Research Coder")
+    app.add_typer(package_app, name="package")
 
     @app.command()
     def run(
@@ -113,6 +116,7 @@ if HAS_TYPER:
     def info():
         """Show registered components + each package's declared config."""
         import os
+
         from arc.core.kernel import Kernel
 
         kernel = Kernel()
@@ -172,7 +176,10 @@ if HAS_TYPER:
         check_format: str = typer.Option("ansi", "--check-format",
                                           help="Format for --check output: ansi | json"),
         plan: bool = typer.Option(False, "--plan",
-                                   help="Plan mode: show what the chat would do without writing files or pushing to sim2l"),
+                                   help=(
+                                       "Plan mode: show what the chat would do without writing "
+                                       "files or pushing to sim2l"
+                                   )),
         events: str = typer.Option("ansi", "--events",
                                     help="Event sink: ansi (default), jsonl, stdout-json, multi"),
         events_path: str = typer.Option(None, "--events-path",
@@ -189,6 +196,7 @@ if HAS_TYPER:
         # before installing any chat sinks so its JSON output stays clean.
         if check:
             import asyncio as _asyncio
+
             from arc.chat.check import run_check
             from arc.chat.check_render import render
             report = _asyncio.run(run_check(
@@ -203,9 +211,13 @@ if HAS_TYPER:
         # session path needed). For jsonl / multi we defer to chat_loop
         # so the default path can resolve to <session_dir>/events.jsonl.
         from pathlib import Path
+
         from arc.chat.events import (
-            AnsiSink, StdoutJsonSink, SinkConfig,
-            set_sink, set_sink_config,
+            AnsiSink,
+            SinkConfig,
+            StdoutJsonSink,
+            set_sink,
+            set_sink_config,
         )
         if events == "ansi":
             set_sink(AnsiSink())

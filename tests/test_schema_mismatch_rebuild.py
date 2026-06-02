@@ -17,10 +17,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from arc.chat.research.pipeline import PipelineState
 from arc.chat.research.phases import ExecutionPhase
+from arc.chat.research.pipeline import PipelineState
 from tests.fakes import make_artifact, make_workflow
-
 
 pytestmark = pytest.mark.chat
 
@@ -103,7 +102,7 @@ async def test_execution_records_multiple_unmatched_targets():
 async def test_execution_emits_schema_mismatch_event():
     """The mismatch is also surfaced as a structured event so the JSONL
     sink (and a future TUI) can react."""
-    from arc.chat.events import ChatEvent, Sink, set_sink
+    from arc.chat.events import Sink, set_sink
 
     class Cap(Sink):
         def __init__(self): self.events = []
@@ -203,6 +202,11 @@ async def test_continuation_loop_rebuilds_on_schema_mismatch(monkeypatch):
     assert iteration_calls[1]["artifact"] is None
     # And required_outputs was seeded from the unmatched target
     assert iteration_calls[1]["required_outputs"] == ["bandgap_ev"]
+    retry = wf._context.memory["last_retry_context"]
+    assert retry["reason"] == "schema_mismatch"
+    assert retry["required_outputs"] == ["bandgap_ev"]
+    assert retry["actual_outputs"] == {"result": 5.0}
+    assert wf._context.memory["retry_context"][-1] == retry
 
 
 @pytest.mark.asyncio

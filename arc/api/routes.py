@@ -77,11 +77,19 @@ def _workflow(
     # raising — the API surface should degrade, not 500.
     try:
         from arc.api.session_state import load_state
+        from arc.session import load_session_meta
+
         state = load_state(resolved_session) or {}
         for key in ("strategy_overrides", "active_recipe",
                     "recipe_applied", "recipe_suggested"):
             if key in state and state[key]:
                 workflow._context.memory[key] = state[key]
+        meta = load_session_meta(resolved_session) or {}
+        if meta.get("packages"):
+            workflow._context.memory["packages"] = meta["packages"]
+            refresh = getattr(workflow, "refresh_disabled_packages", None)
+            if callable(refresh):
+                refresh()
     except Exception:  # noqa: BLE001 — state lookup is best-effort
         pass
     return workflow
@@ -236,7 +244,9 @@ async def get_status(run_id: str, session_id: str | None = None):
 @router.get("/results/{run_id}")
 async def get_result(run_id: str, session_id: str | None = None):
     try:
-        return _results(_require_session_id(session_id)).get(run_id) if session_id else _find_result(run_id)
+        if session_id:
+            return _results(_require_session_id(session_id)).get(run_id)
+        return _find_result(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:
@@ -245,7 +255,9 @@ async def get_result(run_id: str, session_id: str | None = None):
 
 @router.get("/results")
 async def list_results(session_id: str | None = None):
-    return _results(_require_session_id(session_id)).list_all() if session_id else _all_session_results()
+    if session_id:
+        return _results(_require_session_id(session_id)).list_all()
+    return _all_session_results()
 
 
 # --- Review ---

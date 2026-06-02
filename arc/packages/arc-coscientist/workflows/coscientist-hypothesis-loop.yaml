@@ -1,0 +1,8 @@
+name: coscientist-hypothesis-loop
+description: >
+  Hypothesis-focused Co-Scientist workflow. ARC exposes this as a package
+  workflow marker; full execution is delegated to coscientist_supervisor.
+steps:
+  - role: ideator
+    action: run
+    description: Generate a Co-Scientist-style hypothesis pool for the goal.

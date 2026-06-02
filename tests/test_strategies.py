@@ -110,15 +110,17 @@ def test_resolve_role_returns_composite_searcher_for_stack():
         "searcher",
         overrides={"searcher": "default embeddings materials_project"},
     )
-    assert cls.__name__.startswith("CompositeSearcher_")
+    # Composite class names are unified as ``Composite_<role>_<components>``.
+    assert cls.__name__.startswith("Composite_searcher_")
     assert cls.strategy_names == ("default", "embeddings", "materials_project")
 
 
-def test_resolve_role_non_searcher_stack_falls_back_to_default(caplog):
+def test_resolve_role_non_searcher_stack_returns_composite():
+    """Every role now has a composite (todo.md item 5) — a planner stack
+    returns a planner composite rather than silently using the default."""
     cls = resolve_role("planner", overrides={"planner": "default mars_planner"})
-    assert cls.__name__ == "PlannerAgent"
-    assert any("Composite strategies are not supported" in r.getMessage()
-               for r in caplog.records)
+    assert cls.__name__.startswith("Composite_planner_")
+    assert cls.strategy_names == ("default", "mars_planner")
 
 
 # ── Dynamic registration ──────────────────────────────────────────────

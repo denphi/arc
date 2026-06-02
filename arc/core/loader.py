@@ -131,7 +131,7 @@ def _import_class(entrypoint: str):
     when the dotted path contains hyphens.
     """
     import sys
-    from importlib.util import spec_from_file_location, module_from_spec
+    from importlib.util import module_from_spec, spec_from_file_location
 
     module_path, class_name = entrypoint.rsplit(":", 1)
 
@@ -168,6 +168,124 @@ def _import_class(entrypoint: str):
     return getattr(module, class_name)
 
 
+def _import_from_file(module_file: Path, attr: str, module_name: str | None = None):
+    """Import ``attr`` from a Python file.
+
+    Local ARC packages can live outside ``arc.packages`` and therefore may
+    not have a dotted import path. Their manifests use ``path`` + ``class`` or
+    ``path`` + ``function`` declarations instead.
+    """
+    import sys
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    if not module_file.exists():
+        raise ImportError(f"Cannot load {attr!r}; file does not exist: {module_file}")
+    if module_name is None:
+        token = "_".join(module_file.with_suffix("").parts[-4:]).replace("-", "_")
+        module_name = f"arc_local_package_{token}"
+    spec = spec_from_file_location(module_name, module_file)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module from {module_file}")
+    module = module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return getattr(module, attr)
+
+
+def _declared_attr_name(definition: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = definition.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _import_declared(
+    definition: dict[str, Any],
+    package_dir: Path,
+    *,
+    attr_keys: tuple[str, ...] = ("class", "function", "callable"),
+):
+    """Import an object from either ``entrypoint`` or package-relative file metadata."""
+    entrypoint = definition.get("entrypoint")
+    if entrypoint:
+        return _import_class(str(entrypoint))
+
+    rel_path = definition.get("path")
+    attr = _declared_attr_name(definition, *attr_keys)
+    if not rel_path or not attr:
+        raise ValueError("Manifest entry needs either entrypoint or path plus class/function")
+
+    module_file = package_dir / str(rel_path)
+    module_token = (
+        "arc_local_package_"
+        f"{package_dir.name.replace('-', '_')}_"
+        f"{str(rel_path).replace('/', '_').replace('-', '_').removesuffix('.py')}"
+    )
+    return _import_from_file(module_file, attr, module_token)
+
+
+def _strategy_spec_from_manifest(package_dir: Path, pkg_name: str, strategy_def: dict[str, Any]):
+    """Build a StrategySpec from a package manifest strategy declaration.
+
+    The strategy resolver historically loaded built-in strategies from
+    ``arc/packages/<package>/<module_path>``. Package-declared strategies need
+    the same lazy behavior without hard-coding package names in core, so the
+    manifest contributes an absolute ``file_path`` resolved from the package
+    directory that loaded it.
+    """
+    from arc.core.strategies import StrategySpec
+
+    entrypoint = strategy_def.get("entrypoint")
+    attr = _declared_attr_name(strategy_def, "class", "function", "callable")
+    module_path = ""
+    if entrypoint:
+        module_path, entrypoint_attr = str(entrypoint).rsplit(":", 1)
+        attr = attr or entrypoint_attr
+    if not attr:
+        raise ValueError(
+            f"Strategy {strategy_def.get('name')!r} needs entrypoint or class/function"
+        )
+    rel_path = strategy_def.get("path")
+    if rel_path:
+        module_file = package_dir / rel_path
+        module_rel = rel_path
+    else:
+        if not module_path:
+            raise ValueError(
+                f"Strategy {strategy_def.get('name')!r} needs path when entrypoint is omitted"
+            )
+        parts = module_path.split(".")
+        package_tokens = {pkg_name, package_dir.name}
+        package_index = next(
+            (idx for idx, part in enumerate(parts) if part in package_tokens),
+            None,
+        )
+        if package_index is None or package_index == len(parts) - 1:
+            raise ValueError(
+                f"Cannot map strategy entrypoint {entrypoint!r} to a file under {package_dir}"
+            )
+        module_rel = "/".join(parts[package_index + 1:]) + ".py"
+        module_file = package_dir / module_rel
+    return StrategySpec(
+        name=strategy_def["name"],
+        package_dir=pkg_name,
+        module_path=module_rel,
+        attr=attr,
+        description=strategy_def.get("description", ""),
+        file_path=str(module_file),
+        aliases=tuple(strategy_def.get("aliases") or ()),
+        backend_label=strategy_def.get("backend_label"),
+        callback_profile=(
+            strategy_def.get("callback_profile") if strategy_def.get("callback_profile") else None
+        ),
+    )
+
+
 def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
     manifest_path = package_dir / "package.yaml"
     if not manifest_path.exists():
@@ -186,7 +304,11 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
     # loads — a required var may be set later, or the feature degrades.
     import os as _os
     for entry in manifest.get("config", []) or []:
-        if isinstance(entry, dict) and entry.get("required") and not _os.environ.get(entry.get("name", "")):
+        if (
+            isinstance(entry, dict)
+            and entry.get("required")
+            and not _os.environ.get(entry.get("name", ""))
+        ):
             logger.warning(
                 "Package %r requires config %r which is unset — set it in "
                 ".env or the environment. (%s)",
@@ -195,10 +317,22 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
 
     for agent_def in manifest.get("provides", {}).get("agents", []):
         try:
-            agent_class = _import_class(agent_def["entrypoint"])
+            agent_class = _import_declared(agent_def, package_dir)
             registry.register_agent(agent_def["name"], agent_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load agent '%s': %s", agent_def.get("name"), exc)
+
+    for strategy_def in manifest.get("provides", {}).get("strategies", []):
+        try:
+            from arc.core.strategies import register_strategy
+            spec = _strategy_spec_from_manifest(package_dir, pkg_name, strategy_def)
+            register_strategy(
+                strategy_def["role"],
+                spec,
+                make_default=bool(strategy_def.get("default", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load strategy '%s': %s", strategy_def.get("name"), exc)
 
     for skill_def in manifest.get("provides", {}).get("skills", []):
         skill_path = package_dir / skill_def
@@ -208,7 +342,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
                 _resource_name(skill_def, skill_path),
                 skill_path,
                 content,
-            ))
+            ), package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load skill '%s': %s", skill_def, exc)
 
@@ -217,14 +351,30 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
         if workflow_path.exists():
             with workflow_path.open() as f:
                 workflow = yaml.safe_load(f)
-            registry.register_workflow(workflow_def["name"], workflow)
+            registry.register_workflow(workflow_def["name"], workflow, package_name=pkg_name)
         else:
             logger.warning("Workflow file not found: %s", workflow_path)
 
+    for extension_def in manifest.get("provides", {}).get("extensions", []):
+        try:
+            definition = dict(extension_def)
+            definition.setdefault("_package_dir", str(package_dir))
+            # Stamp the owning package so the kernel can attribute the
+            # components an extension registers at startup to it, keeping
+            # /package disable effective for extension-created components
+            # (review finding P2-2).
+            definition.setdefault("_package_name", pkg_name)
+            registry.register_extension_definition(extension_def["name"], definition)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load extension definition '%s': %s",
+                         extension_def.get("name"), exc)
+
     for adapter_def in manifest.get("provides", {}).get("runtime_adapters", []):
         try:
-            adapter_class = _import_class(adapter_def["entrypoint"])
-            registry.register_adapter(adapter_def["name"], adapter_class)
+            adapter_class = _import_declared(adapter_def, package_dir)
+            registry.register_adapter(adapter_def["name"], adapter_class, package_name=pkg_name)
+            for alias in adapter_def.get("aliases", []) or []:
+                registry.register_adapter(alias, adapter_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load adapter '%s': %s", adapter_def.get("name"), exc)
 
@@ -234,36 +384,83 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
         # token/model/base_url. This is the seam that lets a package ship a
         # new LLM provider without touching core (core ships only openwebui).
         try:
-            provider_class = _import_class(provider_def["entrypoint"])
-            registry.register_provider(provider_def["name"], provider_class)
+            provider_class = _import_declared(provider_def, package_dir)
+            registry.register_provider(provider_def["name"], provider_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load provider '%s': %s", provider_def.get("name"), exc)
 
     for evaluator_def in manifest.get("provides", {}).get("evaluators", []):
         try:
-            if isinstance(evaluator_def, dict) and "entrypoint" in evaluator_def:
-                evaluator = _import_class(evaluator_def["entrypoint"])
+            if isinstance(evaluator_def, dict) and (
+                "entrypoint" in evaluator_def or "path" in evaluator_def
+            ):
+                evaluator = _import_declared(evaluator_def, package_dir)
                 registry.register_evaluator(evaluator_def["name"], evaluator)
+                registry.record_source("evaluator", evaluator_def["name"], pkg_name)
             else:
                 registry.register_evaluator(_resource_name(evaluator_def), evaluator_def)
+                registry.record_source("evaluator", _resource_name(evaluator_def), pkg_name)
         except Exception as exc:
             logger.error("Failed to load evaluator '%s': %s", evaluator_def, exc)
 
     for prompt_def in manifest.get("provides", {}).get("prompts", []):
         resource = _load_resource(package_dir, prompt_def, "prompt", "prompts", (".md", ".txt"))
         registry.register_prompt(resource.name, resource)
+        registry.record_source("prompt", resource.name, pkg_name)
 
     for template_def in manifest.get("provides", {}).get("templates", []):
         resource = _load_resource(package_dir, template_def, "template", "templates")
         registry.register_template(resource.name, resource)
+        registry.record_source("template", resource.name, pkg_name)
 
     for constraint_def in manifest.get("provides", {}).get("constraints", []):
         resource = _load_resource(package_dir, constraint_def, "constraint", "constraints")
         registry.register_constraint(resource.name, resource)
+        registry.record_source("constraint", resource.name, pkg_name)
 
     for vocabulary_def in manifest.get("provides", {}).get("vocabularies", []):
         resource = _load_resource(package_dir, vocabulary_def, "vocabulary", "vocabularies")
         registry.register_vocabulary(resource.name, resource)
+        registry.record_source("vocabulary", resource.name, pkg_name)
+
+    for detector_def in manifest.get("provides", {}).get("detectors", []):
+        try:
+            detector = _import_declared(detector_def, package_dir)
+            registry.register_detector(detector_def["name"], detector)
+            registry.record_source("detector", detector_def["name"], pkg_name)
+        except Exception as exc:
+            logger.error("Failed to load detector '%s': %s", detector_def.get("name"), exc)
+
+    for audit_def in manifest.get("provides", {}).get("audit_actions", []):
+        # An audit action is a class bound to a lifecycle phase (item 7). The
+        # manifest may override the class's declared ``phase``/``priority``/
+        # ``blocking`` so a package can re-bind a shared action without code.
+        try:
+            action_class = _import_declared(audit_def, package_dir)
+            action = action_class()
+            for attr in ("name", "phase", "priority", "blocking"):
+                if attr in audit_def and audit_def[attr] is not None:
+                    setattr(action, attr, audit_def[attr])
+            registry.register_audit_action(action, package_name=pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load audit action '%s': %s", audit_def.get("name"), exc)
+
+    for section_def in manifest.get("provides", {}).get("report_sections", []):
+        # A report-section contributor (item 7) adds a named section to the
+        # final report without core hard-coding the package.
+        try:
+            section_class = _import_declared(section_def, package_dir)
+            contributor = section_class()
+            for attr in ("name", "section_name"):
+                if attr in section_def and section_def[attr] is not None:
+                    setattr(contributor, attr, section_def[attr])
+            registry.register_report_section(
+                getattr(contributor, "name", section_def.get("name", "section")),
+                contributor,
+                package_name=pkg_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load report section '%s': %s", section_def.get("name"), exc)
 
 
 def load_packages(package_paths: list[str], registry: ComponentRegistry) -> None:

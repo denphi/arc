@@ -164,11 +164,11 @@ COMMANDS: list[dict[str, Any]] = [
         "aliases": ["strategies"],
     },
     {
-        "name": "recipe",
-        "usage": "/recipe [list|show <n>|apply <n>|save <n>|delete <n>|clear]",
+        "name": "preset",
+        "usage": "/preset [list|show <n>|apply <n>|save <n>|delete <n>|clear]",
         "group": "Configuration",
-        "summary": "List, inspect, apply, save, or delete recipes.",
-        "aliases": ["recipes"],
+        "summary": "List, inspect, apply, save, or delete strategy presets (formerly /recipe).",
+        "aliases": ["recipe", "recipes", "presets"],
     },
     {
         "name": "clusters",
@@ -195,7 +195,10 @@ COMMANDS: list[dict[str, Any]] = [
         "name": "package",
         "usage": "/package enable|disable <name>",
         "group": "Configuration",
-        "summary": "Record a session package preference.",
+        "summary": (
+            "Enable/disable a loaded package for this session. Disabling "
+            "removes its strategies from role resolution."
+        ),
         "aliases": [],
     },
     {
@@ -1109,6 +1112,15 @@ def _hydrate_workflow_state(workflow: ResearchWorkflow) -> None:
         except Exception:
             pass
 
+    # The provider + runtime adapter are built in __init__, before this
+    # hydration loads the session's disabled-package set. Re-resolve them now
+    # so a provider/adapter from a disabled package isn't kept live for this
+    # request's workflow (review finding P2).
+    if memory.get("packages", {}).get("disabled"):
+        refresh = getattr(workflow, "refresh_disabled_packages", None)
+        if callable(refresh):
+            refresh()
+
 
 def _save_session_fields(session_id: str, **updates: Any) -> None:
     meta = load_session_meta(session_id) or {}
@@ -1328,6 +1340,19 @@ async def _run_research_job(job, session_id: str, body: "MessageRequest") -> dic
         base_url=safe_base_url, session_id=session_id, workflow_name=body.workflow_name,
     )
     _hydrate_workflow_state(workflow)
+    # Bridge package audit results into this job's SSE stream so the browser
+    # shows audit events alongside phase events (item 7). Independent of
+    # arc.chat — the dispatcher just calls this callback per persisted result.
+    audit_dispatcher = getattr(workflow, "audit", None)
+    if audit_dispatcher is not None:
+        def _emit_audit(record: dict[str, Any]) -> None:
+            kind = {"fail": "warning"}.get(record.get("status"), "audit")
+            job.events.emit(
+                kind,
+                f"audit[{record.get('phase')}] {record.get('name')}: {record.get('summary', '')}",
+                audit=record,
+            )
+        audit_dispatcher.set_event_sink(_emit_audit)
     goal = ResearchGoal(goal=body.content, domain=body.domain, target=body.target)
     total = max(1, body.iterations)
     results: list[dict[str, Any]] = []
@@ -1520,7 +1545,7 @@ async def _execute_command(
     if command == "strategy":
         assert session_id is not None
         return _handle_strategy_command(session_id, argv)
-    if command == "recipe":
+    if command == "preset":
         assert session_id is not None
         return _handle_recipe_command(session_id, argv)
     if command == "clusters":
@@ -1930,20 +1955,21 @@ def _handle_package_toggle_command(session_id: str, argv: list[str]) -> tuple[st
 
 
 def _handle_coder_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
-    aliases = {
-        "builder": "default",
-        "builtin": "default",
-        "built-in": "default",
-        "sim2l": "default",
-        "codex": "codex",
-        "arc-codex": "codex",
-        "claude": "claude_code",
-        "claude-code": "claude_code",
-        "claude_code": "claude_code",
-    }
     if not argv:
         return _handle_strategy_command(session_id, ["builder"])
-    impl = aliases.get(argv[0].lower(), argv[0].lower())
+    try:
+        from arc.core.strategies import list_strategies
+        aliases = {"builder": "default", "builtin": "default", "built-in": "default", "sim2l": "default"}
+        for spec in list_strategies("builder"):
+            aliases[spec.name.lower()] = spec.name
+            label = getattr(spec, "backend_label", None)
+            if label:
+                aliases[label.lower()] = spec.name
+            for alias in getattr(spec, "aliases", ()) or ():
+                aliases[str(alias).lower()] = spec.name
+        impl = aliases.get(argv[0].lower(), argv[0].lower())
+    except Exception:  # noqa: BLE001
+        impl = argv[0].lower()
     return _handle_strategy_command(session_id, ["builder", impl])
 
 

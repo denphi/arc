@@ -317,7 +317,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         # Skip fast + quietly when the catalog service isn't up — avoids a
         # multi-second connection-refused stall (and ERROR log spam) on every
         # run in the common no-services-running case. Publishing is advisory.
-        if not self._services_reachable():
+        if type(self._catalog_client()).__module__ == "sim2l.database.catalog_client" and not self._services_reachable():
             logger.debug("Catalog unreachable — skipping push for %s/%s", sim_name, sim_version)
             return False
         try:

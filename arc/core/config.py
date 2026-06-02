@@ -94,3 +94,47 @@ def resolve_package_paths(
         str((base / path).resolve()) if not Path(path).is_absolute() else path
         for path in package_paths
     ]
+
+
+def package_name_for_path(package_dir: Path) -> str:
+    """Read a package directory's declared ``name`` from its ``package.yaml``.
+
+    Falls back to the directory name when the manifest is missing or
+    unreadable. Shared by ``Kernel`` and ``ResearchWorkflow`` so both agree
+    on what a path's package name is.
+    """
+    manifest = package_dir / "package.yaml"
+    if not manifest.exists():
+        return package_dir.name
+    try:
+        import yaml
+        data = yaml.safe_load(manifest.read_text()) or {}
+        return data.get("name") or package_dir.name
+    except Exception:  # noqa: BLE001 — name resolution must never raise
+        return package_dir.name
+
+
+def filter_package_paths(
+    package_paths: list[str], package_config: dict[str, Any]
+) -> list[str]:
+    """Apply ``[packages].enabled`` / ``[packages].disabled`` to resolved paths.
+
+    ``enabled`` (when non-empty) is an allow-list — only those package names
+    survive. ``disabled`` is always a deny-list. This is the single source of
+    truth for package filtering so the ``Kernel`` startup path and the
+    ``ResearchWorkflow`` orchestrator path (CLI/UI/tests) load an identical
+    package set for the same ``arc.toml`` (design/todo.md item 3).
+    """
+    enabled = set(package_config.get("enabled", []) or [])
+    disabled = set(package_config.get("disabled", []) or [])
+    if not enabled and not disabled:
+        return list(package_paths)
+    filtered = []
+    for path_str in package_paths:
+        name = package_name_for_path(Path(path_str))
+        if enabled and name not in enabled:
+            continue
+        if name in disabled:
+            continue
+        filtered.append(path_str)
+    return filtered

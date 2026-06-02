@@ -7,6 +7,16 @@ description: >
   strategies. Artifact-agnostic and domain-agnostic.
 
 provides:
+  strategies:
+    - role: planner
+      name: mars_planner
+      entrypoint: arc.packages.arc-mars.agents.mars_planner:MARSPlannerAgent
+      description: Cost-aware MARS-style planner.
+    - role: reviewer
+      name: reflective
+      entrypoint: arc.packages.arc-mars.agents.reflective_reviewer:ReflectiveReviewerAgent
+      description: Reviewer that references prior reflections.
+
   agents:
     - name: mars_planner
       entrypoint: arc.packages.arc-mars.agents.mars_planner:MARSPlannerAgent

@@ -476,14 +476,16 @@ def clear_recipe(memory: dict[str, Any]) -> dict[str, str]:
 
 
 def validate_recipe(recipe: Recipe) -> list[str]:
-    """Return human-readable errors for a recipe.
+    """Return human-readable errors for a preset (recipe).
 
     Checks each ``(role, impl)`` against the strategy catalogue and
-    returns a list of error strings (empty list = valid). Used by the
-    ``/recipe apply`` command to fail fast with a useful message
-    instead of silently misrouting at resolve time.
+    returns a list of error strings (empty list = valid). Used by
+    ``/preset apply`` to fail fast with a useful message instead of
+    silently misrouting at resolve time. A composite selector (a stack
+    such as ``default embeddings materials_project``) is validated
+    component-by-component.
     """
-    from arc.core.strategies import known_roles, list_strategies
+    from arc.core.strategies import known_roles, list_strategies, parse_strategy_names
 
     errors: list[str] = []
     for role, impl in recipe.strategies.items():
@@ -491,9 +493,10 @@ def validate_recipe(recipe: Recipe) -> list[str]:
             errors.append(f"unknown role: {role!r}")
             continue
         available = {s.name for s in list_strategies(role)}
-        if impl not in available:
-            errors.append(
-                f"unknown strategy {impl!r} for {role}; available: "
-                f"{', '.join(sorted(available))}"
-            )
+        for component in parse_strategy_names(impl) or [impl]:
+            if component not in available:
+                errors.append(
+                    f"unknown strategy {component!r} for {role}; available: "
+                    f"{', '.join(sorted(available))}"
+                )
     return errors

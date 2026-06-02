@@ -341,6 +341,43 @@ def clear_active_recipe_endpoint(session_id: str) -> dict[str, Any]:
     return {"cleared": cleared}
 
 
+# ── /presets (primary; /recipes kept as a compatibility alias) ──────────
+#
+# "Preset" is the user-facing name (todo.md item 6). These routes are thin
+# delegations to the recipe handlers above; the on-disk format and the
+# ``/recipes`` endpoints are unchanged so existing callers keep working.
+
+
+@router.get("/presets")
+def list_presets_endpoint(session_id: str) -> dict[str, Any]:
+    return list_recipes_endpoint(session_id)
+
+
+@router.get("/presets/{name}")
+def show_preset_endpoint(name: str, session_id: str) -> dict[str, Any]:
+    return show_recipe_endpoint(name, session_id)
+
+
+@router.post("/presets/{name}/apply")
+def apply_preset_endpoint(name: str, body: RecipeApplyRequest, session_id: str) -> dict[str, Any]:
+    return apply_recipe_endpoint(name, body, session_id)
+
+
+@router.post("/presets")
+def save_preset_endpoint(body: RecipeSaveRequest, session_id: str) -> dict[str, Any]:
+    return save_recipe_endpoint(body, session_id)
+
+
+@router.delete("/presets/{name}")
+def delete_preset_endpoint(name: str, session_id: str) -> dict[str, Any]:
+    return delete_recipe_endpoint(name, session_id)
+
+
+@router.post("/presets/clear")
+def clear_active_preset_endpoint(session_id: str) -> dict[str, Any]:
+    return clear_active_recipe_endpoint(session_id)
+
+
 # ── /clusters ──────────────────────────────────────────────────────────
 
 

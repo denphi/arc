@@ -8,9 +8,14 @@ description: >
   ARC_RUNTIME_ADAPTER=k8s (or kubernetes) or a workflow step `adapter: k8s`.
 
 provides:
+  extensions:
+    - name: k8s-runtime
+      entrypoint: arc.packages.arc-k8s.extension:KubernetesRuntimeExtension
+
   runtime_adapters:
     - name: k8s
       entrypoint: arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter
+      aliases: [kubernetes]
 
 config:
   - name: ARC_K8S_IMAGE

@@ -11,6 +11,10 @@ description: >
   registers it.
 
 provides:
+  extensions:
+    - name: docker-runtime
+      entrypoint: arc.packages.arc-docker.extension:DockerRuntimeExtension
+
   runtime_adapters:
     - name: docker
       entrypoint: arc.packages.arc-docker.adapter:DockerRuntimeAdapter

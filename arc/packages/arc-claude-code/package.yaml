@@ -5,6 +5,15 @@ description: >
   Claude Code-backed coding agents for creating and repairing ARC artifacts.
 
 provides:
+  strategies:
+    - role: builder
+      name: claude_code
+      entrypoint: arc.packages.arc-claude-code.agents.coder:ClaudeCodeCoderAgent
+      description: Claude Code CLI-backed artifact builder.
+      aliases: [claude, claude-code, claude_code, arc-claude-code]
+      backend_label: arc-claude-code:coder
+      callback_profile: claude_code
+
   agents:
     - name: coder
       entrypoint: arc.packages.arc-claude-code.agents.coder:ClaudeCodeCoderAgent

@@ -1,26 +1,22 @@
+# ── ARC fallback config (NOT the source of truth) ───────────────────────
+#
+# The authoritative config is the repo-level `arc/arc.toml`. ``load_arc_toml``
+# (see arc/arc/core/config.py) resolves the repo-level file first and only
+# falls back to THIS file when that one is missing.
+#
+# To avoid two diverging package/extension lists (design/todo.md item 11),
+# this fallback intentionally declares NO package paths and NO extension
+# blocks — edit the repo-level `arc/arc.toml` for those. This file only
+# carries enough metadata to let the kernel start in a degraded, package-less
+# mode if the real config has been moved or deleted.
+
 [arc]
 name = "ARC-Sim2L"
 version = "0.1.0"
 
-[packages]
-paths = [
-  "packages/arc-sim2l",
-  "packages/arc-mars",
-  "packages/arc-materials",
-  "packages/arc-codex",
-  "packages/arc-claude-code",
-  "packages/arc-providers",
-]
-
 [runtime]
 adapter = "local"
 workspace = "workspace"
-
-[provider]
-# Token/model can also be passed per-request.
-name = "openwebui"
-base_url = "https://genai.rcac.purdue.edu/api"
-model = ""
 
 [memory]
 artifact_registry = "workspace/artifacts"
@@ -31,22 +27,3 @@ provenance_log = "workspace/memory/provenance.jsonl"
 host = "0.0.0.0"
 port = 8000
 reload = false
-
-[extensions]
-
-[extensions.vector-memory]
-enabled = false
-backend = "chroma"
-persist_path = "workspace/memory/vectors"
-
-[extensions.docker-runtime]
-enabled = false
-image = "sim2l/runner:latest"
-
-[extensions.slurm-runtime]
-enabled = false
-partition = "general"
-
-[extensions.web-ui]
-enabled = false
-port = 8501

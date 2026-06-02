@@ -165,6 +165,8 @@ class CompositeSearcherAgent(_BaseSearcher):
         prior_results: list[dict[str, Any]] = []
         seen_hits: set[str] = set()
         seen_results: set[str] = set()
+        registry = self.context.memory.get("component_registry")
+        loaded_packages = set(registry.list_packages()) if registry is not None else None
 
         for strategy_name in self.strategy_names:
             try:
@@ -172,6 +174,7 @@ class CompositeSearcherAgent(_BaseSearcher):
                     "searcher",
                     overrides={"searcher": strategy_name},
                     config={},
+                    loaded_packages=loaded_packages,
                 )
                 result = await SearcherCls(context=self.context).search(goal)
             except Exception as exc:  # noqa: BLE001 — one source must not kill the stack

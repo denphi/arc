@@ -8,6 +8,10 @@ description: >
   via ARC_RUNTIME_ADAPTER=slurm or a workflow step `adapter: slurm`.
 
 provides:
+  extensions:
+    - name: slurm-runtime
+      entrypoint: arc.packages.arc-slurm.extension:SlurmRuntimeExtension
+
   runtime_adapters:
     - name: slurm
       entrypoint: arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter

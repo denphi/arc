@@ -7,6 +7,16 @@ description: >
   and vocabularies. Does not define research strategy or artifact creation.
 
 provides:
+  strategies:
+    - role: searcher
+      name: materials_project
+      entrypoint: arc.packages.arc-materials.agents.mp_searcher:MaterialsProjectSearcherAgent
+      description: Search Materials Project for real reference materials.
+    - role: validator
+      name: materials_evaluators
+      entrypoint: arc.packages.arc-materials.agents.materials_validator:MaterialsValidatorAgent
+      description: Validate outputs with materials evaluators.
+
   prompts:
     - materials_hypothesis_generation
     - materials_experiment_review
@@ -37,6 +47,11 @@ provides:
     - simulation_methods
     - units
     - common_descriptors
+
+  detectors:
+    - name: materials_elements
+      entrypoint: arc.packages.arc-materials.agents.mp_searcher:detect_elements
+      description: Detect chemical element symbols in a goal.
 
 config:
   - name: MP_API_KEY

@@ -1,0 +1,45 @@
+name: arc-coscientist
+version: 0.1.0
+type: research-package
+description: >
+  ARC adapter for the cloned Co-Scientist repository. Provides a
+  Co-Scientist-inspired ideator strategy, a lazy supervisor wrapper for full
+  tournament runs, and a report section for hypothesis-pool summaries.
+
+config:
+  - name: CO_SCIENTIST_REPO
+    default: ./Co-Scientist
+    description: Path to the unmodified cloned Co-Scientist repository.
+  - name: CO_SCIENTIST_DATA_DIR
+    default: workspace/co-scientist
+    description: ARC-owned data directory for Co-Scientist sessions.
+
+provides:
+  strategies:
+    - role: ideator
+      name: coscientist
+      entrypoint: arc.packages.arc-coscientist.agents.ideator:CoScientistIdeatorAgent
+      description: >
+        Co-Scientist-style hypothesis-pool ideator. Generates multiple
+        tournament-ready hypotheses and records the ranked pool for reports.
+
+  agents:
+    - name: ideator
+      entrypoint: arc.packages.arc-coscientist.agents.ideator:CoScientistIdeatorAgent
+    - name: coscientist_supervisor
+      entrypoint: arc.packages.arc-coscientist.agents.supervisor:CoScientistSupervisorAgent
+
+  skills:
+    - skills/run-coscientist.md
+
+  workflows:
+    - name: coscientist-hypothesis-loop
+      path: workflows/coscientist-hypothesis-loop.yaml
+
+  report_sections:
+    - name: coscientist_hypotheses
+      section_name: coscientist_hypotheses
+      entrypoint: arc.packages.arc-coscientist.report.sections:CoScientistHypothesisSection
+
+requires:
+  artifact_type: hypothesis

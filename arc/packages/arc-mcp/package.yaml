@@ -8,9 +8,10 @@ description: >
   implements it. Enabled via the `[extensions.mcp]` block in arc.toml
   (entrypoint: arc.packages.arc-mcp.extension:McpExtension).
 
-# The extension itself is wired through arc.toml's [extensions.mcp] block,
-# not provides.agents — extensions are loaded by the kernel's extension
-# loader, which reads the entrypoint from that block.
+provides:
+  extensions:
+    - name: mcp
+      entrypoint: arc.packages.arc-mcp.extension:McpExtension
 
 config:
   - name: ARC_MCP_SERVER_URL

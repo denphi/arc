@@ -35,6 +35,13 @@ async def run(state: ChatState, argv: list[str]) -> None:
         return
 
     header(f"Sweep  {c(artifact.name, CYAN)}")
+    # Provenance: which planner designed this sweep (design/todo.md item 8).
+    prov = workflow._context.memory.get("planner_provenance") or {}
+    planner_key = prov.get("planner", "unknown")
+    design = ", ".join(prov.get("experimental_design", [])) or "unspecified"
+    step("Sweep source",
+         f"planner={c(planner_key, CYAN)}, design={c(design, DIM)}, "
+         f"artifact={c(artifact.name, CYAN)}")
     all_results = []
     for param, values in sweep.items():
         for v in values:

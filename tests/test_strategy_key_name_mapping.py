@@ -28,6 +28,7 @@ EXPECTED: dict[str, dict[str, str]] = {
     "ideator": {
         "default": "ideator",
         "constraint_aware": "constraint_aware_ideator",
+        "coscientist": "ideator",
     },
     "searcher": {
         "default": "searcher",
