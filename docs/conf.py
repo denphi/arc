@@ -1,9 +1,8 @@
 """Sphinx configuration for the ARC documentation.
 
-Markdown is handled by MyST so the existing ``design/*.md`` material and the
-new core docs can be authored in Markdown. The Python API reference is
-generated from docstrings via autodoc + autosummary, with optional 3rd-party
-dependencies mocked so the docs build on ReadTheDocs without them.
+Markdown is handled by MyST. The Python API reference is generated from
+docstrings via autodoc + autosummary, with optional 3rd-party dependencies
+mocked so the docs build on ReadTheDocs without them.
 """
 
 from __future__ import annotations
@@ -126,8 +125,7 @@ html_theme_options = {
 # on missing cross-refs. Tighten via nitpicky once the tree is complete
 # (doc_todo.md B1).
 nitpicky = False
-# The included design/*.md docs now cross-reference each other with proper
-# ``{doc}`` targets (B5 migration), so the missing-xref suppression is no
+# The docs use proper ``{doc}`` targets, so the missing-xref suppression is no
 # longer needed. We keep only:
 #   * myst.header — non-consecutive heading levels in the long included docs;
 #   * misc.highlighting_failure — included code blocks that declare a language

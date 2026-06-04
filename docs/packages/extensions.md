@@ -10,9 +10,24 @@ the kernel when enabled. The kernel hands it a **package-scoped registry**, so
 components it registers keep the extension's package as their source (and are
 filtered by `/package disable`).
 
-The canonical extensions reference — the implementation-status table, provider
-configuration, each bundled extension, authoring a new extension, and the
-audit-action manifest — follows.
+## Bundled extensions
 
-```{include} ../../design/extensions.md
-```
+ARC ships extension packages for common integration patterns:
+
+- `arc-mcp` exposes MCP tools as ARC skills.
+- `arc-openapi` exposes OpenAPI operations as skills.
+- `arc-vector-memory` provides persistent semantic memory.
+- `arc-knowledge-graph` records structured experiment relationships.
+- Runtime packages such as `arc-docker`, `arc-slurm`, and `arc-k8s` register
+  additional runtime adapters.
+
+## Authoring an extension
+
+Implement `ExtensionContract`, declare it in `package.yaml`, and keep startup
+behavior explicit. Extensions should register components through the
+package-scoped registry they receive during initialization; this lets ARC
+attribute components to the package and filter them when a package is disabled.
+
+Use package config for credentials and service URLs. Extension startup should
+fail clearly when required config is missing, and optional integrations should
+degrade gracefully where possible.

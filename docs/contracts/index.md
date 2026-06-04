@@ -49,10 +49,19 @@ uses, and the bundled default + alternative strategies for each. The
 docstrings.
 ```
 
-The canonical contract reference (with per-contract method signatures,
-artifact states, and examples) follows.
+## Contract guidelines
 
----
+Contracts should stay narrow and stable. Components receive an
+`AgentContext`, read only the memory/config they need, and return plain
+serializable data or registered artifacts. Package code may depend on ARC
+contracts, but ARC core should only depend on those contracts and registries.
 
-```{include} ../../design/contracts.md
-```
+Use this rule of thumb when adding extension points:
+
+- add a contract when ARC needs to call a new kind of component;
+- add a registry slot when packages need to contribute that component;
+- add manifest validation so package authors get early errors;
+- record package provenance so enable/disable and audit behavior remain
+  predictable.
+
+The API reference renders the concrete method signatures for each contract.

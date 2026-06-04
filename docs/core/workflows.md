@@ -7,9 +7,16 @@ A workflow is a YAML document a package registers via `provides.workflows`.
 The bundled `research-loop` (in `arc-sim2l`) is the default; `arc-mars` ships
 an iterative-improvement variant.
 
-The canonical workflow reference — the step format, the reference syntax
-(`step.output.x`, `memory.*`, `config.*`), condition expressions, approval
-checkpoints, and execution modes — follows.
+## Step format
+
+A workflow contains named steps. Each step selects a skill/agent/runtime action
+and maps inputs from workflow inputs, previous step outputs, memory, or config.
+References use dotted paths such as `inputs.paper`, `plan.parameters`,
+`memory.current_artifact`, and `config.threshold`.
+
+Steps may declare conditions so optional branches can be skipped, and approval
+checkpoints so interactive runs can pause before expensive or sensitive work.
+The orchestrator records every step result in the session context.
 
 Workflow-level `inputs:` can also declare `type: file` entries. ARC binds
 `file_*` IDs or local paths, auto-selects a single matching session asset by
@@ -18,5 +25,10 @@ role/media type, and can run required loaders before steps execute. See
 
 ---
 
-```{include} ../../design/workflows.md
-```
+## Execution model
+
+The default research loop is still just a workflow: ideate, search, plan,
+build, validate, execute, review, reflect, optimize, and curate. Packages can
+register alternative workflows for richer loops or domain-specific pipelines.
+Workflow definitions should keep values serializable and should pass file
+inputs by `FileAsset` ID rather than raw paths.

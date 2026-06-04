@@ -24,12 +24,22 @@ together by the kernel and the strategy resolver.
 The research lifecycle — each step is a role backed by a strategy.
 ```
 
-The canonical, detailed architecture document follows. It covers the layered
-diagram, component roles, the loop-step → implementation mapping, agent
-communication, memory layers, execution modes, security boundaries, and the
-key design decisions.
+## Public summary
 
----
+ARC is organized as a layered runtime:
 
-```{include} ../../design/architecture.md
-```
+- **Core** owns stable contracts, schemas, package loading, strategy
+  resolution, workflow execution, session state, memory, providers, and
+  runtime adapters.
+- **Packages** contribute implementations: role strategies, agents, skills,
+  loaders, providers, extensions, runtime adapters, workflows, audit actions,
+  and report sections.
+- **The orchestrator** runs a workflow by resolving each role from the active
+  package set, executing steps, recording provenance, and persisting session
+  state.
+- **Runtime adapters** execute artifacts locally or remotely, while backend
+  actions publish or persist results to systems such as Sim2L or GitHub.
+
+The key boundary is intentional: core depends on contracts, not concrete
+research behavior. That keeps package authors free to add domain-specific
+methods without changing ARC itself.

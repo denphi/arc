@@ -36,11 +36,22 @@ extensions, and more — discovered and wired in by the loader and resolver.
 - {doc}`audit-and-report` — lifecycle audit actions + report sections.
 - {doc}`catalogue/index` — the bundled packages.
 
-The canonical, in-depth package guide (the minimal `AgentContract`, the nine
-roles, per-role contracts with copy-runnable examples, the manifest format,
-domain assets, testing, and a PR checklist) follows.
+## Package authoring summary
 
----
+A package is intentionally ordinary: a directory with a `package.yaml`, Python
+modules, optional Markdown skills/prompts, optional workflows, and tests. The
+manifest declares what the package provides; ARC loads those entries into a
+package-scoped registry so provenance and enable/disable behavior remain
+consistent.
 
-```{include} ../../design/packages.md
-```
+Typical package work:
+
+- implement the relevant contract or callable class;
+- declare it under `provides.*` in `package.yaml`;
+- add package config keys when environment or service credentials are needed;
+- validate with `arc package validate <path>`;
+- add focused tests for registration, disabled-package behavior, and runtime
+  execution.
+
+Domain packages should keep domain data and examples inside the package, while
+core stays generic.

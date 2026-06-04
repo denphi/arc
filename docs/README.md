@@ -24,8 +24,8 @@ import `arc.*` for the API reference.
 | Landing + nav | `docs/index.md` |
 | Hand-written prose | `docs/<section>/*.md` (intro, architecture, core, interfaces, reference, guides, packages) |
 | Auto API reference | `docs/reference/api/index.md` (renders `arc.*` docstrings) |
-| Long-form design topics | `design/*.md` — **authoring source**, included into the docs via `{include}` (architecture, contracts, workflows, strategies, packages, local-packages, extensions, coding-agents). Edit those in `design/`. |
-| Diagrams | `docs/_static/*.png` (copied from `design/`) |
+| Public summaries | Keep them in `docs/<section>/*.md`. |
+| Diagrams | `docs/_static/*.png` |
 
 ## Conventions
 

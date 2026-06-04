@@ -29,10 +29,20 @@ provides, required config, and how to enable it.*
   `enabled = true`.
 - **Runtime adapters** are selected via `ARC_RUNTIME_ADAPTER`.
 
-The coding packages (`arc-codex`, `arc-claude-code`) are documented in depth in
-the design note included below.
+## Coding packages
 
----
+`arc-codex` and `arc-claude-code` are coding backends. They implement builder
+strategies that call external coding-agent CLIs, then return ARC artifacts and
+provenance like any other builder.
 
-```{include} ../../../design/coding-agents.md
-```
+Both packages follow the same shape:
+
+- package config declares command, model/profile, working directory, extra
+  arguments, timeout, and approval behavior;
+- the builder runs in a controlled workspace and writes files through ARC's
+  artifact flow;
+- non-interactive runs require explicit approval configuration;
+- package disable prevents the coding backend from being selected.
+
+Use these packages when artifact generation should happen through a dedicated
+coding agent rather than ARC's built-in stub or LLM strategy.

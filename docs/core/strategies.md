@@ -44,10 +44,26 @@ dedupes hits, planner merges sweeps/constraints, reviewer forms consensus,
 optimizer shares a budget, …). See {doc}`../packages/roles` for the per-role
 rules. Components from a disabled package are dropped from the stack.
 
-The canonical strategy reference (slash command, HTTP, `arc.toml`, env var,
-recipes, and the planner/sweep/optimize relationship) follows.
+## User-facing controls
 
----
+Strategies can be selected at several levels:
 
-```{include} ../../design/strategies.md
-```
+- **One session:** use chat commands such as `/strategy planner doe_lhs` or the
+  HTTP strategy endpoints.
+- **One run:** pass workflow inputs or constraints that a strategy consumes.
+- **One project:** set `[strategies]` in `arc.toml`.
+- **One environment:** set `ARC_STRATEGY_<ROLE>` for CI or deployment defaults.
+
+Recipes and presets bundle these choices so a session can switch between
+research modes without manually setting every role.
+
+## Planner, sweep, and optimize
+
+ARC treats these as related but distinct concerns:
+
+- the **planner** proposes what should be tried;
+- **sweep** style strategies enumerate a structured parameter grid or design;
+- the **optimizer** uses previous results to propose better candidates.
+
+Composite stacks let a role combine several contributors while keeping a
+deterministic merge rule for that role.
