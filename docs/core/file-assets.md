@@ -1,8 +1,11 @@
-# File assets and loaders
+# File assets and file loaders
 
 ARC manages local files as session-scoped `FileAsset` records. A file asset is
 a stable ID plus metadata and a managed storage path; workflows and skills pass
 the ID, not an arbitrary user path.
+
+File loaders turn those managed files into derived assets such as extracted
+PDF text, image metadata, table previews, or package-specific domain formats.
 
 ## Session inputs
 

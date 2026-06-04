@@ -1,4 +1,4 @@
-# Audit & report hooks
+# Audit actions, auditors, and report hooks
 
 *Declare package observers across the research lifecycle, and contribute
 sections to the final report — without patching core.*
@@ -6,6 +6,9 @@ sections to the final report — without patching core.*
 See {doc}`../core/audit` for the runtime mechanism (the dispatcher, the
 phases, blocking, the event sinks, report assembly). This page is the
 *authoring* side.
+
+An auditor is just an `AuditActionContract` contributed by a package and bound
+to one lifecycle phase.
 
 ## Declare an audit action
 

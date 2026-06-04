@@ -1,4 +1,4 @@
-# Audit & reports
+# Audit actions, auditors, and reports
 
 *Package-provided observers across the research lifecycle, and the assembled
 research report.*
@@ -6,6 +6,10 @@ research report.*
 The audit subsystem (`arc/runtime/audit.py`, `arc/contracts/audit.py`) lets a
 package observe — and optionally block — the loop at defined phases without
 patching core.
+
+In ARC, an **auditor** is a package-provided `AuditActionContract` registered
+for a lifecycle phase. Auditors can record observations, emit UI/chat events,
+or block a run when a check fails.
 
 ## Lifecycle phases (`AUDIT_PHASES`)
 

@@ -12,11 +12,25 @@ Each step is a pluggable **role**; without an LLM provider configured, every
 role falls back to deterministic **stub** logic, so the whole loop runs
 offline and is fully testable.
 
+The loop is data-aware and observable. During **Ideate**, ARC can draw on
+session {doc}`file assets and file loaders <core/file-assets>` so papers,
+datasets, images, and other local inputs become explicit research context
+instead of loose paths. Across the full research lifecycle, ARC dispatches
+{doc}`audit actions/auditors <core/audit>` so packages can observe, report on,
+or block phases without patching the core architecture. See the
+{doc}`architecture overview <architecture/overview>` for how those pieces fit
+into the loop.
+
 This site is **core-first**: most of it documents ARC's core framework — the
 kernel, registry, loader, contracts, the strategy resolver, schemas, runtime
 adapters and backends, memory, the orchestrator, providers, sessions, and the
 CLI/API/UI/chat surfaces. The {doc}`packages/index` section documents how to
 extend ARC with packages and catalogues the bundled ones.
+
+Common extension topics:
+{doc}`file assets and file loaders <core/file-assets>`,
+{doc}`audit actions/auditors and reports <core/audit>`, and
+{doc}`package audit/report hook authoring <packages/audit-and-report>`.
 
 ```{toctree}
 :maxdepth: 2
@@ -58,11 +72,11 @@ core/recipes-presets
 core/runtime-adapters
 core/executor-and-safety
 core/backends
-core/audit
+Audit actions, auditors, and reports <core/audit>
 core/memory
 core/orchestrator
 core/workflows
-core/file-assets
+File assets and file loaders <core/file-assets>
 core/providers
 core/sessions
 ```
@@ -107,7 +121,7 @@ packages/enable-disable
 packages/authoring-strategy
 packages/local-packages
 packages/extensions
-packages/audit-and-report
+Audit/report hook authoring <packages/audit-and-report>
 packages/catalogue/index
 ```
 
