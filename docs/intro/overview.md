@@ -3,10 +3,16 @@
 *What ARC is, the research loop it runs, and how it relates to Sim2L and MARS.*
 
 ARC (**A**utonomous **R**esearch **C**oder) is a multi-agent framework for
-autonomous scientific research. It orchestrates an iterative loop that turns a
-free-text research goal into runnable [Sim2L](https://sim2l.readthedocs.io/)
-artifacts, executes them, reviews the results, and iterates — inspired by the
-MARS (Multi-Agent Research System) architecture.
+autonomous scientific research, focused on artifact and code generation. It
+orchestrates an iterative loop that turns a free-text research goal into
+runnable [Sim2L](https://sim2l.readthedocs.io/) artifacts, validation checks,
+execution plans, and reviewable results — inspired by the MARS (Multi-Agent
+Research System) ideation loop.
+
+ARC keeps that loop modular in the spirit of pi.dev: packages let a research
+project plug and play the ideal configuration of strategies, agents, file
+loaders, auditors, runtimes, providers, workflows, and domain knowledge
+without patching core.
 
 ## The research loop
 

@@ -2,7 +2,15 @@
 
 **Autonomous Research Coder for Sim2L artifacts.**
 
-ARC is a multi-agent framework for autonomous scientific research. It orchestrates iterative research workflows built around [Sim2L](https://sim2l.readthedocs.io/) artifacts, inspired by the MARS (Multi-Agent Research System) architecture.
+ARC is a multi-agent framework for autonomous scientific research, focused on
+artifact and code generation: turning research intent into runnable artifacts,
+validation checks, execution plans, and reviewable results. It is inspired by
+the MARS (Multi-Agent Research System) ideation loop, then extends that loop
+with pi.dev-style modularity: packages let you plug and play the ideal mix of
+strategies, agents, file loaders, auditors, runtimes, providers, and domain
+knowledge for each research project. The default stack is built around
+[Sim2L](https://sim2l.readthedocs.io/) artifacts, but the framework is
+designed so research configurations can be swapped without patching core.
 
 ```
 Ideate → Plan → Build → Validate → Execute → Review → Improve → (repeat)
@@ -18,6 +26,10 @@ arc-sim2l      artifact creation, validation, registration, execution
 arc-mars       MARS-inspired research strategy and iterative search
 arc-materials  materials science domain knowledge and evaluators
 ```
+
+The design goal is a configurable research loop: use the MARS-style
+Ideate → Plan → Build → Validate → Execute → Review cycle, then compose the
+package set that fits the project instead of hard-coding one ideal agent stack.
 
 See [design/architecture.md](design/architecture.md) for the full layered diagram.
 

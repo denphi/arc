@@ -1,7 +1,13 @@
 # ARC documentation
 
 **ARC** (Autonomous Research Coder) is a multi-agent framework for autonomous
-scientific research. It orchestrates an iterative research loop built around
+scientific research, focused on artifact and code generation: turning research
+intent into runnable artifacts, validation checks, execution plans, and
+reviewable results. It is inspired by the MARS (Multi-Agent Research System)
+ideation loop and pairs that loop with pi.dev-style modularity: packages let
+you plug and play the right strategies, agents, file loaders, auditors,
+runtimes, providers, and domain knowledge for each research project. The
+default stack orchestrates an iterative research loop built around
 [Sim2L](https://sim2l.readthedocs.io/) artifacts:
 
 ```text
