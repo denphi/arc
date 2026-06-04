@@ -63,9 +63,11 @@ class ComponentRegistry:
         self._extensions = _Slot[Any]("extension")
         self._providers = _Slot[Any]("provider")
         self._workflows = _Slot[dict]("workflow")
+        self._scripts = _Slot[dict[str, Any]]("script")
         self._extension_defs = _Slot[dict[str, Any]]("extension_definition")
         self._detectors = _Slot[Any]("detector")
         self._evaluators = _Slot[Any]("evaluator")
+        self._loaders = _Slot[Any]("loader")
         self._prompts = _Slot[Any]("prompt")
         self._templates = _Slot[Any]("template")
         self._constraints = _Slot[Any]("constraint")
@@ -250,6 +252,22 @@ class ComponentRegistry:
     def list_adapters(self) -> list[str]:
         return self._adapters.list_names()
 
+    # --- asset loaders ---
+
+    def register_loader(self, name: str, loader: Any, package_name: str | None = None) -> None:
+        self._loaders.register(name, loader)
+        self.record_source("loader", name, package_name)
+
+    def get_loader(self, name: str, disabled_packages: set[str] | None = None) -> Any:
+        if self.is_disabled("loader", name, disabled_packages):
+            raise KeyError(
+                f"Loader '{name}' belongs to a package disabled for this session"
+            )
+        return self._loaders.get(name)
+
+    def list_loaders(self, disabled_packages: set[str] | None = None) -> list[str]:
+        return self.filter_disabled("loader", self._loaders.list_names(), disabled_packages)
+
     # --- extensions ---
 
     def register_extension(self, name: str, extension: Any) -> None:
@@ -295,6 +313,27 @@ class ComponentRegistry:
 
     def list_workflows(self) -> list[str]:
         return self._workflows.list_names()
+
+    # --- package scripts ---
+
+    def register_script(
+        self,
+        name: str,
+        script: dict[str, Any],
+        package_name: str | None = None,
+    ) -> None:
+        self._scripts.register(name, script)
+        self.record_source("script", name, package_name)
+
+    def get_script(self, name: str, disabled_packages: set[str] | None = None) -> dict[str, Any]:
+        if self.is_disabled("script", name, disabled_packages):
+            raise KeyError(
+                f"Script '{name}' belongs to a package disabled for this session"
+            )
+        return self._scripts.get(name)
+
+    def list_scripts(self, disabled_packages: set[str] | None = None) -> list[str]:
+        return self.filter_disabled("script", self._scripts.list_names(), disabled_packages)
 
     # --- package resources ---
 
@@ -461,8 +500,8 @@ class PackageScopedRegistry:
     # register methods that accept a package_name keyword directly.
     _PACKAGE_AWARE = {
         "register_agent", "register_skill", "register_adapter",
-        "register_provider", "register_workflow", "register_audit_action",
-        "register_report_section",
+        "register_provider", "register_loader", "register_workflow", "register_audit_action",
+        "register_report_section", "register_script",
     }
 
     def __init__(self, registry: ComponentRegistry, package_name: str | None):

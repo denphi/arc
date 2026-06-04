@@ -6,8 +6,10 @@ The provider is optional — without it, agents use deterministic stub logic.
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
+from arc.assets.files import FileAsset
 from arc.contracts.agent import AgentContext
 from arc.core.config import filter_package_paths, load_arc_toml, resolve_package_paths
 from arc.core.loader import load_packages
@@ -226,6 +228,11 @@ class ResearchWorkflow:
         self.artifacts = ArtifactRegistry(root=artifact_root)
         self.results = ResultsStore(root=results_root)
         self.provenance = ProvenanceLog(log_path=provenance_path)
+        from arc.assets.input_scan import scan_inputs_from_env
+        from arc.assets.session import session_file_store
+        self.file_store = session_file_store(self.session_id)
+        self._register_default_loaders()
+        self.input_assets = scan_inputs_from_env(self.file_store, session_id=self.session_id)
         self.provider = _build_provider(
             provider_name=provider_name,
             token=token,
@@ -248,6 +255,9 @@ class ResearchWorkflow:
                 "registry": self.artifacts,
                 "results": self.results,
                 "provenance": self.provenance,
+                "files": self.file_store,
+                "file_store": self.file_store,
+                "input_assets": self.input_assets,
                 "adapter": self.adapter,
                 # The component registry (distinct from the artifact registry
                 # above) so audit actions can reach extensions/strategies.
@@ -264,6 +274,18 @@ class ResearchWorkflow:
         # clean no-op when no package registered any audit action.
         from arc.runtime.audit import AuditDispatcher
         self.audit = AuditDispatcher(self.registry, self._context, self.provenance)
+
+    def _register_default_loaders(self) -> None:
+        """Make core asset loaders available in every workflow session."""
+        try:
+            from arc.assets.loaders import DEFAULT_LOADERS
+            existing = set(self.registry.list_loaders())
+            for loader in DEFAULT_LOADERS:
+                if loader.name not in existing:
+                    self.registry.register_loader(loader.name, loader)
+                    existing.add(loader.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Default asset loader registration failed: %s", exc)
 
     def refresh_disabled_packages(self) -> None:
         """Re-resolve the provider + runtime adapter against the current
@@ -381,6 +403,8 @@ class ResearchWorkflow:
             "memory": self._context.memory,
             "context": self._context.memory,
             "config": workflow_config,
+            "inputs": state.get("inputs", {}),
+            "steps": state.get("steps", {}),
         }
         parts = ref.split(".")
         if len(parts) >= 2 and parts[0] in state["steps"] and parts[1] == "output":
@@ -398,6 +422,278 @@ class ResearchWorkflow:
                 value = self._get_field(value, part)
             return value
         return ref
+
+    def _bind_workflow_inputs(self, workflow: dict, goal: ResearchGoal) -> dict[str, Any]:
+        """Bind workflow-level ``inputs:`` declarations from the research goal.
+
+        Scalar inputs come from goal fields/constraints/target/defaults. File
+        inputs additionally resolve paths or ``file_*`` IDs into FileAssets,
+        auto-bind a single matching session asset, and create required
+        derivatives lazily through the registered loader pipeline.
+        """
+        schema = workflow.get("inputs") or {}
+        goal_data = goal.model_dump() if hasattr(goal, "model_dump") else dict(goal)
+        constraints = goal_data.get("constraints") or {}
+        target = goal_data.get("target") or {}
+
+        # Always expose the goal's first-class fields, constraints, and target
+        # values. Explicit schema entries below can add defaults/required checks.
+        bound: dict[str, Any] = {
+            "goal": goal_data.get("goal"),
+            "domain": goal_data.get("domain"),
+            "mode": goal_data.get("mode"),
+            "constraints": constraints,
+            "target": target,
+            **target,
+            **constraints,
+        }
+
+        if not isinstance(schema, dict):
+            return bound
+
+        missing: list[str] = []
+        for name, spec in schema.items():
+            spec = spec or {}
+            if not isinstance(spec, dict):
+                spec = {"type": spec}
+            raw = self._lookup_declared_input(name, spec, goal_data, constraints, target)
+            if spec.get("type") == "file":
+                if raw is None and "default" in spec:
+                    raw = spec["default"]
+                try:
+                    asset = self._bind_file_input(name, raw, spec)
+                except KeyError:
+                    if spec.get("required"):
+                        missing.append(name)
+                    continue
+                bound[name] = asset.id
+                bound[f"{name}_asset"] = asset.to_dict()
+                derived = self._ensure_required_derivatives(asset, spec)
+                if derived:
+                    bound[f"{name}_derivatives"] = {
+                        role: item.to_dict() for role, item in derived.items()
+                    }
+                    for role, item in derived.items():
+                        bound[f"{name}_{role}"] = item.id
+                        if role == "extracted_text":
+                            bound[f"{name}_text"] = item.id
+                continue
+
+            if raw is not None:
+                bound[name] = raw
+            elif "default" in spec:
+                bound[name] = spec["default"]
+            elif spec.get("required"):
+                missing.append(name)
+        if missing:
+            raise ValueError(
+                "Missing required workflow input(s): " + ", ".join(sorted(missing))
+            )
+        return bound
+
+    def _lookup_declared_input(
+        self,
+        name: str,
+        spec: dict[str, Any],
+        goal_data: dict[str, Any],
+        constraints: dict[str, Any],
+        target: dict[str, Any],
+    ) -> Any:
+        aliases = [name]
+        aliases.extend(str(alias) for alias in (spec.get("aliases") or ()))
+        source = spec.get("source")
+        if isinstance(source, str):
+            aliases.append(source)
+        for key in aliases:
+            if key in constraints:
+                return constraints[key]
+            if key in target:
+                return target[key]
+            if key in goal_data:
+                return goal_data[key]
+        return None
+
+    def _bind_file_input(self, name: str, raw: Any, spec: dict[str, Any]) -> FileAsset:
+        asset = self._file_asset_from_value(raw, spec)
+        if asset is None:
+            matches = self._matching_session_assets(spec)
+            if len(matches) == 1:
+                asset = matches[0]
+            elif len(matches) > 1:
+                choices = ", ".join(f"{a.id} ({a.name})" for a in matches)
+                raise ValueError(
+                    f"Ambiguous workflow file input {name!r}; matching files: {choices}"
+                )
+            else:
+                raise KeyError(name)
+        self._validate_file_asset(name, asset, spec)
+        return asset
+
+    def _file_asset_from_value(self, value: Any, spec: dict[str, Any]) -> FileAsset | None:
+        if value is None:
+            return None
+        if isinstance(value, FileAsset):
+            return value
+        if isinstance(value, dict):
+            for key in ("file_id", "id", "asset_id"):
+                if value.get(key):
+                    return self.file_store.get(str(value[key]))
+            if value.get("path"):
+                return self.file_store.import_file(
+                    value["path"],
+                    role=value.get("role") or spec.get("role"),
+                    session_id=self.session_id,
+                    metadata={"source": "workflow_input"},
+                    copy=True,
+                )
+            return None
+        if isinstance(value, str):
+            if value.startswith("file_"):
+                return self.file_store.get(value)
+            path = Path(value).expanduser()
+            if path.exists():
+                return self.file_store.import_file(
+                    path,
+                    role=spec.get("role"),
+                    session_id=self.session_id,
+                    metadata={"source": "workflow_input"},
+                    copy=True,
+                )
+        return None
+
+    def _matching_session_assets(self, spec: dict[str, Any]) -> list[FileAsset]:
+        role = spec.get("role")
+        media_type = spec.get("media_type")
+        assets = self.file_store.list(session_id=self.session_id)
+        out = []
+        for asset in assets:
+            if asset.derived_from:
+                continue
+            if role and asset.role != role:
+                continue
+            if media_type and not self._media_type_matches(asset.media_type, media_type):
+                continue
+            out.append(asset)
+        return out
+
+    def _validate_file_asset(self, name: str, asset: FileAsset, spec: dict[str, Any]) -> None:
+        role = spec.get("role")
+        media_type = spec.get("media_type")
+        if role and asset.role != role:
+            raise ValueError(
+                f"Workflow file input {name!r} requires role {role!r}; "
+                f"{asset.id} has role {asset.role!r}"
+            )
+        if media_type and not self._media_type_matches(asset.media_type, media_type):
+            raise ValueError(
+                f"Workflow file input {name!r} requires media type {media_type!r}; "
+                f"{asset.id} has media type {asset.media_type!r}"
+            )
+
+    def _ensure_required_derivatives(
+        self,
+        asset: FileAsset,
+        spec: dict[str, Any],
+    ) -> dict[str, FileAsset]:
+        required = spec.get("required_derivatives") or []
+        out: dict[str, FileAsset] = {}
+        for derivative_spec in required:
+            if not isinstance(derivative_spec, dict):
+                derivative_spec = {"role": str(derivative_spec)}
+            role = derivative_spec.get("role")
+            if not role:
+                continue
+            found = self._find_derivative(asset, derivative_spec)
+            if found is None:
+                self._run_loader_for_asset(asset, derivative_spec)
+                found = self._find_derivative(asset, derivative_spec)
+            if found is None:
+                raise ValueError(
+                    f"No loader produced required derivative role {role!r} "
+                    f"for file input {asset.id}"
+                )
+            out[str(role)] = found
+        return out
+
+    def _find_derivative(
+        self,
+        asset: FileAsset,
+        derivative_spec: dict[str, Any],
+    ) -> FileAsset | None:
+        role = derivative_spec.get("role")
+        media_type = derivative_spec.get("media_type")
+        for candidate in self.file_store.list(
+            session_id=self.session_id,
+            derived_from=asset.id,
+            role=role,
+        ):
+            if media_type and not self._media_type_matches(candidate.media_type, media_type):
+                continue
+            return candidate
+        return None
+
+    def _run_loader_for_asset(
+        self,
+        asset: FileAsset,
+        derivative_spec: dict[str, Any] | None = None,
+    ) -> list[FileAsset]:
+        loader_name = (derivative_spec or {}).get("loader")
+        if loader_name:
+            loaders = [(loader_name, self.registry.get_loader(
+                loader_name, disabled_packages=self._disabled_packages(),
+            ))]
+        else:
+            loaders = [
+                (name, self.registry.get_loader(name, disabled_packages=self._disabled_packages()))
+                for name in self.registry.list_loaders(disabled_packages=self._disabled_packages())
+            ]
+
+        from arc.assets.loaders import LoaderContext
+        context = LoaderContext(
+            file_store=self.file_store,
+            workspace=Path(self.file_store.root),
+            session_id=self.session_id,
+            config=_resolve_package_config(self.registry),
+        )
+        for name, loader_obj in loaders:
+            loader = self._loader_instance(loader_obj)
+            can_load = getattr(loader, "can_load", None)
+            if callable(can_load) and not can_load(asset):
+                continue
+            load = getattr(loader, "load", None)
+            if not callable(load):
+                continue
+            produced = list(load(asset, context))
+            package_name = self.registry.component_source("loader", name)
+            if package_name:
+                produced = [
+                    self.file_store.update_metadata(item.id, {"package_name": package_name})
+                    for item in produced
+                ]
+            return produced
+        raise ValueError(f"No enabled loader can load file asset {asset.id} ({asset.name})")
+
+    def _loader_instance(self, loader_obj: Any) -> Any:
+        if isinstance(loader_obj, type):
+            return loader_obj()
+        return loader_obj
+
+    def load_file_asset(self, file_id: str, loader: str | None = None) -> list[FileAsset]:
+        """Run an enabled loader for a session file and return derived assets."""
+        asset = self.file_store.get(file_id)
+        derivative_spec = {"loader": loader} if loader else None
+        return self._run_loader_for_asset(asset, derivative_spec)
+
+    def _media_type_matches(self, actual: str | None, expected: str | list[str]) -> bool:
+        if isinstance(expected, list):
+            return any(self._media_type_matches(actual, item) for item in expected)
+        if not expected:
+            return True
+        if actual == expected:
+            return True
+        if isinstance(expected, str) and expected.endswith("/*"):
+            return bool(actual and actual.startswith(expected[:-1]))
+        return False
 
     def _get_field(self, value, field: str):
         """Look up ``field`` on ``value`` for workflow-YAML reference resolution.
@@ -575,6 +871,33 @@ class ResearchWorkflow:
             return output
         if "skill" in step:
             return await self._execute_skill(step["skill"], input_data, state)
+        if "script" in step:
+            from arc.runtime.package_scripts import PackageScriptRunner
+            script_input = input_data if isinstance(input_data, dict) else {}
+            workspace = script_input.get("cwd")
+            if not workspace:
+                base = Path(session_paths(self.session_id)["artifacts"]).parent
+                workspace = base / "workspaces" / "scripts" / str(step.get("id", "script"))
+            runner = PackageScriptRunner(
+                self.registry,
+                self.file_store,
+                session_id=self.session_id,
+            )
+            result = runner.run(
+                step["script"],
+                args=list(script_input.get("args", []) or []),
+                cwd=workspace,
+                timeout_s=int(step.get("timeout_s", 60) or 60),
+                disabled_packages=self._disabled_packages(),
+                source_asset_id=script_input.get("source_asset_id"),
+            )
+            return {
+                "name": result.name,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "generated_assets": [asset.to_dict() for asset in result.generated_assets],
+            }
         if "adapter" in step:
             method_name = step.get("method", "run")
             if method_name not in self._ALLOWED_ADAPTER_METHODS:
@@ -703,7 +1026,13 @@ class ResearchWorkflow:
         steps = workflow.get("steps", [])
         step_index = {step["id"]: idx for idx, step in enumerate(steps)}
         conditions = workflow.get("conditions", [])
-        state = {"user_goal": goal, "steps": {}, "prepared_inputs": {}, "result_path": None}
+        state = {
+            "user_goal": goal,
+            "inputs": self._bind_workflow_inputs(workflow, goal),
+            "steps": {},
+            "prepared_inputs": {},
+            "result_path": None,
+        }
         status = "completed"
 
         idx = 0

@@ -45,9 +45,10 @@ def parse_env_file(text: str) -> dict[str, str]:
     """Parse ``KEY=VALUE`` lines into a dict. Forgiving, no interpolation.
 
     - Blank lines and ``#`` comments are ignored.
-    - A leading ``export `` is stripped (so a shell-sourceable file works).
+    - A leading ``export`` keyword is stripped (so a shell-sourceable file works).
     - Surrounding single or double quotes on the value are removed.
     - Lines without ``=`` or with an empty key are skipped (not an error).
+
     Whitespace around the key and around the value is trimmed.
     """
     out: dict[str, str] = {}

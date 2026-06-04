@@ -93,6 +93,11 @@ class SpyBackend:
         return {"recorded": True, "backend": "spy"}
 
 
+class EchoSkill:
+    async def execute(self, inputs, context):
+        return inputs
+
+
 @pytest.mark.asyncio
 async def test_workflow_uses_declared_adapter():
     workflow = ResearchWorkflow()
@@ -223,3 +228,100 @@ async def test_workflow_name_selects_registered_workflow():
     )
     result = await workflow.run_once(ResearchGoal(goal="Custom workflow"))
     assert result["workflow"] == "custom-loop"
+
+
+@pytest.mark.asyncio
+async def test_workflow_inputs_root_and_mapping_refs(tmp_path):
+    registry = ComponentRegistry()
+    registry.register_skill("echo", EchoSkill())
+    workflow = ResearchWorkflow(registry=registry, workflow_name="input-loop")
+    paper = tmp_path / "paper.txt"
+    paper.write_text("paper", encoding="utf-8")
+    asset = workflow.file_store.import_file(paper, role="paper", session_id=workflow.session_id)
+    workflow.registry.register_workflow(
+        "input-loop",
+        {
+            "name": "input-loop",
+            "inputs": {
+                "paper": {"type": "file", "required": True},
+                "benchmark_locator": {"type": "string", "required": True},
+                "format": {"type": "string", "default": "json"},
+            },
+            "steps": [
+                {
+                    "id": "echo",
+                    "skill": "echo",
+                    "input": {
+                        "paper": "inputs.paper",
+                        "benchmark": "inputs.benchmark_locator",
+                        "format": "inputs.format",
+                        "goal": "inputs.goal",
+                    },
+                }
+            ],
+        },
+    )
+
+    result = await workflow.run_once(
+        ResearchGoal(
+            goal="Replicate section 5.4",
+            constraints={"paper": asset.id, "benchmark_locator": "section 5.4"},
+        )
+    )
+
+    output = result["steps"]["echo"]
+    assert output == {
+        "paper": asset.id,
+        "benchmark": "section 5.4",
+        "format": "json",
+        "goal": "Replicate section 5.4",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_steps_root_resolves_previous_outputs():
+    registry = ComponentRegistry()
+    registry.register_skill("echo", EchoSkill())
+    workflow = ResearchWorkflow(registry=registry, workflow_name="steps-root-loop")
+    workflow.registry.register_workflow(
+        "steps-root-loop",
+        {
+            "name": "steps-root-loop",
+            "steps": [
+                {"id": "first", "skill": "echo", "input": {"value": 7}},
+                {
+                    "id": "second",
+                    "skill": "echo",
+                    "input": {
+                        "old_style": "first.output.value",
+                        "explicit_root": "steps.first.output.value",
+                    },
+                },
+            ],
+        },
+    )
+
+    result = await workflow.run_once(ResearchGoal(goal="Check step refs"))
+
+    assert result["steps"]["second"] == {
+        "old_style": 7,
+        "explicit_root": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_required_input_missing_fails_before_steps():
+    registry = ComponentRegistry()
+    registry.register_skill("echo", EchoSkill())
+    workflow = ResearchWorkflow(registry=registry, workflow_name="missing-input-loop")
+    workflow.registry.register_workflow(
+        "missing-input-loop",
+        {
+            "name": "missing-input-loop",
+            "inputs": {"paper": {"type": "file", "required": True}},
+            "steps": [{"id": "echo", "skill": "echo", "input": "inputs.paper"}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="Missing required workflow input"):
+        await workflow.run_once(ResearchGoal(goal="Missing paper"))

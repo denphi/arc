@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -39,6 +40,18 @@ class ReviewRequest(BaseModel):
     result: ExecutionResult
     target: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = None
+
+
+class FileAddRequest(BaseModel):
+    path: str
+    role: str | None = None
+    session_id: str
+    copy_file: bool = True
+
+
+class FileLoadRequest(BaseModel):
+    session_id: str
+    loader: str | None = None
 
 
 def _optional_session_id(session_id: str | None) -> str | None:
@@ -114,6 +127,23 @@ def _results(session_id: str) -> ResultsStore:
     return ResultsStore(root=paths["runs"])
 
 
+def _files_trusted_local() -> bool:
+    return os.environ.get("ARC_FILES_TRUSTED_LOCAL", "").lower() in {
+        "1", "true", "yes",
+    }
+
+
+def _file_workflow(session_id: str) -> ResearchWorkflow:
+    from arc.assets.session import session_file_store
+
+    workflow = _workflow(LLMConfig(), session_id=session_id)
+    store = session_file_store(session_id, restrict_roots=not _files_trusted_local())
+    workflow.file_store = store
+    workflow._context.memory["files"] = store
+    workflow._context.memory["file_store"] = store
+    return workflow
+
+
 def _all_session_results() -> list[ExecutionResult]:
     results: list[ExecutionResult] = []
     root = sim2l_home()
@@ -158,6 +188,81 @@ async def start_research(req: ResearchRequest) -> dict[str, Any]:
         if result.get("review", {}).get("approved"):
             break
     return results[-1] if len(results) == 1 else {"iterations": results}
+
+
+# --- Files ---
+
+@router.post("/files")
+async def add_file(req: FileAddRequest):
+    session_id = _require_session_id(req.session_id)
+    # A network caller must not be able to import arbitrary server paths
+    # (/etc/passwd, other users' files). Restrict imports to the configured
+    # allowed roots unless the operator opts into trusted local mode with
+    # ARC_FILES_TRUSTED_LOCAL. (The interactive CLI/chat are unrestricted —
+    # there the user supplies their own path.)
+    workflow = _file_workflow(session_id)
+    try:
+        asset = workflow.file_store.import_file(
+            req.path,
+            role=req.role,
+            session_id=session_id,
+            metadata={"source": "api"},
+            copy=req.copy_file,
+        )
+    except ValueError as exc:
+        # Path outside allowed roots / too large / not a file → 400 (the
+        # allowed-roots rejection message is safe to surface).
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc))
+    return asset.to_dict()
+
+
+@router.get("/files")
+async def list_files(session_id: str | None = None, role: str | None = None):
+    session_id = _require_session_id(session_id)
+    workflow = _file_workflow(session_id)
+    return [
+        asset.to_dict()
+        for asset in workflow.file_store.list(session_id=session_id, role=role)
+    ]
+
+
+@router.get("/files/{file_id}")
+async def get_file(file_id: str, session_id: str | None = None):
+    session_id = _require_session_id(session_id)
+    workflow = _file_workflow(session_id)
+    try:
+        return workflow.file_store.get(file_id).to_dict()
+    except KeyError:
+        raise HTTPException(status_code=404, detail="File asset not found")
+
+
+@router.post("/files/{file_id}/load")
+async def load_file(file_id: str, req: FileLoadRequest):
+    session_id = _require_session_id(req.session_id)
+    workflow = _file_workflow(session_id)
+    try:
+        produced = workflow.load_file_asset(file_id, loader=req.loader)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="File asset not found")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc))
+    return [asset.to_dict() for asset in produced]
+
+
+@router.get("/files/{file_id}/derived")
+async def list_derived_files(file_id: str, session_id: str | None = None):
+    session_id = _require_session_id(session_id)
+    workflow = _file_workflow(session_id)
+    try:
+        workflow.file_store.get(file_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="File asset not found")
+    return [
+        asset.to_dict()
+        for asset in workflow.file_store.list(session_id=session_id, derived_from=file_id)
+    ]
 
 
 # --- Artifacts ---

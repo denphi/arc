@@ -13,12 +13,14 @@ except ImportError:
 if HAS_TYPER:
     import typer
 
+    from arc.cli.files import file_app
     from arc.cli.packages import package_app
     from arc.ui.__main__ import DEFAULT_HOST as DEFAULT_UI_HOST
     from arc.ui.__main__ import DEFAULT_PORT as DEFAULT_UI_PORT
 
     app = typer.Typer(name="arc", help="ARC-Sim2L — Autonomous Research Coder")
     app.add_typer(package_app, name="package")
+    app.add_typer(file_app, name="file")
 
     @app.command()
     def run(
@@ -34,13 +36,26 @@ if HAS_TYPER:
                                       help="Base URL for openwebui/custom endpoints"),
         workflow_name: str = typer.Option("research-loop", "--workflow", "-w",
                                           help="Registered workflow name"),
+        inputs: list[str] = typer.Option(
+            [],
+            "--input",
+            "-i",
+            help="Workflow input as key=value; can be supplied multiple times.",
+        ),
         output: str = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
     ):
         """Run a research workflow for the given goal."""
         from arc.orchestrator.workflow import ResearchWorkflow
         from arc.schemas.research import ResearchGoal
 
-        goal_obj = ResearchGoal(goal=goal, domain=domain)
+        constraints = {}
+        for item in inputs or []:
+            if "=" not in item:
+                typer.echo(f"Invalid --input {item!r}; expected key=value", err=True)
+                raise typer.Exit(1)
+            key, value = item.split("=", 1)
+            constraints[key] = value
+        goal_obj = ResearchGoal(goal=goal, domain=domain, constraints=constraints)
         workflow = ResearchWorkflow(
             provider_name=provider,
             token=token,

@@ -2022,6 +2022,15 @@ async def chat_loop(
         _selected_coder(workflow),
         sim2l_status=sim2l_status,
     )
+    input_assets = workflow._context.memory.get("input_assets") or []
+    if input_assets:
+        print(c(f"  ARC found {len(input_assets)} input file(s):", BOLD))
+        for asset in input_assets:
+            print(
+                f"    {asset.name:<24} {asset.id:<18} "
+                f"{asset.role or '-':<10} {asset.media_type}"
+            )
+        print(c("  Use /file list, /file show <id>, or /file load <id>.", DIM))
 
     from arc.services import (
         is_running as _service_running,

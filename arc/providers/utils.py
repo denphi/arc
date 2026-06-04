@@ -45,16 +45,14 @@ def reset_native_json_support() -> None:
 
 
 def strip_code_fences(text: str) -> str:
-    """Strip a leading/trailing markdown code fence from `text`.
+    """Strip a leading/trailing markdown code fence from ``text``.
 
     Handles the common shapes that the major LLM providers produce when asked
-    for structured output:
+    for structured output: a triple-backtick fence with an optional language
+    tag (``json``/``yaml``/``python``/…) wrapping the payload, or plain JSON
+    with no fence at all.
 
-        ```json\n{...}\n```
-        ```\n{...}\n```
-        plain JSON without fences
-
-    Returns the trimmed content. If `text` doesn't start with a fence it is
+    Returns the trimmed content. If ``text`` doesn't start with a fence it is
     returned unchanged (after a strip).
     """
     text = text.strip()

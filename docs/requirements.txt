@@ -1,0 +1,12 @@
+# Documentation build dependencies (Sphinx + MyST).
+# Installed by ReadTheDocs (see .readthedocs.yaml) and for local builds:
+#   pip install -r docs/requirements.txt
+sphinx>=7.0
+myst-parser>=2.0
+sphinx-rtd-theme>=2.0
+sphinx-copybutton>=0.5
+sphinxcontrib-mermaid>=0.9
+
+# ARC itself is installed (editable) by the RTD build so autodoc can import
+# arc.* modules. Optional heavy/3rd-party deps are mocked in conf.py
+# (autodoc_mock_imports) so the docs build without them.

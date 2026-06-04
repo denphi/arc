@@ -12,6 +12,11 @@ class AgentContext:
     config: dict[str, Any] = field(default_factory=dict)
     memory: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def files(self):
+        """Session FileStore, when file assets are enabled."""
+        return self.memory.get("file_store") or self.memory.get("files")
+
 
 class AgentContract(ABC):
     name: str

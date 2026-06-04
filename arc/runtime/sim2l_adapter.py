@@ -98,7 +98,7 @@ def _function_workflow_bundle(source: str, *, workflow_hash: str | None = None) 
 class Sim2LRuntimeAdapter(RuntimeAdapterContract):
     """Executes artifact workflows through the real sim2l library.
 
-    Each artifact's workflow.py must export a function:
+    Each artifact's ``workflow.py`` must export a ``simulate`` function::
 
         def simulate(**inputs) -> dict:
             ...

@@ -192,7 +192,7 @@ def validate_package(
     path: Path = typer.Argument(..., help="Package folder containing package.yaml."),
 ) -> None:
     """Validate that a local package manifest and declared Python objects load."""
-    from arc.core.loader import _import_declared, load_package
+    from arc.core.loader import _import_declared, _skill_name, _skill_path, load_package
     from arc.core.registry import ComponentRegistry
 
     manifest_path = path / "package.yaml"
@@ -218,6 +218,7 @@ def validate_package(
         "strategies",
         "runtime_adapters",
         "providers",
+        "loaders",
         "evaluators",
         "detectors",
         "audit_actions",
@@ -244,6 +245,21 @@ def validate_package(
                     f"provides.{group}.{item.get('name', '<unnamed>')} failed to import: {exc}"
                 )
 
+    for item in provides.get("scripts", []) or []:
+        if not isinstance(item, dict):
+            errors.append("provides.scripts entries must be mappings")
+            continue
+        if not item.get("name") or not item.get("path"):
+            errors.append("provides.scripts entries need name and path")
+            continue
+        if item.get("runtime", "python") != "python":
+            errors.append(
+                f"provides.scripts.{item.get('name')} has unsupported runtime "
+                f"{item.get('runtime')!r}"
+            )
+        if not (path / item["path"]).exists():
+            errors.append(f"declared script path does not exist: {item['path']}")
+
     for workflow in provides.get("workflows", []) or []:
         workflow_path = workflow.get("path") if isinstance(workflow, dict) else None
         if workflow_path and not (path / workflow_path).exists():
@@ -251,10 +267,24 @@ def validate_package(
 
     # Skills are declared as package-relative file paths; the file must exist
     # (review finding P3-1 — previously unchecked).
+    resolved_skill_names: dict[str, str] = {}
     for skill in provides.get("skills", []) or []:
-        skill_path = skill.get("path") if isinstance(skill, dict) else skill
-        if skill_path and not (path / str(skill_path)).exists():
-            errors.append(f"declared skill path does not exist: {skill_path}")
+        try:
+            skill_file = _skill_path(path, skill)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"declared skill entry is invalid: {exc}")
+            continue
+        if not skill_file.exists():
+            errors.append(f"declared skill path does not exist: {skill_file.relative_to(path)}")
+            continue
+        name = _skill_name(skill, skill_file)
+        if name in resolved_skill_names:
+            errors.append(
+                f"duplicate skill name after resolution: {name} "
+                f"({resolved_skill_names[name]} and {skill_file.relative_to(path)})"
+            )
+        else:
+            resolved_skill_names[name] = str(skill_file.relative_to(path))
 
     if errors:
         for error in errors:
@@ -274,7 +304,7 @@ def validate_package(
     # ``role``, a class that raises at instantiation, …), so a package could
     # otherwise print OK while a declared capability is silently absent
     # (review finding 3). Cross-check declarations against the registry.
-    register_errors = _verify_registered(manifest, registry)
+    register_errors = _verify_registered(manifest, registry, path)
     if register_errors:
         for error in register_errors:
             typer.echo(f"ERROR: {error}", err=True)
@@ -284,9 +314,43 @@ def validate_package(
     typer.echo(f"  agents:    {registry.list_agents()}")
     typer.echo(f"  skills:    {registry.list_skills()}")
     typer.echo(f"  workflows: {registry.list_workflows()}")
+    typer.echo(f"  scripts:   {registry.list_scripts()}")
 
 
-def _verify_registered(manifest: dict, registry) -> list[str]:
+@package_app.command("doctor")
+def doctor_package(
+    path: Path = typer.Argument(..., help="Package folder containing package.yaml."),
+) -> None:
+    """Check local runtime requirements declared by a package."""
+    from arc.runtime.environment import check_runtime_requirements
+
+    manifest_path = path / "package.yaml"
+    if not manifest_path.exists():
+        typer.echo(f"Missing package.yaml: {manifest_path}", err=True)
+        raise typer.Exit(1)
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Invalid YAML in {manifest_path}: {exc}", err=True)
+        raise typer.Exit(1)
+
+    pkg_name = manifest.get("name", path.name)
+    checks = check_runtime_requirements(manifest.get("runtime", {}) or {})
+    typer.echo(f"Doctor: {pkg_name}")
+    if not checks:
+        typer.echo("  No runtime requirements declared.")
+        return
+    failed = False
+    for check in checks:
+        label = check.status.upper()
+        typer.echo(f"  {label:<7} {check.kind:<14} {check.name:<24} {check.detail}")
+        if check.status == "missing" and check.required:
+            failed = True
+    if failed:
+        raise typer.Exit(1)
+
+
+def _verify_registered(manifest: dict, registry, package_dir: Path) -> list[str]:
     """Return an error per declared contribution that didn't register.
 
     The loader is lenient (it must not crash a whole startup over one bad
@@ -308,6 +372,8 @@ def _verify_registered(manifest: dict, registry) -> list[str]:
         "agents": set(registry.list_agents()),
         "runtime_adapters": set(registry.list_adapters()),
         "providers": set(registry.list_providers()),
+        "loaders": set(registry.list_loaders()),
+        "scripts": set(registry.list_scripts()),
         "evaluators": set(registry.list_evaluators()),
         "detectors": set(registry.list_detectors()),
         "audit_actions": set(registry.list_audit_actions()),
@@ -327,18 +393,26 @@ def _verify_registered(manifest: dict, registry) -> list[str]:
         if isinstance(item, dict) and item.get("name") and item["name"] not in registered_workflows:
             errors.append(f"provides.workflows.{item['name']} declared but did not register")
 
-    # Skills (declared as file paths) + name-based resources (prompts,
+    # Skills (declared as file paths or {name, path}) + name-based resources (prompts,
     # templates, constraints, vocabularies). The loader derives the registered
-    # name with _resource_name (file stem for path-style entries), so reuse it
-    # to compare against the registry (review finding P3-1).
-    from arc.core.loader import _resource_name
+    # name from explicit manifest name, markdown frontmatter, or file stem.
+    from arc.core.loader import _resource_name, _skill_name, _skill_path
     resource_checks = {
-        "skills": set(registry.list_skills()),
         "prompts": set(registry.list_prompts()),
         "templates": set(registry.list_templates()),
         "constraints": set(registry.list_constraints()),
         "vocabularies": set(registry.list_vocabularies()),
     }
+    registered_skills = set(registry.list_skills())
+    for item in provides.get("skills", []) or []:
+        try:
+            skill_file = _skill_path(package_dir, item)
+            name = _skill_name(item, skill_file)
+        except Exception:
+            name = _resource_name(item)
+        if name and name not in registered_skills:
+            errors.append(f"provides.skills.{name} declared but did not register")
+
     for group, registered in resource_checks.items():
         for item in provides.get(group, []) or []:
             name = _resource_name(item)

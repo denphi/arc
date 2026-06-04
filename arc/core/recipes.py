@@ -1,6 +1,6 @@
 """Recipes — named bundles of research-loop strategy choices.
 
-A *recipe* is a thin YAML file that says "use these strategies together":
+A *recipe* is a thin YAML file that says "use these strategies together"::
 
     name: bayesian-materials
     description: GP-driven optimisation for materials-science workflows.

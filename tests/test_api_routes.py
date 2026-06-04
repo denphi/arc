@@ -7,12 +7,19 @@ from pydantic import ValidationError
 
 import arc.api.routes as routes
 from arc.api.routes import (
+    FileAddRequest,
+    FileLoadRequest,
+    add_file,
     ResearchRequest,
     ReviewRequest,
     create_artifact,
+    get_file,
     get_status,
     list_artifacts,
+    list_derived_files,
+    list_files,
     list_results,
+    load_file,
     run_execution,
     run_review,
     start_research,
@@ -151,6 +158,83 @@ async def test_create_artifact_survives_backend_setup_failure(monkeypatch):
     )
 
     assert artifact.name == "local-only-api-artifact"
+
+
+@pytest.mark.asyncio
+async def test_file_api_add_list_show_load_and_derived(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("ARC_FILES_ALLOWED_ROOTS", str(tmp_path))
+    source = tmp_path / "notes.txt"
+    source.write_text("hello api", encoding="utf-8")
+
+    asset = await add_file(
+        FileAddRequest(path=str(source), role="text", session_id="api-files")
+    )
+
+    file_id = asset["id"]
+    assert file_id.startswith("file_")
+    assert asset["role"] == "text"
+
+    listed = await list_files(session_id="api-files")
+    assert [item["id"] for item in listed] == [file_id]
+
+    shown = await get_file(file_id, session_id="api-files")
+    assert shown["name"] == "notes.txt"
+
+    loaded = await load_file(
+        file_id,
+        FileLoadRequest(session_id="api-files", loader="text_loader"),
+    )
+    assert loaded[0]["role"] == "normalized_text"
+
+    derived = await list_derived_files(file_id, session_id="api-files")
+    assert [item["id"] for item in derived] == [loaded[0]["id"]]
+
+
+@pytest.mark.asyncio
+async def test_file_api_rejects_paths_outside_allowed_roots(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    monkeypatch.setenv("ARC_INPUTS_DIR", str(allowed))
+    monkeypatch.delenv("ARC_FILES_ALLOWED_ROOTS", raising=False)
+    monkeypatch.delenv("ARC_FILES_TRUSTED_LOCAL", raising=False)
+
+    with pytest.raises(Exception) as exc:
+        await add_file(
+            FileAddRequest(path=str(outside), role="text", session_id="api-files-deny")
+        )
+
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "outside allowed roots" in str(getattr(exc.value, "detail", ""))
+
+
+@pytest.mark.asyncio
+async def test_file_api_can_index_and_lazily_load_allowed_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    source = allowed / "notes.txt"
+    source.write_text("hello api", encoding="utf-8")
+    monkeypatch.setenv("ARC_INPUTS_DIR", str(allowed))
+
+    asset = await add_file(
+        FileAddRequest(
+            path=str(source),
+            role="text",
+            session_id="api-files-index",
+            copy_file=False,
+        )
+    )
+
+    assert asset["metadata"]["indexed"] is True
+    loaded = await load_file(
+        asset["id"],
+        FileLoadRequest(session_id="api-files-index", loader="text_loader"),
+    )
+    assert loaded[0]["role"] == "normalized_text"
 
 
 @pytest.mark.asyncio

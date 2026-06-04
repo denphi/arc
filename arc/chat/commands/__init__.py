@@ -39,13 +39,14 @@ def build_registry() -> CommandRegistry:
         recipe as _recipe,
         clusters as _clusters,
         skills as _skills,
+        files as _files,
     )
 
     reg = CommandRegistry()
     for mod in (_builtins, _artifacts, _results, _sessions, _packages,
                 _coder, _target, _services, _exec_cmd, _sweep,
                 _optimize, _iterate, _run_cmd, _cont, _strategy, _recipe,
-                _clusters, _skills):
+                _clusters, _skills, _files):
         for cmd in mod.COMMANDS:
             reg.register(cmd)
     return reg

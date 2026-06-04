@@ -209,13 +209,31 @@ OPENAI_API_KEY=your-key-here
 
 ---
 
+## Documentation
+
+Full documentation (core framework + packages) is built with Sphinx and
+publishes to ReadTheDocs. Build it locally:
+
+```bash
+pip install -r docs/requirements.txt
+sphinx-build -b html docs docs/_build/html   # → docs/_build/html/index.html
+```
+
+The plan and page outline live in [doc_todo.md](doc_todo.md); the
+authoring source for the longer design topics is [design/](design/), which the
+docs site includes.
+
+---
+
 ## Testing
 
 ```bash
 python3 -m pytest tests/ -v
 ```
 
-41 tests covering agents, adapter, memory, evaluators, API routes, package loading, and the full workflow.
+The suite covers agents, adapters, memory, evaluators, API routes, package
+loading + disable semantics, the strategy resolver, audit hooks, and the full
+research workflow.
 
 ---
 

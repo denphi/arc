@@ -1,5 +1,6 @@
 import inspect
 
+import pytest
 from typer.testing import CliRunner
 
 from arc.cli.main import app
@@ -11,6 +12,10 @@ def _runner():
     if "mix_stderr" in inspect.signature(CliRunner.__init__).parameters:
         return CliRunner(mix_stderr=False)
     return CliRunner()
+
+
+def _all_output(result):
+    return (result.output or "") + (getattr(result, "stderr", "") or "")
 
 
 def test_package_init_creates_loadable_local_package(tmp_path):
@@ -56,7 +61,7 @@ def test_package_validate_rejects_missing_skill_file(tmp_path):
     result = _runner().invoke(app, ["package", "validate", str(target)])
 
     assert result.exit_code == 1
-    assert "skills/missing.md" in result.output
+    assert "skills/missing.md" in _all_output(result)
     assert "OK:" not in result.stdout
 
 
@@ -79,6 +84,87 @@ def test_package_validate_accepts_present_skill(tmp_path):
     assert "OK: arc-good-skill" in result.stdout
 
 
+def test_package_loads_skill_bundle_names_from_frontmatter(tmp_path):
+    target = tmp_path / "arc-skill-bundles"
+    for skill_name in ("first-skill", "second-skill"):
+        bundle = target / "skills" / skill_name
+        bundle.mkdir(parents=True)
+        (bundle / "SKILL.md").write_text(
+            "---\n"
+            f"name: {skill_name}\n"
+            f"description: {skill_name} description\n"
+            "---\n\n"
+            f"# {skill_name}\n",
+            encoding="utf-8",
+        )
+    (target / "package.yaml").write_text(
+        "name: arc-skill-bundles\n"
+        "provides:\n"
+        "  skills:\n"
+        "    - skills/first-skill/SKILL.md\n"
+        "    - skills/second-skill/SKILL.md\n",
+        encoding="utf-8",
+    )
+
+    registry = ComponentRegistry()
+    load_package(target, registry)
+
+    assert set(registry.list_skills()) == {"first-skill", "second-skill"}
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "OK: arc-skill-bundles" in result.stdout
+
+
+def test_package_validate_accepts_explicit_skill_manifest_name(tmp_path):
+    target = tmp_path / "arc-explicit-skill"
+    (target / "skills" / "bundle").mkdir(parents=True)
+    (target / "skills" / "bundle" / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
+    (target / "package.yaml").write_text(
+        "name: arc-explicit-skill\n"
+        "provides:\n"
+        "  skills:\n"
+        "    - name: explicit-skill\n"
+        "      path: skills/bundle/SKILL.md\n",
+        encoding="utf-8",
+    )
+
+    registry = ComponentRegistry()
+    load_package(target, registry)
+
+    assert registry.list_skills() == ["explicit-skill"]
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "OK: arc-explicit-skill" in result.stdout
+
+
+def test_package_validate_rejects_duplicate_resolved_skill_names(tmp_path):
+    target = tmp_path / "arc-duplicate-skills"
+    for path in ("skills/a", "skills/b"):
+        bundle = target / path
+        bundle.mkdir(parents=True)
+        (bundle / "SKILL.md").write_text(
+            "---\nname: duplicate-skill\n---\n\n# Duplicate\n",
+            encoding="utf-8",
+        )
+    (target / "package.yaml").write_text(
+        "name: arc-duplicate-skills\n"
+        "provides:\n"
+        "  skills:\n"
+        "    - skills/a/SKILL.md\n"
+        "    - skills/b/SKILL.md\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 1
+    assert "duplicate skill name after resolution: duplicate-skill" in _all_output(result)
+
+
 def test_package_validate_rejects_missing_declared_path(tmp_path):
     target = tmp_path / "arc-bad"
     target.mkdir()
@@ -95,7 +181,7 @@ def test_package_validate_rejects_missing_declared_path(tmp_path):
     result = _runner().invoke(app, ["package", "validate", str(target)])
 
     assert result.exit_code == 1
-    assert "declared path does not exist" in result.output
+    assert "declared path does not exist" in _all_output(result)
 
 
 def test_package_validate_rejects_strategy_missing_role(tmp_path):
@@ -115,7 +201,7 @@ def test_package_validate_rejects_strategy_missing_role(tmp_path):
     result = _runner().invoke(app, ["package", "validate", str(target)])
 
     assert result.exit_code == 1
-    assert "orphan_ideator" in result.output
+    assert "orphan_ideator" in _all_output(result)
 
 
 def test_package_validate_rejects_contribution_failing_at_instantiation(tmp_path):
@@ -136,7 +222,7 @@ def test_package_validate_rejects_contribution_failing_at_instantiation(tmp_path
     result = _runner().invoke(app, ["package", "validate", str(target)])
 
     assert result.exit_code == 1
-    assert "failing_report_section" in result.output
+    assert "failing_report_section" in _all_output(result)
 
 
 def test_package_validate_accepts_well_formed_strategy(tmp_path):
@@ -169,3 +255,73 @@ def test_package_validate_accepts_well_formed_strategy(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "OK: arc-good" in result.stdout
+
+
+def test_package_validate_accepts_declared_loader(tmp_path):
+    target = tmp_path / "arc-loader"
+    (target / "loaders").mkdir(parents=True)
+    (target / "loaders" / "demo.py").write_text(
+        "class DemoLoader:\n"
+        "    name = 'demo_loader'\n",
+        encoding="utf-8",
+    )
+    (target / "package.yaml").write_text(
+        "name: arc-loader\n"
+        "provides:\n"
+        "  loaders:\n"
+        "    - name: demo_loader\n"
+        "      path: loaders/demo.py\n"
+        "      class: DemoLoader\n",
+        encoding="utf-8",
+    )
+
+    registry = ComponentRegistry()
+    load_package(target, registry)
+
+    assert registry.list_loaders() == ["demo_loader"]
+    assert registry.get_loader("demo_loader").__name__ == "DemoLoader"
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "OK: arc-loader" in result.stdout
+
+
+def test_package_validate_rejects_missing_declared_loader(tmp_path):
+    target = tmp_path / "arc-bad-loader"
+    target.mkdir()
+    (target / "package.yaml").write_text(
+        "name: arc-bad-loader\n"
+        "provides:\n"
+        "  loaders:\n"
+        "    - name: missing_loader\n"
+        "      path: loaders/missing.py\n"
+        "      class: MissingLoader\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 1
+    assert "missing_loader" in _all_output(result) or "loaders/missing.py" in _all_output(result)
+
+
+def test_package_loader_honours_disabled_package_filter(tmp_path):
+    target = tmp_path / "arc-loader-disable"
+    (target / "loaders").mkdir(parents=True)
+    (target / "loaders" / "demo.py").write_text("class DemoLoader: pass\n", encoding="utf-8")
+    (target / "package.yaml").write_text(
+        "name: arc-loader-disable\n"
+        "provides:\n"
+        "  loaders:\n"
+        "    - name: demo_loader\n"
+        "      path: loaders/demo.py\n"
+        "      class: DemoLoader\n",
+        encoding="utf-8",
+    )
+    registry = ComponentRegistry()
+    load_package(target, registry)
+
+    assert registry.list_loaders(disabled_packages={"arc-loader-disable"}) == []
+    with pytest.raises(KeyError):
+        registry.get_loader("demo_loader", disabled_packages={"arc-loader-disable"})

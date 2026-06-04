@@ -27,9 +27,65 @@ class MarkdownSkill:
 
     def __init__(self, name: str, path: Path, content: str):
         self.name = name
-        self.description = _extract_markdown_section(content, "Description") or name
+        frontmatter = _markdown_frontmatter(content)
+        self.frontmatter = frontmatter
+        self.description = (
+            frontmatter.get("description")
+            or _extract_markdown_section(content, "Description")
+            or name
+        )
         self.path = str(path)
         self.content = content
+        self.bundle_root = str(path.parent) if path.name == "SKILL.md" else None
+        self.metadata = {
+            **frontmatter,
+            "path": str(path),
+            "bundle_root": self.bundle_root,
+            "resources": self.list_resources() if self.bundle_root else [],
+        }
+
+    def resolve_resource(self, relative_path: str) -> Path:
+        """Resolve a skill-bundle resource under the bundle root."""
+        if self.bundle_root is None:
+            raise ValueError(f"Skill {self.name!r} is not a bundle skill")
+        raw = Path(relative_path)
+        if raw.is_absolute():
+            raise ValueError("Skill resources must use relative paths")
+        root = Path(self.bundle_root).resolve()
+        path = (root / raw).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Skill resource escapes bundle root: {relative_path}") from exc
+        if not path.is_file():
+            raise FileNotFoundError(f"Skill resource not found: {relative_path}")
+        return path
+
+    def read_resource(self, relative_path: str, max_bytes: int = 200_000) -> str:
+        path = self.resolve_resource(relative_path)
+        size = path.stat().st_size
+        if size > max_bytes:
+            raise ValueError(
+                f"Skill resource too large to read: {size} bytes exceeds {max_bytes}"
+            )
+        return path.read_text(encoding="utf-8")
+
+    def list_resources(self, subdir: str | None = None) -> list[str]:
+        if self.bundle_root is None:
+            return []
+        root = Path(self.bundle_root).resolve()
+        base = root / subdir if subdir else root
+        if not base.exists() or not base.is_dir():
+            return []
+        resources = []
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or path.name == "SKILL.md":
+                continue
+            try:
+                resources.append(path.resolve().relative_to(root).as_posix())
+            except ValueError:
+                continue
+        return resources
 
     async def execute(self, inputs: dict[str, Any], context: AgentContext) -> dict[str, Any]:
         provider = context.memory.get("provider")
@@ -48,12 +104,43 @@ class MarkdownSkill:
             inputs_block = json.dumps(inputs, indent=2, default=str)
         except (TypeError, ValueError):
             inputs_block = repr(inputs)
+        bundle_block = self._bundle_prompt_block()
+        file_block = self._file_prompt_block(inputs, context)
         prompt = (
             "Execute the following ARC skill using the provided inputs.\n\n"
-            f"{self.content}\n\nInputs:\n{inputs_block}\n\n"
+            f"{self.content}\n\n"
+            f"{bundle_block}"
+            f"{file_block}"
+            f"Inputs:\n{inputs_block}\n\n"
             "Return a concise JSON-compatible result."
         )
         return {"skill": self.name, "result": await provider.complete(prompt)}
+
+    def _bundle_prompt_block(self) -> str:
+        if not self.bundle_root:
+            return ""
+        resources = self.list_resources()
+        if not resources:
+            return ""
+        shown = "\n".join(f"- {item}" for item in resources[:40])
+        suffix = "\n- ..." if len(resources) > 40 else ""
+        return f"Skill bundle resources:\n{shown}{suffix}\n\n"
+
+    def _file_prompt_block(self, inputs: dict[str, Any], context: AgentContext) -> str:
+        store = context.files
+        if store is None:
+            return ""
+        ids = sorted({value for value in inputs.values() if isinstance(value, str) and value.startswith("file_")})
+        rows = []
+        for file_id in ids:
+            try:
+                asset = store.get(file_id)
+            except Exception:  # noqa: BLE001
+                continue
+            rows.append(f"- {file_id}: {asset.name} {asset.role or '-'} {asset.media_type}")
+        if not rows:
+            return ""
+        return "Available file inputs:\n" + "\n".join(rows) + "\n\n"
 
 
 def _extract_markdown_section(content: str, heading: str) -> str:
@@ -66,11 +153,48 @@ def _extract_markdown_section(content: str, heading: str) -> str:
     return section.strip()
 
 
+def _markdown_frontmatter(content: str) -> dict[str, Any]:
+    """Return YAML frontmatter from a markdown file, if present."""
+    if not content.startswith("---"):
+        return {}
+    rest = content[3:].lstrip("\n")
+    end = rest.find("\n---")
+    if end == -1:
+        return {}
+    try:
+        data = yaml.safe_load(rest[:end])
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _resource_name(value: str | dict, fallback_path: Path | None = None) -> str:
     if isinstance(value, dict):
         return value.get("name") or (fallback_path.stem if fallback_path else "")
     path = Path(value)
     return path.stem if path.suffix else value
+
+
+def _skill_path(package_dir: Path, value: str | dict) -> Path:
+    raw_path = value.get("path") if isinstance(value, dict) else value
+    if not raw_path:
+        raise ValueError("Skill manifest entry needs a path")
+    return package_dir / str(raw_path)
+
+
+def _skill_name(value: str | dict, path: Path, content: str | None = None) -> str:
+    if isinstance(value, dict) and value.get("name"):
+        return str(value["name"])
+    if content is None and path.exists():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            content = None
+    if content:
+        frontmatter = _markdown_frontmatter(content)
+        if frontmatter.get("name"):
+            return str(frontmatter["name"])
+    return _resource_name(value, path)
 
 
 def _load_resource(
@@ -335,11 +459,12 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             logger.error("Failed to load strategy '%s': %s", strategy_def.get("name"), exc)
 
     for skill_def in manifest.get("provides", {}).get("skills", []):
-        skill_path = package_dir / skill_def
+        skill_path = _skill_path(package_dir, skill_def)
         try:
-            content = skill_path.read_text()
-            registry.register_skill(_resource_name(skill_def, skill_path), MarkdownSkill(
-                _resource_name(skill_def, skill_path),
+            content = skill_path.read_text(encoding="utf-8")
+            name = _skill_name(skill_def, skill_path, content)
+            registry.register_skill(name, MarkdownSkill(
+                name,
                 skill_path,
                 content,
             ), package_name=pkg_name)
@@ -354,6 +479,20 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_workflow(workflow_def["name"], workflow, package_name=pkg_name)
         else:
             logger.warning("Workflow file not found: %s", workflow_path)
+
+    for script_def in manifest.get("provides", {}).get("scripts", []):
+        try:
+            if not isinstance(script_def, dict):
+                raise ValueError("script declaration must be a mapping")
+            script_path = (package_dir / str(script_def["path"])).resolve()
+            if not script_path.exists() or not script_path.is_file():
+                raise FileNotFoundError(script_path)
+            definition = dict(script_def)
+            definition["path"] = str(script_path)
+            definition.setdefault("runtime", "python")
+            registry.register_script(definition["name"], definition, package_name=pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load script '%s': %s", script_def, exc)
 
     for extension_def in manifest.get("provides", {}).get("extensions", []):
         try:
@@ -388,6 +527,13 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_provider(provider_def["name"], provider_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load provider '%s': %s", provider_def.get("name"), exc)
+
+    for loader_def in manifest.get("provides", {}).get("loaders", []):
+        try:
+            loader = _import_declared(loader_def, package_dir)
+            registry.register_loader(loader_def["name"], loader, package_name=pkg_name)
+        except Exception as exc:
+            logger.error("Failed to load loader '%s': %s", loader_def.get("name"), exc)
 
     for evaluator_def in manifest.get("provides", {}).get("evaluators", []):
         try:
