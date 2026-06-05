@@ -8,10 +8,7 @@ module is the single source of truth.
 
 from __future__ import annotations
 
-import os
-
-
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
+from arc.core.env import env_flag as _core_env_flag
 
 
 def env_flag(name: str) -> bool:
@@ -20,5 +17,4 @@ def env_flag(name: str) -> bool:
     Truthy: ``1``, ``true``, ``yes``, ``on`` (case-insensitive, with
     surrounding whitespace tolerated). Anything else, or unset, is False.
     """
-    value = os.environ.get(name, "").strip().lower()
-    return value in _TRUTHY
+    return _core_env_flag(name)

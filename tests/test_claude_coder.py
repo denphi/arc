@@ -85,6 +85,17 @@ def test_claude_mcp_config_does_not_consume_prompt_position():
     assert "--strict-mcp-config" in args
 
 
+def test_claude_artifact_name_disambiguates_same_objective_prefix():
+    first = _plan()
+    second = _plan().model_copy(
+        update={"parameters": {"x": 2.0}, "parameter_sweep": {"x": [2.0]}}
+    )
+    agent = claude_coder.ClaudeCodeCoderAgent(context=AgentContext(session_id="test-session"))
+
+    assert agent._artifact_name(first).startswith("generate_claude_code_artifact_")
+    assert agent._artifact_name(first) != agent._artifact_name(second)
+
+
 @pytest.mark.asyncio
 async def test_claude_bypass_writes_prompt_to_stdin(monkeypatch, tmp_path):
     """Production sends the prompt over stdin (not as an argv element).

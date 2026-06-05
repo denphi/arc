@@ -310,6 +310,44 @@ async def test_workflow_steps_root_resolves_previous_outputs():
 
 
 @pytest.mark.asyncio
+async def test_workflow_condition_ordering_requires_numeric_operands():
+    registry = ComponentRegistry()
+    registry.register_skill("echo", EchoSkill())
+    workflow = ResearchWorkflow(registry=registry, workflow_name="bad-condition-loop")
+    workflow.registry.register_workflow(
+        "bad-condition-loop",
+        {
+            "name": "bad-condition-loop",
+            "steps": [{"id": "first", "skill": "echo", "input": {"value": "abc"}}],
+            "conditions": [
+                {"after": "first", "if": "steps.first.output.value > 3", "goto": "first"}
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="non-numeric operands"):
+        await workflow.run_once(ResearchGoal(goal="Check condition"))
+
+
+def test_workflow_input_precedence_constraints_shadow_goal_fields():
+    workflow = ResearchWorkflow(registry=ComponentRegistry(), workflow_name="unused")
+
+    bound = workflow._bind_workflow_inputs(
+        {},
+        ResearchGoal(
+            goal="real goal",
+            domain="real domain",
+            constraints={"goal": "constraint goal", "domain": "constraint domain"},
+            target={"mode": "target mode"},
+        ),
+    )
+
+    assert bound["goal"] == "constraint goal"
+    assert bound["domain"] == "constraint domain"
+    assert bound["mode"] == "target mode"
+
+
+@pytest.mark.asyncio
 async def test_workflow_required_input_missing_fails_before_steps():
     registry = ComponentRegistry()
     registry.register_skill("echo", EchoSkill())

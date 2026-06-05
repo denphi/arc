@@ -20,6 +20,13 @@ async def list_handler(state: ChatState, argv: list[str]) -> None:
         if name in disabled:
             marker = c(" disabled", YELLOW)
         print(f"    {c(name, CYAN)}{marker}")
+    load_errors_fn = getattr(state.workflow.registry, "list_load_errors", None)
+    load_errors = load_errors_fn() if load_errors_fn else []
+    if load_errors:
+        print(c("  Package load errors:", YELLOW))
+        for item in load_errors:
+            name = f" {item['name']}" if item.get("name") else ""
+            print(f"    {item['package']} {item['kind']}{name}: {item['error']}")
     print(c(f"  Coder: {_selected_coder(state.workflow)}", DIM))
     print(c("  Use: /coder <backend> | /package enable <package>", DIM))
 

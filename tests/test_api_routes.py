@@ -59,6 +59,37 @@ def test_research_request_rejects_non_positive_iterations():
         ResearchRequest(goal=ResearchGoal(goal="bad iterations"), iterations=0)
 
 
+def test_research_request_caps_iterations():
+    with pytest.raises(ValidationError):
+        ResearchRequest(goal=ResearchGoal(goal="too many iterations"), iterations=21)
+
+
+def test_workflow_validates_base_url_for_any_provider(monkeypatch):
+    captured = {}
+
+    def _validate(url):
+        captured["url"] = url
+        return "https://safe.example/api"
+
+    class DummyWorkflow:
+        def __init__(self, **kwargs):
+            captured["base_url"] = kwargs.get("base_url")
+            self._context = SimpleNamespace(memory={})
+
+    monkeypatch.setattr(routes, "validate_provider_base_url", _validate)
+    monkeypatch.setattr(routes, "ResearchWorkflow", DummyWorkflow)
+
+    routes._workflow(
+        routes.LLMConfig(provider="openai", base_url="https://gateway.example/api"),
+        session_id="api-base-url",
+    )
+
+    assert captured == {
+        "url": "https://gateway.example/api",
+        "base_url": "https://safe.example/api",
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_review_requires_target_context():
     request = ReviewRequest(
@@ -235,6 +266,24 @@ async def test_file_api_can_index_and_lazily_load_allowed_path(tmp_path, monkeyp
         FileLoadRequest(session_id="api-files-index", loader="text_loader"),
     )
     assert loaded[0]["role"] == "normalized_text"
+
+
+@pytest.mark.asyncio
+async def test_file_api_unexpected_import_error_is_500(monkeypatch):
+    class BoomStore:
+        def import_file(self, *args, **kwargs):
+            raise OSError("/server/secret/path exploded")
+
+    workflow = SimpleNamespace(file_store=BoomStore())
+    monkeypatch.setattr(routes, "_file_workflow", lambda session_id: workflow)
+
+    with pytest.raises(Exception) as exc:
+        await add_file(
+            FileAddRequest(path="notes.txt", role="text", session_id="api-file-error")
+        )
+
+    assert getattr(exc.value, "status_code", None) == 500
+    assert getattr(exc.value, "detail", "") == "File import failed"
 
 
 @pytest.mark.asyncio

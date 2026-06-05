@@ -9,10 +9,16 @@ them.*
 `(config_path, config_dict)`. Resolution order (`resolve_config_path`):
 
 1. an explicit `path` if it exists;
-2. otherwise the bundled fallbacks — **the repo-level `arc/arc.toml` is
-   authoritative**; the inner `arc/arc/arc.toml` is a documented *pointer*
-   with no independent package/extension lists (so editing the wrong file
-   can't silently mislead).
+2. `./arc.toml` in the current working directory, when no explicit path was
+   passed;
+3. otherwise the bundled fallbacks — the repo-level `arc/arc.toml` is the
+   default package catalogue; the inner `arc/arc/arc.toml` is a documented
+   *pointer* with no independent package/extension lists.
+
+Project-local configs overlay the bundled repo-level config. In particular,
+`[packages].paths` is appended to the default package paths, so an external
+package project can add only its own path instead of copying ARC's whole
+package catalogue.
 
 Loads are memoised by `(path, mtime)` and returned as a fresh deepcopy so
 callers can mutate without corrupting the cache.

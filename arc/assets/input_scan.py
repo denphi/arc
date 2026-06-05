@@ -37,12 +37,24 @@ def scan_inputs_from_env(file_store: FileStore, *, session_id: str) -> list[File
     copy = mode == "copy"
     max_mb = int(os.environ.get("ARC_INPUTS_MAX_FILE_MB", "200") or 200)
     max_bytes = max_mb * 1024 * 1024
+    max_files = int(os.environ.get("ARC_INPUTS_MAX_FILES", "1000") or 1000)
 
     pattern = "**/*" if recursive else "*"
     assets: list[FileAsset] = []
     for path in sorted(root.glob(pattern)):
-        if not path.is_file() or path.name.startswith("."):
+        if path.name.startswith("."):
+            logger.debug("Skipping hidden input file: %s", path)
             continue
+        if not path.is_file():
+            continue
+        if len(assets) >= max_files:
+            logger.warning(
+                "Input file scan reached ARC_INPUTS_MAX_FILES=%s under %s; "
+                "remaining files were not indexed",
+                max_files,
+                root,
+            )
+            break
         try:
             if path.stat().st_size > max_bytes:
                 logger.debug("Skipping input file above size limit: %s", path)

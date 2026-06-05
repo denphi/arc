@@ -8,6 +8,14 @@ Every stateful request carries a session via `?session_id=<id>` (or the
 `X-Session-ID` header on some surfaces). Optional bearer-token auth is enabled
 by setting `ARC_API_TOKEN` (see {doc}`../architecture/security`).
 
+```{warning}
+ARC sessions are not user-owned or access-controlled. With no
+`ARC_API_TOKEN`, the API is a default-open development surface. With a shared
+token, that token grants visibility across all sessions on disk; endpoints such
+as `GET /artifact` and `GET /results` without `session_id` enumerate every
+session under `SIM2L_HOME`.
+```
+
 ## Research loop, artifacts, execution
 
 | Method + path | Purpose |

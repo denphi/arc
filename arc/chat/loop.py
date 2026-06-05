@@ -504,6 +504,9 @@ from arc.chat.parsers import (
     build_refined_goal as _build_refined_goal,
 )
 from arc.chat.parsers import (
+    is_artifact_generation_goal as _is_artifact_generation_goal,
+)
+from arc.chat.parsers import (
     is_related_refinement as _is_related_refinement,
 )
 from arc.chat.parsers import (
@@ -963,7 +966,11 @@ async def run_research(
     if refinement:
         target = _parse_refinement_target(refinement) or ctx.memory.get("target", {})
     else:
-        target = _parse_target(goal_text) or ctx.memory.get("target", {})
+        artifact_goal = _is_artifact_generation_goal(goal_text)
+        ctx.memory["goal_mode"] = "artifact_generation" if artifact_goal else "experiment"
+        target = _parse_target(goal_text)
+        if not target and not artifact_goal:
+            target = ctx.memory.get("target", {})
     goal = ResearchGoal(
         goal=goal_text,
         domain=domain or "computational science",
@@ -2249,6 +2256,9 @@ async def chat_loop(
 
 
 def main():
+    from arc.core.env import load_env
+    load_env()
+
     parser = argparse.ArgumentParser(description="ARC interactive chat")
     parser.add_argument("--provider", default=None,
                         help="Provider name. Defaults to ARC_PROVIDER or openwebui.")

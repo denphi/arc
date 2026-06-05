@@ -139,6 +139,14 @@ if HAS_TYPER:
         typer.echo(f"Agents:    {kernel.registry.list_agents()}")
         typer.echo(f"Skills:    {kernel.registry.list_skills()}")
         typer.echo(f"Workflows: {kernel.registry.list_workflows()}")
+        load_errors = kernel.registry.list_load_errors()
+        if load_errors:
+            typer.echo("\nPackage load errors:")
+            for item in load_errors:
+                name = f" {item['name']}" if item.get("name") else ""
+                typer.echo(
+                    f"  {item['package']} {item['kind']}{name}: {item['error']}"
+                )
 
         # Declared package config: what each package reads from .env / env,
         # and whether it's currently set. Secret values are masked.

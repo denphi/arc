@@ -22,37 +22,23 @@ import uuid
 from pathlib import Path
 
 from arc.runtime._adapter_common import BaseSubmitPollAdapter
+from arc.runtime.remote_runner import runner_script
+from arc.runtime.workflow_safety import check_workflow_source
 from arc.schemas.artifact import ArtifactRecord
 
 logger = logging.getLogger(__name__)
 
 # Job body: run the staged workflow, call simulate(**inputs), write result.
-_RUNNER = r"""
-import json, types, traceback, os
+_RUNNER = """
+import os
 job = os.environ["ARC_JOB_DIR"]
-src = open(os.path.join(job, "workflow.py")).read()
-inputs = json.load(open(os.path.join(job, "inputs.json")))
-mod = types.ModuleType("wf")
-out = {"ok": False, "error": "no result"}
-try:
-    exec(compile(src, "workflow.py", "exec"), mod.__dict__)
-    fn = getattr(mod, "simulate", None)
-    if not callable(fn):
-        out = {"ok": False, "error": "simulate() not defined"}
-    else:
-        r = fn(**inputs)
-        if not isinstance(r, dict):
-            out = {"ok": False, "error": "simulate() must return dict"}
-        else:
-            def _d(v):
-                if hasattr(v, "tolist"): return v.tolist()
-                if hasattr(v, "item"): return v.item()
-                raise TypeError(type(v).__name__)
-            out = {"ok": True, "outputs": json.loads(json.dumps(r, default=_d))}
-except Exception as exc:
-    out = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
-json.dump(out, open(os.path.join(job, "result.json"), "w"))
-"""
+""" + runner_script(
+    workflow_path="workflow.py",
+    inputs_path="inputs.json",
+    result_path="result.json",
+).replace("open('workflow.py')", 'open(os.path.join(job, "workflow.py"))') \
+ .replace("open('inputs.json')", 'open(os.path.join(job, "inputs.json"))') \
+ .replace("open('result.json', \"w\")", 'open(os.path.join(job, "result.json"), "w")')
 
 _SLURM_STATE_MAP = {
     "PENDING": "pending", "CONFIGURING": "pending", "RUNNING": "running",
@@ -79,12 +65,15 @@ class SlurmRuntimeAdapter(BaseSubmitPollAdapter):
 
     def _submit(self, artifact: ArtifactRecord, inputs: dict) -> str:
         art_dir = Path(artifact.path).resolve()
-        if not (art_dir / "workflow.py").exists():
+        workflow_path = art_dir / "workflow.py"
+        if not workflow_path.exists():
             raise FileNotFoundError(f"artifact has no workflow.py at {art_dir}")
+        source = workflow_path.read_text(encoding="utf-8")
+        check_workflow_source(source)
         self.scratch.mkdir(parents=True, exist_ok=True)
         job_dir = Path(self.scratch) / f"arc-{uuid.uuid4().hex[:12]}"
         job_dir.mkdir(parents=True)
-        shutil.copy2(art_dir / "workflow.py", job_dir / "workflow.py")
+        shutil.copy2(workflow_path, job_dir / "workflow.py")
         (job_dir / "inputs.json").write_text(json.dumps(inputs or {}))
         (job_dir / "runner.py").write_text(_RUNNER)
 

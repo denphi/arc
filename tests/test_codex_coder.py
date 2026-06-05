@@ -114,6 +114,45 @@ def test_codex_artifact_description_uses_generated_schema(tmp_path):
     assert "Outputs: bandgap_ev" in description
 
 
+def test_codex_artifact_name_disambiguates_same_objective_prefix():
+    first = _plan()
+    second = _plan().model_copy(
+        update={"parameters": {"x": 2.0}, "parameter_sweep": {"x": [2.0]}}
+    )
+    agent = codex_coder.CodexCoderAgent(context=AgentContext(session_id="test-session"))
+
+    assert agent._artifact_name(first).startswith("generate_codex_artifact_")
+    assert agent._artifact_name(first) != agent._artifact_name(second)
+
+
+def test_codex_prompt_lists_configured_allowed_imports(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARC_CODEX_ALLOWED_IMPORTS", "dolfin,numpy")
+    plan = _plan()
+    plan_json = json.dumps(plan.model_dump(), indent=2, default=str)
+    from arc.runtime.workflow_safety import STRICT_ALLOWED_IMPORTS
+
+    prompt = codex_coder._PROMPT.format(
+        allowed_imports=", ".join(sorted(codex_coder._codex_allowed_imports(STRICT_ALLOWED_IMPORTS))),
+        plan_json=plan_json,
+    )
+
+    assert "dolfin" in prompt
+    assert "numpy" in prompt
+
+
+def test_codex_preflight_honors_configured_allowed_imports(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARC_CODEX_ALLOWED_IMPORTS", "dolfin")
+    workflow_path = tmp_path / "workflow.py"
+    workflow_path.write_text(
+        "def simulate(**inputs):\n"
+        "    import dolfin\n"
+        "    return {'result': 1.0}\n",
+        encoding="utf-8",
+    )
+
+    codex_coder._preflight_workflow(workflow_path)
+
+
 @pytest.mark.asyncio
 async def test_codex_agent_requires_approval_relay_or_explicit_noninteractive(monkeypatch):
     monkeypatch.setattr(codex_coder.shutil, "which", lambda command: "/usr/bin/codex")

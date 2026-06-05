@@ -48,19 +48,32 @@ from arc.runtime.workflow_safety import (
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_TIMEOUT_SECONDS = float(os.getenv("ARC_LOCAL_EXEC_TIMEOUT", "30"))
+_QUEUE_RESULT_TIMEOUT_SECONDS = float(os.getenv("ARC_LOCAL_EXEC_QUEUE_TIMEOUT", "5"))
+
+
+def _default_timeout_seconds() -> float:
+    return float(os.getenv("ARC_LOCAL_EXEC_TIMEOUT", "30"))
 
 
 # ── Workflow loading (arc-owned, no sim2l import) ──────────────────────
 
 
-def load_simulate(artifact_path: str, artifact_id: str):
+def load_simulate(
+    artifact_path: str,
+    artifact_id: str,
+    *,
+    allowed_imports: frozenset[str] | None = None,
+):
     """Load ``simulate`` from an artifact's ``workflow.py``.
 
     Execs the source in a throwaway module namespace (never registered
     in ``sys.modules``, never mutates ``sys.path``) and returns the
     ``simulate`` callable. Runs the AST safety lint + import-timeout
     guard first.
+
+    ``allowed_imports`` overrides the lint's import allow-list (default:
+    stdlib-only ``STRICT_ALLOWED_IMPORTS``); see :func:`execute_workflow`.
+    The dunder/escape checks always run regardless.
 
     This is the arc-core replacement for what used to be imported from
     ``arc.runtime.sim2l_adapter._import_workflow_func`` — keeping the
@@ -71,7 +84,10 @@ def load_simulate(artifact_path: str, artifact_id: str):
     if not wf_path.exists():
         raise FileNotFoundError(f"workflow.py not found at {wf_path}")
     source = wf_path.read_text()
-    check_workflow_source(source)
+    if allowed_imports is None:
+        check_workflow_source(source)
+    else:
+        check_workflow_source(source, allowed_imports=allowed_imports)
 
     module_name = f"arc_local_artifact_{artifact_id.replace('-', '_')}"
     validate_workflow_import_timeout(source, module_name, str(wf_path))
@@ -142,7 +158,7 @@ def run_in_subprocess(
     filename: str,
     inputs: dict,
     *,
-    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """Run ``simulate(**inputs)`` in a spawned child with a timeout.
 
@@ -151,6 +167,7 @@ def run_in_subprocess(
     is terminated and reported as a timeout. Never raises.
     """
     try:
+        timeout = _default_timeout_seconds() if timeout is None else timeout
         ctx = mp.get_context("spawn")
         queue = ctx.Queue()
         proc = ctx.Process(target=_exec_worker, args=(source, filename, inputs, queue))
@@ -171,7 +188,7 @@ def run_in_subprocess(
         # bare empty() check can race and report "no result" for a run that
         # actually succeeded.
         try:
-            return queue.get(timeout=1.0)
+            return queue.get(timeout=_QUEUE_RESULT_TIMEOUT_SECONDS)
         except Exception:  # noqa: BLE001 — genuinely empty / closed queue
             pass
         if proc.exitcode:
@@ -212,7 +229,8 @@ def execute_workflow(
     artifact_id: str,
     inputs: dict,
     *,
-    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    timeout: float | None = None,
+    allowed_imports: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Execute an artifact's ``simulate(**inputs)`` and return its outputs.
 
@@ -222,6 +240,14 @@ def execute_workflow(
     raises for workflow-level failures (only for a genuinely-missing
     workflow.py, which surfaces as a FileNotFoundError to the caller's
     validate step).
+
+    ``allowed_imports`` overrides the import allow-list the AST safety lint
+    enforces (default: ``STRICT_ALLOWED_IMPORTS``, stdlib-only). A runtime
+    adapter for a domain stack — e.g. a FEniCS adapter that legitimately needs
+    ``import dolfin`` — passes a widened set here. The dunder / sandbox-escape
+    checks (``eval``, ``__class__``, ``getattr`` of dunders, …) still run
+    regardless of the import allow-list, so widening it permits extra *imports*
+    without dropping the escape protections.
     """
     wf_path = Path(artifact_path) / "workflow.py"
     if not wf_path.exists():
@@ -235,7 +261,7 @@ def execute_workflow(
         # In-process: load + call directly. The loader runs the safety
         # lint; a failure there propagates as an error result.
         try:
-            func = load_simulate(artifact_path, artifact_id)
+            func = load_simulate(artifact_path, artifact_id, allowed_imports=allowed_imports)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
         return run_in_process(func, inputs)
@@ -243,7 +269,10 @@ def execute_workflow(
     # Subprocess (default): lint in-parent, then exec in the child.
     source = wf_path.read_text()
     try:
-        check_workflow_source(source)
+        if allowed_imports is None:
+            check_workflow_source(source)
+        else:
+            check_workflow_source(source, allowed_imports=allowed_imports)
     except Exception as exc:  # noqa: BLE001 — safety lint rejected the source
         return {"ok": False, "error": f"workflow safety check failed: {exc}"}
     return run_in_subprocess(source, str(wf_path), inputs, timeout=timeout)

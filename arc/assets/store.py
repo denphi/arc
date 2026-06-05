@@ -126,7 +126,12 @@ class FileStore:
             session_id=session_id,
             run_id=run_id,
             created_at=self._now(),
-            metadata={**(metadata or {}), "indexed": True},
+            metadata={
+                **(metadata or {}),
+                "indexed": True,
+                "indexed_size_bytes": stat.st_size,
+                "indexed_mtime_ns": stat.st_mtime_ns,
+            },
         )
         self._upsert(asset)
         return asset
@@ -151,9 +156,22 @@ class FileStore:
             raise ValueError(
                 f"File too large: {stat.st_size} bytes exceeds {self.max_file_bytes}"
             )
+        indexed_size = asset.metadata.get("indexed_size_bytes")
+        indexed_mtime = asset.metadata.get("indexed_mtime_ns")
+        if indexed_size is not None and indexed_size != stat.st_size:
+            raise ValueError(
+                f"Indexed file changed size before materialization: {source}"
+            )
+        if indexed_mtime is not None and indexed_mtime != stat.st_mtime_ns:
+            raise ValueError(
+                f"Indexed file changed timestamp before materialization: {source}"
+            )
         sha = self._hash_file(source)
         stored_path = self._store_blob(source, sha)
-        new_meta = {k: v for k, v in asset.metadata.items() if k != "indexed"}
+        new_meta = {
+            k: v for k, v in asset.metadata.items()
+            if k not in {"indexed", "indexed_size_bytes", "indexed_mtime_ns"}
+        }
         materialised = replace(
             asset, sha256=sha, stored_path=str(stored_path), metadata=new_meta,
         )
@@ -254,7 +272,7 @@ class FileStore:
             raise ValueError("FileStore assets are read-only")
         return self.path(file_id).open(mode)
 
-    def read_text(self, file_id: str, max_bytes: int = 1_000_000) -> str:
+    def read_text(self, file_id: str, max_bytes: int = 10_000_000) -> str:
         data = self.read_bytes(file_id, max_bytes=max_bytes)
         return data.decode("utf-8")
 

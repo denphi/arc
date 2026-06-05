@@ -162,6 +162,17 @@ def test_file_store_materializes_indexed_asset_on_first_read(tmp_path):
     assert store.path(asset.id).is_relative_to(store.root)
 
 
+def test_file_store_rejects_changed_indexed_source_before_materialize(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("notes", encoding="utf-8")
+    store = FileStore(tmp_path / "store")
+    asset = store.index_file(source, role="text", session_id="s1")
+    source.write_text("changed notes", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Indexed file changed"):
+        store.read_text(asset.id)
+
+
 def test_register_external_is_metadata_only_until_first_access(tmp_path):
     source = tmp_path / "external.txt"
     source.write_text("external", encoding="utf-8")

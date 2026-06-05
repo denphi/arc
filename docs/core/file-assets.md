@@ -19,6 +19,7 @@ export ARC_INPUTS_DIR=~/arc-inputs
 export ARC_INPUTS_IMPORT_MODE=index
 export ARC_INPUTS_RECURSIVE=1
 export ARC_INPUTS_MAX_FILE_MB=200
+export ARC_INPUTS_MAX_FILES=1000
 arc chat
 ```
 
@@ -31,6 +32,12 @@ Set `ARC_INPUTS_IMPORT_MODE=copy` when you want startup scan to hash and copy
 input files into the managed content-addressed store immediately. The default
 `index` mode stores only path/stat/media metadata and materialises a file on
 first read or loader use.
+
+Indexed assets keep a reference to the original local path until first use.
+If the file's size or modification timestamp changes before materialisation,
+ARC refuses to load it and asks you to reattach/re-index the file. Use
+`ARC_INPUTS_IMPORT_MODE=copy` for portable sessions that must not depend on
+the original path.
 
 ## CLI and chat
 

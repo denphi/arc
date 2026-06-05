@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 # Guard so repeated calls (multiple entry points in one process) are no-ops
 # after the first successful load.
@@ -103,3 +104,21 @@ def load_env(*, force: bool = False) -> dict[str, str]:
     if applied:
         logger.debug("Loaded %d var(s) from .env: %s", len(applied), sorted(applied))
     return applied
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """Return a normalized boolean for an environment flag.
+
+    Truthy values are ``1``, ``true``, ``yes``, and ``on``. Falsy values are
+    ``0``, ``false``, ``no``, and ``off``. Unset or unrecognized values return
+    ``default`` so callers can opt into conservative behavior.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in _TRUTHY:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default

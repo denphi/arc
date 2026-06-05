@@ -433,9 +433,9 @@ def validate_workflow_import_timeout(source: str, module_name: str, filename: st
             proc.join()
         raise TimeoutError("workflow.py import timed out")
 
-    if not queue.empty():
-        result = queue.get()
-    else:
+    try:
+        result = queue.get(timeout=5.0)
+    except Exception:  # noqa: BLE001 — genuinely empty / closed queue
         # Worker died before reporting back (e.g. segfault, hard crash) —
         # surface the exit code so users have something to investigate.
         result = {

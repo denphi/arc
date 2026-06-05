@@ -175,6 +175,61 @@ def test_execute_workflow_rejects_unsafe_source():
     assert "safety" in r["error"].lower() or "disallowed" in r["error"].lower()
 
 
+# ── allowed_imports seam (domain runtime adapters, e.g. FEniCS) ──────────
+
+
+_JSON_IMPORT = (
+    "def simulate(x=1.0):\n"
+    "    import json\n"
+    "    return {'z': len(json.dumps([x]))}\n"
+)
+
+
+def test_execute_workflow_default_rejects_non_stdlib_import():
+    # `json` is not in the strict stdlib subset → rejected by default.
+    d = _artifact_dir(_JSON_IMPORT)
+    r = execute_workflow(d, "a", {"x": 1.0})
+    assert r["ok"] is False
+    assert "disallowed import" in r["error"]
+
+
+def test_execute_workflow_allowed_imports_widens_the_lint():
+    # A caller (a domain adapter) can permit an extra import without editing
+    # the default. The dunder/escape checks are unaffected (see below).
+    d = _artifact_dir(_JSON_IMPORT)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
+    assert r["ok"] is True
+    assert "z" in r["outputs"]
+
+
+def test_execute_workflow_allowed_imports_still_blocks_escapes():
+    # Widening the IMPORT allow-list must NOT drop the sandbox-escape lint.
+    evil = (
+        "def simulate(x=1.0):\n"
+        "    return {'z': ().__class__.__bases__[0].__subclasses__()}\n"
+    )
+    d = _artifact_dir(evil)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json", "os"}))
+    assert r["ok"] is False
+    assert "safety" in r["error"].lower() or "disallowed" in r["error"].lower()
+
+
+def test_load_simulate_allowed_imports_widens_the_lint():
+    d = _artifact_dir(_JSON_IMPORT)
+    with pytest.raises(ValueError, match="disallowed import"):
+        load_simulate(d, "a")  # strict default rejects `import json`
+    func = load_simulate(d, "a", allowed_imports=frozenset({"json"}))
+    assert callable(func)
+
+
+def test_execute_workflow_reads_timeout_env_at_call_time(monkeypatch):
+    import arc.runtime.executor as executor
+
+    monkeypatch.setenv("ARC_LOCAL_EXEC_TIMEOUT", "7.5")
+
+    assert executor._default_timeout_seconds() == 7.5
+
+
 # ── LocalRuntimeAdapter end-to-end ──────────────────────────────────────
 
 

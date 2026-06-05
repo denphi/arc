@@ -90,6 +90,7 @@ class ComponentRegistry:
         # ones with bespoke source tracking (review finding 1). Agents keep
         # their richer per-name source map above and also record here.
         self._component_source: dict[tuple[str, str], str] = {}
+        self._load_errors: list[dict[str, str]] = []
 
     # --- package-source tracking (every slot) ---
 
@@ -118,6 +119,26 @@ class ComponentRegistry:
         if not disabled_packages:
             return names
         return [n for n in names if not self.is_disabled(kind, n, disabled_packages)]
+
+    # --- package-load diagnostics ---
+
+    def record_load_error(
+        self,
+        package_name: str,
+        kind: str,
+        name: str | None,
+        error: str,
+    ) -> None:
+        """Record a component declaration that failed while loading a package."""
+        self._load_errors.append({
+            "package": package_name,
+            "kind": kind,
+            "name": name or "",
+            "error": error,
+        })
+
+    def list_load_errors(self) -> list[dict[str, str]]:
+        return [dict(item) for item in self._load_errors]
 
     # --- packages ---
 

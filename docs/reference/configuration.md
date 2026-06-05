@@ -25,6 +25,7 @@ status.
 | `ARC_INPUTS_IMPORT_MODE` | `index` | Startup file handling mode: `index` or `copy`. |
 | `ARC_INPUTS_RECURSIVE` | `1` | Recursively scan the input folder. |
 | `ARC_INPUTS_MAX_FILE_MB` | `200` | Skip startup input files larger than this limit. |
+| `ARC_INPUTS_MAX_FILES` | `1000` | Maximum number of startup input files to index per session. |
 | `ARC_FILES_ALLOWED_ROOTS` | *(unset)* | Extra local directories the HTTP API may import files from, separated by `os.pathsep` (`:` on macOS/Linux, `;` on Windows). |
 | `ARC_FILES_TRUSTED_LOCAL` | `0` | `1` lets the HTTP API import arbitrary local paths readable by the ARC process; use only for private local servers. |
 | `SIM2L_HOME` | `~/.sim2l` | Root for per-session files. |
@@ -63,11 +64,14 @@ See {doc}`../guides/providers`.
 
 | Prefix | Variables |
 |---|---|
-| `ARC_CODEX_*` | `COMMAND`, `MODEL`, `PROFILE`, `SANDBOX`, `APPROVAL_POLICY`, `INTERACTIVE_APPROVAL_POLICY`, `ALLOW_NON_INTERACTIVE`, `SKIP_GIT_REPO_CHECK`, `CONFIG`, `WORKDIR`, `ARGS`/`GLOBAL_ARGS`/`EXTRA_ARGS`, `TIMEOUT_SECONDS` |
+| `ARC_CODEX_*` | `COMMAND`, `MODEL`, `PROFILE`, `SANDBOX`, `APPROVAL_POLICY`, `INTERACTIVE_APPROVAL_POLICY`, `ALLOW_NON_INTERACTIVE`, `SKIP_GIT_REPO_CHECK`, `ALLOWED_IMPORTS`, `CONFIG`, `WORKDIR`, `ARGS`/`GLOBAL_ARGS`/`EXTRA_ARGS`, `TIMEOUT_SECONDS` |
 | `ARC_CLAUDE_CODE_*` | `COMMAND`, `MODEL`, `FALLBACK_MODEL`, `PERMISSION_MODE`, `EFFORT`, `OUTPUT_FORMAT`, `ALLOWED_TOOLS`/`DISALLOWED_TOOLS`, `SYSTEM_PROMPT`/`APPEND_SYSTEM_PROMPT`, `MAX_BUDGET_USD`, `ARGS`/`EXTRA_ARGS`, `TIMEOUT_SECONDS` |
 
-Non-chat Codex runs require an approval callback unless
-`ARC_CODEX_ALLOW_NON_INTERACTIVE=true`. See the bundled-package catalogue.
+Non-chat Codex/Claude Code runs require an approval callback unless
+`ARC_CODEX_ALLOW_NON_INTERACTIVE=true` or
+`ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE=true`. Those non-interactive modes are
+full-trust automation: do not enable them when environment variables or package
+configuration can be influenced by an untrusted caller.
 
 ## Runtime-adapter packages
 

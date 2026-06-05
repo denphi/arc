@@ -83,15 +83,10 @@ class OpenWebUIProvider(ProviderContract):
         client = self._get_client()
         model = self._resolve_model()
 
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-
         max_tokens  = kwargs.get("max_tokens", 4096)
         temperature = kwargs.get("temperature", 0.2)
 
-        def _call():
+        def _call(messages):
             return client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -100,11 +95,24 @@ class OpenWebUIProvider(ProviderContract):
             )
 
         loop = asyncio.get_running_loop()
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         try:
-            response = await loop.run_in_executor(None, _call)
+            response = await loop.run_in_executor(None, _call, messages)
         except asyncio.CancelledError:
             raise
-        return response.choices[0].message.content
+        except Exception:
+            if not system:
+                raise
+            fallback_messages = [{
+                "role": "user",
+                "content": f"System instructions:\n{system}\n\nUser request:\n{prompt}",
+            }]
+            response = await loop.run_in_executor(None, _call, fallback_messages)
+        content = response.choices[0].message.content
+        return content or ""
 
     async def complete_structured(
         self,
@@ -128,5 +136,5 @@ class OpenWebUIProvider(ProviderContract):
         try:
             client = self._get_client()
             return [m.id for m in client.models.list()]
-        except Exception as exc:
-            return [f"error: {exc}"]
+        except Exception:
+            return []

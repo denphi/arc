@@ -1,10 +1,10 @@
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from arc.api.security import require_api_token, validate_provider_base_url
+from arc.core.env import env_flag
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore, validate_run_id
 from arc.orchestrator.workflow import ResearchWorkflow
@@ -32,7 +32,7 @@ class ResearchRequest(BaseModel):
     goal: ResearchGoal
     llm: LLMConfig = LLMConfig()
     session_id: str | None = None
-    iterations: int = Field(default=1, ge=1)
+    iterations: int = Field(default=1, ge=1, le=20)
     workflow: str = "research-loop"
 
 
@@ -65,12 +65,9 @@ def _workflow(
     session_id: str | None = None,
     workflow_name: str = "research-loop",
 ) -> ResearchWorkflow:
-    # Review item #T4: base_url flows into provider HTTP clients. Validate
-    # it for openwebui (the only provider that actually honours base_url)
-    # so /research/start can't be used as an SSRF primitive either.
-    safe_base_url = llm.base_url
-    if llm.provider == "openwebui" and llm.base_url:
-        safe_base_url = validate_provider_base_url(llm.base_url)
+    # base_url may be consumed by bundled or package-provided providers, so
+    # validate every supplied URL before constructing the workflow.
+    safe_base_url = validate_provider_base_url(llm.base_url) if llm.base_url else None
     resolved_session = session_id or new_session_id()
     workflow = ResearchWorkflow(
         provider_name=llm.provider,
@@ -128,9 +125,7 @@ def _results(session_id: str) -> ResultsStore:
 
 
 def _files_trusted_local() -> bool:
-    return os.environ.get("ARC_FILES_TRUSTED_LOCAL", "").lower() in {
-        "1", "true", "yes",
-    }
+    return env_flag("ARC_FILES_TRUSTED_LOCAL")
 
 
 def _file_workflow(session_id: str) -> ResearchWorkflow:
@@ -214,7 +209,9 @@ async def add_file(req: FileAddRequest):
         # allowed-roots rejection message is safe to surface).
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc))
+        import logging
+        logging.getLogger(__name__).exception("File import failed: %s", exc)
+        raise HTTPException(status_code=500, detail="File import failed")
     return asset.to_dict()
 
 

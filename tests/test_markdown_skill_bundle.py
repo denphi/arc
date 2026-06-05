@@ -68,3 +68,81 @@ async def test_markdown_skill_prompt_includes_bundle_and_file_tables(tmp_path):
     assert "references/schema.md" in provider.prompt
     assert "Available file inputs:" in provider.prompt
     assert asset.id in provider.prompt
+    assert "paper.txt paper text/plain" in provider.prompt
+
+
+# ── output_format: json (structured skill output) ────────────────────────
+
+
+class _StaticProvider:
+    """Provider that returns a fixed response regardless of prompt."""
+
+    def __init__(self, response: str):
+        self._response = response
+        self.prompt = ""
+
+    async def complete(self, prompt, system: str = "", **kwargs):
+        self.prompt = prompt
+        return self._response
+
+
+def _skill_with_frontmatter(tmp_path, body_frontmatter: str) -> MarkdownSkill:
+    path = tmp_path / "SKILL.md"
+    content = f"---\n{body_frontmatter}\n---\n# Demo skill\n"
+    path.write_text(content, encoding="utf-8")
+    return MarkdownSkill("demo", path, content)
+
+
+@pytest.mark.asyncio
+async def test_markdown_skill_default_returns_raw_text(tmp_path):
+    skill = _skill_with_frontmatter(tmp_path, "name: demo")
+    provider = _StaticProvider('{"a": 1}')
+    context = AgentContext(session_id="s1", memory={"provider": provider})
+
+    out = await skill.execute({}, context)
+
+    # Default (no output_format): unchanged — raw string, no `format` key.
+    assert out == {"skill": "demo", "result": '{"a": 1}'}
+    assert "Return a concise JSON-compatible result." in provider.prompt
+
+
+@pytest.mark.asyncio
+async def test_markdown_skill_output_format_json_parses_object(tmp_path):
+    skill = _skill_with_frontmatter(tmp_path, "name: demo\noutput_format: json")
+    provider = _StaticProvider('{"problem_id": "p1", "fields": ["u"]}')
+    context = AgentContext(session_id="s1", memory={"provider": provider})
+
+    out = await skill.execute({}, context)
+
+    assert out["skill"] == "demo"
+    assert out["format"] == "json"
+    assert out["result"] == {"problem_id": "p1", "fields": ["u"]}
+    # The prompt steers the model toward strict JSON.
+    assert "ONLY a single valid JSON value" in provider.prompt
+
+
+@pytest.mark.asyncio
+async def test_markdown_skill_output_schema_triggers_json_and_strips_fences(tmp_path):
+    # A truthy `output_schema` (not just output_format) also opts in.
+    skill = _skill_with_frontmatter(tmp_path, "name: demo\noutput_schema: extraction")
+    provider = _StaticProvider('Here you go:\n```json\n{"ok": true}\n```\n')
+    context = AgentContext(session_id="s1", memory={"provider": provider})
+
+    out = await skill.execute({}, context)
+
+    assert out["format"] == "json"
+    assert out["result"] == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_markdown_skill_json_parse_failure_is_flagged(tmp_path):
+    skill = _skill_with_frontmatter(tmp_path, "name: demo\noutput_format: json")
+    provider = _StaticProvider("this is not json at all")
+    context = AgentContext(session_id="s1", memory={"provider": provider})
+
+    out = await skill.execute({}, context)
+
+    # Falls back to raw text but flags the failure rather than crashing.
+    assert out["result"] == "this is not json at all"
+    assert out["format"] == "text"
+    assert out["parse_error"] is True

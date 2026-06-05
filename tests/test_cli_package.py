@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from arc.cli.main import app
-from arc.core.loader import load_package
+from arc.core.loader import _import_from_file, load_package
 from arc.core.registry import ComponentRegistry
 
 
@@ -82,6 +82,32 @@ def test_package_validate_accepts_present_skill(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "OK: arc-good-skill" in result.stdout
+
+
+def test_package_validate_rejects_workflow_missing_skill_reference(tmp_path):
+    target = tmp_path / "arc-bad-workflow"
+    (target / "workflows").mkdir(parents=True)
+    (target / "workflows" / "loop.yaml").write_text(
+        "name: loop\n"
+        "steps:\n"
+        "  - id: missing\n"
+        "    skill: missing-skill\n"
+        "    input: {}\n",
+        encoding="utf-8",
+    )
+    (target / "package.yaml").write_text(
+        "name: arc-bad-workflow\n"
+        "provides:\n"
+        "  workflows:\n"
+        "    - name: loop\n"
+        "      path: workflows/loop.yaml\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 1
+    assert "missing-skill" in _all_output(result)
 
 
 def test_package_loads_skill_bundle_names_from_frontmatter(tmp_path):
@@ -182,6 +208,47 @@ def test_package_validate_rejects_missing_declared_path(tmp_path):
 
     assert result.exit_code == 1
     assert "declared path does not exist" in _all_output(result)
+
+
+def test_load_package_records_component_errors(tmp_path):
+    target = tmp_path / "arc-partial"
+    target.mkdir()
+    (target / "package.yaml").write_text(
+        "name: arc-partial\n"
+        "provides:\n"
+        "  agents:\n"
+        "    - name: missing\n"
+        "      path: agents/missing.py\n"
+        "      class: MissingAgent\n",
+        encoding="utf-8",
+    )
+
+    registry = ComponentRegistry()
+    load_package(target, registry)
+
+    assert registry.list_packages() == ["arc-partial"]
+    assert registry.list_load_errors() == [{
+        "package": "arc-partial",
+        "kind": "agent",
+        "name": "missing",
+        "error": "Cannot load 'MissingAgent'; file does not exist: "
+        f"{target / 'agents' / 'missing.py'}",
+    }]
+
+
+def test_import_from_file_uses_unique_module_names_for_same_layout(tmp_path):
+    first = tmp_path / "one" / "agents"
+    second = tmp_path / "two" / "agents"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "coder.py").write_text("class Marker:\n    value = 'one'\n", encoding="utf-8")
+    (second / "coder.py").write_text("class Marker:\n    value = 'two'\n", encoding="utf-8")
+
+    first_cls = _import_from_file(first / "coder.py", "Marker")
+    second_cls = _import_from_file(second / "coder.py", "Marker")
+
+    assert first_cls.value == "one"
+    assert second_cls.value == "two"
 
 
 def test_package_validate_rejects_strategy_missing_role(tmp_path):

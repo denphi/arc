@@ -264,6 +264,8 @@ def validate_package(
         workflow_path = workflow.get("path") if isinstance(workflow, dict) else None
         if workflow_path and not (path / workflow_path).exists():
             errors.append(f"declared workflow path does not exist: {workflow['path']}")
+        elif workflow_path:
+            errors.extend(_validate_workflow_references(path / workflow_path, manifest, path))
 
     # Skills are declared as package-relative file paths; the file must exist
     # (review finding P3-1 — previously unchecked).
@@ -443,4 +445,71 @@ def _verify_registered(manifest: dict, registry, package_dir: Path) -> list[str]
     except Exception as exc:  # noqa: BLE001
         errors.append(f"strategy verification failed: {exc}")
 
+    return errors
+
+
+def _provided_names(manifest: dict, group: str) -> set[str]:
+    provides = manifest.get("provides", {}) or {}
+    out: set[str] = set()
+    for item in provides.get(group, []) or []:
+        if isinstance(item, dict) and item.get("name"):
+            out.add(str(item["name"]))
+    return out
+
+
+def _validate_workflow_references(
+    workflow_path: Path,
+    manifest: dict,
+    package_dir: Path,
+) -> list[str]:
+    """Check workflow step agent/skill/adapter references for obvious misses."""
+    try:
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return [f"invalid workflow YAML in {workflow_path.name}: {exc}"]
+
+    agents = _provided_names(manifest, "agents")
+    adapters = _provided_names(manifest, "runtime_adapters")
+    skills = _provided_names(manifest, "skills")
+    try:
+        from arc.core.loader import _skill_name, _skill_path
+        for item in (manifest.get("provides", {}) or {}).get("skills", []) or []:
+            skill_file = _skill_path(package_dir, item)
+            skills.add(_skill_name(item, skill_file))
+    except Exception:  # noqa: BLE001
+        pass
+    builtin_skills = {"validate-sim2l", "write-artifact", "improve-artifact"}
+    builtin_adapters = {"local", "sim2l", "docker", "slurm", "k8s", "kubernetes"}
+    try:
+        from arc.core.strategies import known_roles
+        roles = set(known_roles())
+    except Exception:  # noqa: BLE001
+        roles = set()
+
+    errors: list[str] = []
+    for step in workflow.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        step_id = step.get("id", "<unnamed>")
+        agent = step.get("agent")
+        if agent and agent not in agents and agent not in roles:
+            errors.append(
+                f"workflow {workflow_path.name} step {step_id!r} references "
+                f"agent {agent!r}, but it is not provided by this package and "
+                "no requires dependencies are declared"
+            )
+        skill = step.get("skill")
+        if skill and skill not in skills and skill not in builtin_skills:
+            errors.append(
+                f"workflow {workflow_path.name} step {step_id!r} references "
+                f"skill {skill!r}, but it is not provided by this package and "
+                "no requires dependencies are declared"
+            )
+        adapter = step.get("adapter")
+        if adapter and adapter not in adapters and adapter not in builtin_adapters:
+            errors.append(
+                f"workflow {workflow_path.name} step {step_id!r} references "
+                f"adapter {adapter!r}, but it is not provided by this package and "
+                "no requires dependencies are declared"
+            )
     return errors

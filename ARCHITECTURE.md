@@ -4,7 +4,7 @@ This document captures the **current** shape of the `arc/` codebase. It
 is meant as an onboarding map, not an aspiration — every module shown
 exists and is wired up at the time of writing.
 
-Last updated: 2026-05-22.
+Last updated: 2026-06-04.
 
 ---
 
@@ -92,7 +92,7 @@ arc/
                              ▼
                  ┌─────────────────────┐
                  │  arc.chat.loop      │   ← chat_loop() coroutine
-                 │  ~1660 lines        │     dispatches per user line
+                 │  REPL dispatcher    │     dispatches per user line
                  └──┬─────┬─────┬──────┘
                     │     │     │
    ┌────────────────┘     │     └────────────────┐
@@ -382,55 +382,21 @@ Behaviour & observability:
 
 ## Test layout
 
-```
+The test suite is organized by subsystem:
+
+```text
 tests/
-├── fakes.py                          # FakeProvider, make_workflow, ...
-├── test_chat_classifier.py           # 52 tests
-├── test_chat_parsers.py              # 47 tests
-├── test_chat_dispatch.py             # 35 tests
-├── test_chat_events.py               # 31 tests
-├── test_chat_commands.py             # 27 tests (legacy)
-├── test_chat_commands_sweep_exec.py  # 15 tests (this cycle)
-├── test_chat_commands_runtime.py     # 16 tests (this cycle)
-├── test_chat_commands_services_full.py # 13 tests (this cycle)
-├── test_chat_router.py               # 24 tests
-├── test_router_v2.py                 # 22 tests
-├── test_chat_tools.py                # 23 tests
-├── test_chat_check.py                # 23 tests
-├── test_chat_check_providers.py      # 8 tests (this cycle)
-├── test_chat_v2_flag.py              # 14 tests
-├── test_chat_io_utils.py             # 12 tests (this cycle)
-├── test_skill_loader.py              # 22 tests
-├── test_agent_definition.py          # 23 tests
-├── test_plan_mode.py                 # 19 tests
-├── test_chat_env_flag.py             # 19 tests
-├── test_chat_state.py                # 10 tests
-├── test_chat_session_io.py           # 8 tests
-├── test_pipeline_core.py             # 11 tests
-├── test_pipeline_phases.py           # 16 tests
-├── test_pipeline_end_to_end.py       # 6 tests
-├── test_chat_targets.py              # 10 tests
-├── test_chat_security_invariants.py  # 5 tests
-├── test_phase2_security.py           # 10 tests
-├── test_phase3_security.py           # 9 tests
-├── test_phase4_security.py           # 11 tests
-├── test_api_security.py              # 8 tests
-├── test_chat_services_manager.py     # 9 tests
-├── test_cli_chat.py                  # 10 tests
-├── test_chat_answer_question.py      # 4 tests
-├── test_chat_helpers.py              # 15 tests
-├── test_chat_registry.py             # 27 tests
-├── test_reviewer_yaml.py             # 7 tests
-├── test_run_research_pipeline.py     # 1 test
-│
-├── test_adapter.py / test_agents.py / test_evaluators.py / test_memory.py
-├── test_workflow.py / test_kernel_loader.py
-├── test_api_routes.py
-├── test_claude_coder.py / test_codex_coder.py
+├── chat / command / router / pipeline tests
+├── API, UI, provider, security, and session tests
+├── package loader / manifest / local-package tests
+├── runtime adapter and executor tests
+├── workflow / strategy / recipe / audit tests
+├── asset loader and FileAsset tests
+└── coding backend tests
 ```
 
-Currently 685 tests, all green in ~12 seconds.
-Coverage: 70% on `arc.chat`, 100% on 22 of 44 modules.
+Use `python -m pytest -q` for the current count and timing. Avoid recording
+hard-coded totals here; they change with every review pass.
 
 ---
 

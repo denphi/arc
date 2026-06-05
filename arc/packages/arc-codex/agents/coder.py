@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import pty
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from arc.contracts.agent import AgentContract
+from arc.core.env import env_flag
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
@@ -26,11 +28,16 @@ workflow.py requirements:
 - Define def simulate(**inputs) -> dict
 - Read every input via inputs.get("name", default)
 - Return only numeric scalar outputs in a dict
-- Only import from: math, cmath, itertools, functools, operator, statistics, random, decimal, fractions, collections, heapq, bisect, array, typing, abc, dataclasses, enum
-- Do not import numpy, scipy, pandas, or any other external package
+- Only import from the allowed modules listed below.
+- If an allowed external runtime package is required, import it inside simulate()
+  so artifact registration can still perform syntax/static checks on hosts where
+  that runtime is not installed.
 - Do not use dunder names or dunder attributes such as __dict__, __class__, or x.__tan__
 - Use normal math helpers or local helper functions instead of hidden/internal methods
 - Keep code deterministic
+
+Allowed imports:
+{allowed_imports}
 
 sim2l.yaml requirements:
 - Include name, description, inputs, and outputs
@@ -72,13 +79,6 @@ class CodexApprovalAborted(CodexApprovalError):
 def _append_option(args: list[str], flag: str, value: str | None) -> None:
     if value:
         args.extend([flag, value])
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
 
 
 def _build_codex_args(interactive_approvals: bool = False) -> tuple[list[str], list[str]]:
@@ -145,14 +145,24 @@ def _progress_from_event(event: dict) -> str | None:
 def _preflight_workflow(workflow_path: Path) -> None:
     """Validate Codex output before registering it as an ARC artifact."""
     from arc.runtime.workflow_safety import (
+        STRICT_ALLOWED_IMPORTS,
         check_workflow_source,
         validate_workflow_import_timeout,
     )
 
     source = workflow_path.read_text(encoding="utf-8")
-    check_workflow_source(source)
+    check_workflow_source(source, allowed_imports=_codex_allowed_imports(STRICT_ALLOWED_IMPORTS))
     module_name = f"arc_codex_preflight_{os.getpid()}_{abs(hash(str(workflow_path)))}"
     validate_workflow_import_timeout(source, module_name, str(workflow_path))
+
+
+def _codex_allowed_imports(base: frozenset[str]) -> frozenset[str]:
+    extra = frozenset(
+        item.strip()
+        for item in os.environ.get("ARC_CODEX_ALLOWED_IMPORTS", "").split(",")
+        if item.strip()
+    )
+    return base | extra
 
 
 def _schema_keys_from_yaml(sim2l_path: Path, section: str) -> list[str]:
@@ -194,7 +204,11 @@ class CodexCoderAgent(AgentContract):
         workspace.mkdir(parents=True, exist_ok=True)
 
         plan_json = json.dumps(plan.model_dump(), indent=2, default=str)
-        prompt = _PROMPT.format(plan_json=plan_json)
+        from arc.runtime.workflow_safety import STRICT_ALLOWED_IMPORTS
+        prompt = _PROMPT.format(
+            allowed_imports=", ".join(sorted(_codex_allowed_imports(STRICT_ALLOWED_IMPORTS))),
+            plan_json=plan_json,
+        )
         (workspace / "PROMPT.md").write_text(prompt, encoding="utf-8")
         (workspace / "PLAN.json").write_text(plan_json, encoding="utf-8")
 
@@ -216,7 +230,7 @@ class CodexCoderAgent(AgentContract):
         else:
             allow_non_interactive = bool(
                 self.context.config.get("allow_non_interactive")
-                or _env_flag("ARC_CODEX_ALLOW_NON_INTERACTIVE", False)
+                or env_flag("ARC_CODEX_ALLOW_NON_INTERACTIVE", False)
             )
             if not allow_non_interactive:
                 raise RuntimeError(
@@ -431,4 +445,8 @@ class CodexCoderAgent(AgentContract):
 
         words = re.sub(r"[^a-z0-9 ]", " ", plan.proposal.objective.lower()).split()
         stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by", "via"}
-        return "_".join([w for w in words if w not in stop][:4])[:40] or "codex_sim2l_artifact"
+        stem = "_".join([w for w in words if w not in stop][:4])[:40] or "codex_sim2l_artifact"
+        digest = hashlib.sha256(
+            json.dumps(plan.model_dump(), sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:8]
+        return f"{stem}_{digest}"

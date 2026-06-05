@@ -341,6 +341,24 @@ class PlannerAgent(AgentContract):
                 methodology=proposal.methodology[:300],
                 target=target or "none specified",
             )
+            if self.context.memory.get("goal_mode") == "artifact_generation":
+                prompt += (
+                    "\n\nArtifact/code-generation mode:\n"
+                    "- Treat the task as building a requested code artifact, not "
+                    "as inventing an optimization target.\n"
+                    "- Parameters should be real solver/runtime inputs explicitly "
+                    "supported by the request or source material; if the source "
+                    "does not provide numeric inputs, keep the parameter set small "
+                    "and use implementation controls such as mesh resolution only "
+                    "when they are required.\n"
+                    "- The experimental_design must include extracting source facts, "
+                    "implementing the requested solver, validating against the paper, "
+                    "and producing requested plots/results.\n"
+                    "- Do not require output keys derived from instruction words "
+                    "such as workflow, package, skill, or chain.\n"
+                    "- Do not ask the builder for a surrogate model when the user "
+                    "asked for a concrete solver implementation.\n"
+                )
             try:
                 plan = await provider.complete_structured(prompt, ExperimentPlan, max_tokens=2048)
                 # Ensure artifact_strategy is always a short safe string.

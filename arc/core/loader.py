@@ -1,3 +1,4 @@
+import hashlib
 import importlib
 import json
 import logging
@@ -106,15 +107,75 @@ class MarkdownSkill:
             inputs_block = repr(inputs)
         bundle_block = self._bundle_prompt_block()
         file_block = self._file_prompt_block(inputs, context)
+        # A skill can declare `output_format: json` (or `output_schema:`) in its
+        # SKILL.md frontmatter when its contract is a structured JSON object
+        # rather than free text. We then steer the model to emit JSON and parse
+        # the response into a dict/list, so a downstream step receives
+        # structured data instead of an opaque blob. Default (unset) keeps the
+        # historical free-text behaviour, so existing skills are unaffected.
+        wants_json = self._wants_json_output()
+        tail = (
+            "Return ONLY a single valid JSON value (object or array). "
+            "No markdown fences, no prose before or after."
+            if wants_json
+            else "Return a concise JSON-compatible result."
+        )
         prompt = (
             "Execute the following ARC skill using the provided inputs.\n\n"
             f"{self.content}\n\n"
             f"{bundle_block}"
             f"{file_block}"
             f"Inputs:\n{inputs_block}\n\n"
-            "Return a concise JSON-compatible result."
+            f"{tail}"
         )
-        return {"skill": self.name, "result": await provider.complete(prompt)}
+        raw = await provider.complete(prompt)
+        if not wants_json:
+            return {"skill": self.name, "result": raw}
+        parsed, ok = self._parse_json_result(raw)
+        result: dict[str, Any] = {"skill": self.name, "result": parsed, "format": "json"}
+        if not ok:
+            # Parsing failed — keep the raw text and flag it so a workflow can
+            # decide what to do, rather than silently passing a string where a
+            # structured value was promised.
+            result["format"] = "text"
+            result["parse_error"] = True
+        return result
+
+    def _wants_json_output(self) -> bool:
+        """True when the skill frontmatter asks for a structured JSON result."""
+        fmt = str(self.frontmatter.get("output_format", "")).strip().lower()
+        if fmt in {"json", "structured"}:
+            return True
+        # `output_schema` may be a name, an inline mapping, or a path — any
+        # truthy value means "this skill returns structured JSON".
+        return bool(self.frontmatter.get("output_schema"))
+
+    @staticmethod
+    def _parse_json_result(raw: str) -> tuple[Any, bool]:
+        """Parse an LLM response as JSON, tolerating code fences / surrounding prose.
+
+        Returns ``(value, ok)``. On failure ``value`` is the original string so
+        callers can still surface it.
+        """
+        if not isinstance(raw, str):
+            return raw, False
+        from arc.providers.utils import strip_code_fences
+        text = strip_code_fences(raw).strip()
+        try:
+            return json.loads(text), True
+        except (TypeError, ValueError):
+            pass
+        # Best-effort: grab the outermost JSON object/array if the model wrapped
+        # it in explanation.
+        for opener, closer in (("{", "}"), ("[", "]")):
+            start = text.find(opener)
+            end = text.rfind(closer)
+            if 0 <= start < end:
+                try:
+                    return json.loads(text[start:end + 1]), True
+                except (TypeError, ValueError):
+                    continue
+        return raw, False
 
     def _bundle_prompt_block(self) -> str:
         if not self.bundle_root:
@@ -306,7 +367,8 @@ def _import_from_file(module_file: Path, attr: str, module_name: str | None = No
         raise ImportError(f"Cannot load {attr!r}; file does not exist: {module_file}")
     if module_name is None:
         token = "_".join(module_file.with_suffix("").parts[-4:]).replace("-", "_")
-        module_name = f"arc_local_package_{token}"
+        digest = hashlib.sha256(str(module_file.resolve()).encode("utf-8")).hexdigest()[:12]
+        module_name = f"arc_local_package_{token}_{digest}"
     spec = spec_from_file_location(module_name, module_file)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load module from {module_file}")
@@ -416,12 +478,20 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
         logger.warning("No package.yaml found in %s — skipping", package_dir)
         return
 
-    with manifest_path.open() as f:
-        manifest = yaml.safe_load(f)
+    try:
+        with manifest_path.open() as f:
+            manifest = yaml.safe_load(f) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to read package manifest '%s': %s", manifest_path, exc)
+        registry.record_load_error(package_dir.name, "manifest", str(manifest_path), str(exc))
+        return
 
     pkg_name = manifest.get("name", package_dir.name)
     logger.info("Loading package: %s", pkg_name)
     registry.register_package(pkg_name, manifest)
+
+    def record_error(kind: str, name: Any, exc: Exception | str) -> None:
+        registry.record_load_error(pkg_name, kind, str(name or ""), str(exc))
 
     # Surface missing *required* config early (a clear startup warning beats
     # a late KeyError / silent empty-string deep in a run). The package still
@@ -445,6 +515,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_agent(agent_def["name"], agent_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load agent '%s': %s", agent_def.get("name"), exc)
+            record_error("agent", agent_def.get("name"), exc)
 
     for strategy_def in manifest.get("provides", {}).get("strategies", []):
         try:
@@ -457,6 +528,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load strategy '%s': %s", strategy_def.get("name"), exc)
+            record_error("strategy", strategy_def.get("name"), exc)
 
     for skill_def in manifest.get("provides", {}).get("skills", []):
         skill_path = _skill_path(package_dir, skill_def)
@@ -470,15 +542,22 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             ), package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load skill '%s': %s", skill_def, exc)
+            record_error("skill", _resource_name(skill_def) if skill_def else "", exc)
 
     for workflow_def in manifest.get("provides", {}).get("workflows", []):
-        workflow_path = package_dir / workflow_def["path"]
-        if workflow_path.exists():
-            with workflow_path.open() as f:
-                workflow = yaml.safe_load(f)
-            registry.register_workflow(workflow_def["name"], workflow, package_name=pkg_name)
-        else:
-            logger.warning("Workflow file not found: %s", workflow_path)
+        try:
+            workflow_path = package_dir / workflow_def["path"]
+            if workflow_path.exists():
+                with workflow_path.open() as f:
+                    workflow = yaml.safe_load(f)
+                registry.register_workflow(workflow_def["name"], workflow, package_name=pkg_name)
+            else:
+                message = f"Workflow file not found: {workflow_path}"
+                logger.warning("%s", message)
+                record_error("workflow", workflow_def.get("name"), message)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load workflow '%s': %s", workflow_def.get("name"), exc)
+            record_error("workflow", workflow_def.get("name"), exc)
 
     for script_def in manifest.get("provides", {}).get("scripts", []):
         try:
@@ -493,6 +572,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_script(definition["name"], definition, package_name=pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load script '%s': %s", script_def, exc)
+            record_error("script", script_def.get("name") if isinstance(script_def, dict) else script_def, exc)
 
     for extension_def in manifest.get("provides", {}).get("extensions", []):
         try:
@@ -507,6 +587,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load extension definition '%s': %s",
                          extension_def.get("name"), exc)
+            record_error("extension", extension_def.get("name"), exc)
 
     for adapter_def in manifest.get("provides", {}).get("runtime_adapters", []):
         try:
@@ -516,6 +597,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
                 registry.register_adapter(alias, adapter_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load adapter '%s': %s", adapter_def.get("name"), exc)
+            record_error("runtime_adapter", adapter_def.get("name"), exc)
 
     for provider_def in manifest.get("provides", {}).get("providers", []):
         # Register the provider *class* (not an instance) under its name.
@@ -527,6 +609,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_provider(provider_def["name"], provider_class, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load provider '%s': %s", provider_def.get("name"), exc)
+            record_error("provider", provider_def.get("name"), exc)
 
     for loader_def in manifest.get("provides", {}).get("loaders", []):
         try:
@@ -534,6 +617,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_loader(loader_def["name"], loader, package_name=pkg_name)
         except Exception as exc:
             logger.error("Failed to load loader '%s': %s", loader_def.get("name"), exc)
+            record_error("loader", loader_def.get("name"), exc)
 
     for evaluator_def in manifest.get("provides", {}).get("evaluators", []):
         try:
@@ -548,26 +632,43 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
                 registry.record_source("evaluator", _resource_name(evaluator_def), pkg_name)
         except Exception as exc:
             logger.error("Failed to load evaluator '%s': %s", evaluator_def, exc)
+            record_error("evaluator", _resource_name(evaluator_def) if evaluator_def else "", exc)
 
     for prompt_def in manifest.get("provides", {}).get("prompts", []):
-        resource = _load_resource(package_dir, prompt_def, "prompt", "prompts", (".md", ".txt"))
-        registry.register_prompt(resource.name, resource)
-        registry.record_source("prompt", resource.name, pkg_name)
+        try:
+            resource = _load_resource(package_dir, prompt_def, "prompt", "prompts", (".md", ".txt"))
+            registry.register_prompt(resource.name, resource)
+            registry.record_source("prompt", resource.name, pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load prompt '%s': %s", prompt_def, exc)
+            record_error("prompt", _resource_name(prompt_def) if prompt_def else "", exc)
 
     for template_def in manifest.get("provides", {}).get("templates", []):
-        resource = _load_resource(package_dir, template_def, "template", "templates")
-        registry.register_template(resource.name, resource)
-        registry.record_source("template", resource.name, pkg_name)
+        try:
+            resource = _load_resource(package_dir, template_def, "template", "templates")
+            registry.register_template(resource.name, resource)
+            registry.record_source("template", resource.name, pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load template '%s': %s", template_def, exc)
+            record_error("template", _resource_name(template_def) if template_def else "", exc)
 
     for constraint_def in manifest.get("provides", {}).get("constraints", []):
-        resource = _load_resource(package_dir, constraint_def, "constraint", "constraints")
-        registry.register_constraint(resource.name, resource)
-        registry.record_source("constraint", resource.name, pkg_name)
+        try:
+            resource = _load_resource(package_dir, constraint_def, "constraint", "constraints")
+            registry.register_constraint(resource.name, resource)
+            registry.record_source("constraint", resource.name, pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load constraint '%s': %s", constraint_def, exc)
+            record_error("constraint", _resource_name(constraint_def) if constraint_def else "", exc)
 
     for vocabulary_def in manifest.get("provides", {}).get("vocabularies", []):
-        resource = _load_resource(package_dir, vocabulary_def, "vocabulary", "vocabularies")
-        registry.register_vocabulary(resource.name, resource)
-        registry.record_source("vocabulary", resource.name, pkg_name)
+        try:
+            resource = _load_resource(package_dir, vocabulary_def, "vocabulary", "vocabularies")
+            registry.register_vocabulary(resource.name, resource)
+            registry.record_source("vocabulary", resource.name, pkg_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load vocabulary '%s': %s", vocabulary_def, exc)
+            record_error("vocabulary", _resource_name(vocabulary_def) if vocabulary_def else "", exc)
 
     for detector_def in manifest.get("provides", {}).get("detectors", []):
         try:
@@ -576,6 +677,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.record_source("detector", detector_def["name"], pkg_name)
         except Exception as exc:
             logger.error("Failed to load detector '%s': %s", detector_def.get("name"), exc)
+            record_error("detector", detector_def.get("name"), exc)
 
     for audit_def in manifest.get("provides", {}).get("audit_actions", []):
         # An audit action is a class bound to a lifecycle phase (item 7). The
@@ -590,6 +692,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_audit_action(action, package_name=pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load audit action '%s': %s", audit_def.get("name"), exc)
+            record_error("audit_action", audit_def.get("name"), exc)
 
     for section_def in manifest.get("provides", {}).get("report_sections", []):
         # A report-section contributor (item 7) adds a named section to the
@@ -607,6 +710,7 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load report section '%s': %s", section_def.get("name"), exc)
+            record_error("report_section", section_def.get("name"), exc)
 
 
 def load_packages(package_paths: list[str], registry: ComponentRegistry) -> None:

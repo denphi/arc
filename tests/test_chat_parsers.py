@@ -13,6 +13,7 @@ import pytest
 from arc.chat.parsers import (
     NOISE_WORDS,
     build_refined_goal,
+    is_artifact_generation_goal,
     is_related_refinement,
     normalize_chat_command,
     parse_refinement_target,
@@ -57,6 +58,22 @@ def test_parse_target_skips_noise_words():
     """``to=5`` shouldn't create a 'to' target key."""
     out = parse_target("to=5")
     assert "to" not in out
+
+
+def test_parse_target_does_not_treat_markdown_numbered_list_as_key_value():
+    out = parse_target(
+        "Follow the package skill chain:\n\n"
+        "1. Extract the PDE problem statement.\n"
+        "2. Formulate the problem.\n"
+    )
+
+    assert out == {}
+
+
+def test_artifact_generation_goal_detects_fenics_solver_request():
+    assert is_artifact_generation_goal(
+        "Write code to solve section 5.4 using legacy FEniCS/DOLFIN."
+    )
 
 
 def test_noise_words_is_frozen():

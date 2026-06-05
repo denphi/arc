@@ -1924,6 +1924,7 @@ def _handle_packages_command(session_id: str) -> tuple[str, Any]:
         "session_id": session_id,
         "packages": packages,
         "state": meta.get("packages", {}),
+        "load_errors": workflow.registry.list_load_errors(),
     }
     return f"Loaded {len(packages)} package(s).", payload
 

@@ -89,6 +89,25 @@ def test_slurm_not_runnable_without_cli(monkeypatch, tmp_path):
     assert result.metrics["reason"] == "backend_unavailable"
 
 
+def test_slurm_submit_rejects_unsafe_workflow_before_sbatch(monkeypatch, tmp_path):
+    fake = _FakeSbatch()
+    _patch_slurm(monkeypatch, fake)
+    monkeypatch.setenv("ARC_SLURM_SCRATCH", str(tmp_path / "scratch"))
+    art = _artifact(tmp_path)
+    (tmp_path / "art" / "0.1.0" / "workflow.py").write_text(
+        "import os\n"
+        "def simulate(**inputs):\n"
+        "    os.system('echo unsafe')\n"
+        "    return {'z': 1}\n",
+        encoding="utf-8",
+    )
+    adapter = _Slurm()
+
+    with pytest.raises(ValueError, match="disallowed import"):
+        adapter._submit(art, {})
+    assert fake._job_dir is None
+
+
 # ── Kubernetes ──────────────────────────────────────────────────────────
 
 

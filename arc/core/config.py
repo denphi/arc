@@ -26,13 +26,18 @@ def resolve_config_path(path: str | Path | None = None) -> Path:
     """Find the arc.toml to load.
 
     1. If ``path`` is given and exists, use it.
-    2. Otherwise, fall back to the bundled defaults.
-    3. If none exist, return the requested path (caller decides what to do).
+    2. If no path is given and ``./arc.toml`` exists, use it.
+    3. Otherwise, fall back to the bundled defaults.
+    4. If none exist, return the requested path (caller decides what to do).
     """
     if path is not None:
         candidate = Path(path)
         if candidate.exists():
             return candidate
+    else:
+        project = Path.cwd() / "arc.toml"
+        if project.exists():
+            return project
 
     for bundled in _arc_toml_search_paths():
         if bundled.exists():
@@ -57,6 +62,11 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
     dict is empty and ``config_path`` is whatever ``resolve_config_path``
     returned (which may not actually exist on disk).
 
+    A project-local config overlays the bundled repo-level config so a project
+    can add an external package path without copying ARC's whole package
+    catalogue. For ``[packages].paths`` the lists are appended and de-duped;
+    other local keys override the bundled defaults recursively.
+
     The returned dict is a fresh ``deepcopy`` of the cache entry — review
     item #A12 — so callers that mutate it can't corrupt the shared cached
     object.
@@ -64,8 +74,13 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
     config_path = resolve_config_path(path)
     if not config_path.exists():
         return config_path, {}
-    cached = _cached_load_toml(str(config_path), config_path.stat().st_mtime_ns)
-    return config_path, copy.deepcopy(cached)
+    config = copy.deepcopy(_cached_load_toml(str(config_path), config_path.stat().st_mtime_ns))
+    bundled = _arc_toml_search_paths()[0].resolve()
+    if config_path.resolve() != bundled and bundled.exists():
+        base = copy.deepcopy(_cached_load_toml(str(bundled), bundled.stat().st_mtime_ns))
+        _absolutize_package_paths(base, bundled)
+        config = _merge_project_config(base, config)
+    return config_path, config
 
 
 @lru_cache(maxsize=8)
@@ -78,6 +93,51 @@ def _cached_load_toml(path_str: str, mtime_ns: int) -> dict[str, Any]:
     without leaking changes into other readers (#A12).
     """
     return _load_toml(Path(path_str))
+
+
+def _merge_project_config(base: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    """Overlay a project config on bundled defaults."""
+    merged = copy.deepcopy(base)
+    for key, value in project.items():
+        if key == "packages" and isinstance(value, dict):
+            packages = dict(merged.get("packages", {}) or {})
+            for subkey, subvalue in value.items():
+                if subkey == "paths" and isinstance(subvalue, list):
+                    packages["paths"] = _dedupe_list((packages.get("paths") or []) + subvalue)
+                else:
+                    packages[subkey] = copy.deepcopy(subvalue)
+            merged["packages"] = packages
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_project_config(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _dedupe_list(values: list[Any]) -> list[Any]:
+    out: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        marker = str(value)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(value)
+    return out
+
+
+def _absolutize_package_paths(config: dict[str, Any], config_path: Path) -> None:
+    packages = config.get("packages")
+    if not isinstance(packages, dict):
+        return
+    paths = packages.get("paths")
+    if not isinstance(paths, list):
+        return
+    base = config_path.parent
+    packages["paths"] = [
+        str((base / path).resolve()) if not Path(path).is_absolute() else str(path)
+        for path in paths
+    ]
 
 
 def resolve_package_paths(
@@ -96,6 +156,7 @@ def resolve_package_paths(
     ]
 
 
+@lru_cache(maxsize=512)
 def package_name_for_path(package_dir: Path) -> str:
     """Read a package directory's declared ``name`` from its ``package.yaml``.
 
@@ -103,6 +164,7 @@ def package_name_for_path(package_dir: Path) -> str:
     unreadable. Shared by ``Kernel`` and ``ResearchWorkflow`` so both agree
     on what a path's package name is.
     """
+    package_dir = package_dir.resolve()
     manifest = package_dir / "package.yaml"
     if not manifest.exists():
         return package_dir.name

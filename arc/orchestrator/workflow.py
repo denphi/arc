@@ -780,14 +780,17 @@ class ResearchWorkflow:
             return lhs == rhs or str(lhs) == str(rhs)
         if op == "!=":
             return not (lhs == rhs or str(lhs) == str(rhs))
-        # Ordering operators require numeric LHS — fall back to False on
-        # type mismatch rather than raising, since workflows may legitimately
-        # have a step that doesn't run yet.
+        # Ordering operators are numeric only. Raise on mismatched types so
+        # workflow authors see a configuration bug instead of a silently skipped
+        # branch.
         try:
             lhs_num = float(lhs)  # type: ignore[arg-type]
             rhs_num = float(rhs)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return False
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Workflow condition {expression!r} uses ordering operator "
+                f"{op!r} with non-numeric operands: {lhs!r}, {rhs!r}"
+            ) from exc
         if op == ">":
             return lhs_num > rhs_num
         if op == "<":
@@ -1037,8 +1040,14 @@ class ResearchWorkflow:
 
         idx = 0
         transitions = 0
+        max_transitions = int(
+            workflow_config.get(
+                "max_transitions",
+                max(len(steps) * max_iterations * 10, len(steps) + 1),
+            )
+        )
         while idx < len(steps):
-            if transitions >= len(steps) * max_iterations:
+            if transitions >= max_transitions:
                 status = "iteration_limit"
                 break
             step = steps[idx]
@@ -1058,15 +1067,7 @@ class ResearchWorkflow:
             for condition in conditions:
                 if condition.get("after") != step_id:
                     continue
-                # A malformed ``if:`` expression must not abort the whole
-                # run — log and treat the condition as not-matched.
-                try:
-                    matched = self._condition_matches(condition.get("if", ""), state)
-                except ValueError as exc:
-                    logger.warning(
-                        "Skipping workflow condition after %r: %s", step_id, exc,
-                    )
-                    continue
+                matched = self._condition_matches(condition.get("if", ""), state)
                 if matched:
                     goto = condition.get("goto")
                     if goto in step_index:

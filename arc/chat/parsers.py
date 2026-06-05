@@ -31,7 +31,7 @@ _NUM_UNIT_UNITS = _KEY_VALUE_UNITS + r"|angstrom"
 
 # Regex banks reused across parsers.
 _KEY_VALUE_RE = re.compile(
-    rf"(\w+)\s*[=:]\s*([0-9]+\.?[0-9]*)\s*({_KEY_VALUE_UNITS})?",
+    rf"(\w+)[^\S\r\n]*[=:][^\S\r\n]*([0-9]+\.?[0-9]*)[^\S\r\n]*({_KEY_VALUE_UNITS})?",
     re.IGNORECASE,
 )
 
@@ -68,6 +68,15 @@ _TARGET_CONTEXT_PROBE_RE = re.compile(
     r"\b(target|near|around|approximately|approx|within|close to|"
     r"as close as possible)\b",
     re.IGNORECASE,
+)
+
+_ARTIFACT_GENERATION_RE = re.compile(
+    r"\b(?:write|generate|create|build|implement|reproduce|replicate|solve)\b"
+    r".{0,120}"
+    r"\b(?:code|solver|workflow|artifact|sim2l|fenics|dolfin|benchmark|paper)\b"
+    r"|"
+    r"\b(?:fenics|dolfin|sim2l|paper-replication)\b",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -124,6 +133,16 @@ def parse_target(goal_text: str) -> dict:
             break
 
     return targets
+
+
+def is_artifact_generation_goal(goal_text: str) -> bool:
+    """True when free text asks ARC to build/reproduce a code artifact.
+
+    Artifact-building prompts often contain numbered instructions and labels
+    such as ``skill chain:``. Those should guide deliverables, not become
+    optimization targets for the generic research loop.
+    """
+    return bool(_ARTIFACT_GENERATION_RE.search(goal_text or ""))
 
 
 # ── parse_refinement_target ──────────────────────────────────────────────

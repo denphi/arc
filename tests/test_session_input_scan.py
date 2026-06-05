@@ -64,6 +64,21 @@ def test_scan_inputs_uses_default_data_folder(tmp_path, monkeypatch):
     assert assets[0].metadata["source"] == "./data"
 
 
+def test_scan_inputs_respects_file_count_cap(tmp_path, monkeypatch):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    for idx in range(3):
+        (inputs / f"{idx}.txt").write_text(str(idx), encoding="utf-8")
+    store = FileStore(tmp_path / "store")
+    monkeypatch.setenv("ARC_INPUTS_DIR", str(inputs))
+    monkeypatch.setenv("ARC_INPUTS_MAX_FILES", "2")
+
+    assets = scan_inputs_from_env(store, session_id="s1")
+
+    assert len(assets) == 2
+    assert len(store.list(session_id="s1")) == 2
+
+
 def test_research_workflow_scans_inputs_and_registers_default_loaders(
     tmp_path,
     monkeypatch,

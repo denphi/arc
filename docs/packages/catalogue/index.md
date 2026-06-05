@@ -44,5 +44,13 @@ Both packages follow the same shape:
 - non-interactive runs require explicit approval configuration;
 - package disable prevents the coding backend from being selected.
 
+```{warning}
+Non-interactive coding-agent runs are full-trust automation. If
+`ARC_CODEX_ALLOW_NON_INTERACTIVE` or `ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE` is
+enabled, ARC executes the configured CLI command without user approval prompts.
+Use that only in trusted CI or local automation where the environment and
+package configuration are not attacker-controlled.
+```
+
 Use these packages when artifact generation should happen through a dedicated
 coding agent rather than ARC's built-in stub or LLM strategy.

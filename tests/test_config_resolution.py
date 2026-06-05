@@ -27,9 +27,32 @@ _FALLBACK_TOML = _REPO / "arc" / "arc.toml"           # tiny fallback
 
 
 def test_default_resolution_is_repo_level_arc_toml():
-    """No explicit path → the repo-level arc.toml wins (it exists)."""
+    """No explicit path → repo-level arc.toml wins when cwd has no config."""
     resolved = resolve_config_path(None)
     assert resolved == _REPO_TOML
+
+
+def test_current_folder_arc_toml_wins_and_extends_defaults(tmp_path, monkeypatch):
+    project_config = tmp_path / "arc.toml"
+    project_config.write_text(
+        """
+[packages]
+paths = ["../arc-fenics"]
+
+[strategies]
+builder = "codex"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    resolved, config = load_arc_toml()
+
+    assert resolved == project_config
+    paths = config.get("packages", {}).get("paths") or []
+    assert str((_REPO / "arc" / "packages" / "arc-sim2l").resolve()) in paths
+    assert "../arc-fenics" in paths
+    assert config.get("strategies", {}).get("builder") == "codex"
 
 
 def test_repo_level_carries_packages_and_extensions():

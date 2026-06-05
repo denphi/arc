@@ -21,38 +21,18 @@ import uuid
 from pathlib import Path
 
 from arc.runtime._adapter_common import BaseSubmitPollAdapter
+from arc.runtime.remote_runner import runner_script
 from arc.schemas.artifact import ArtifactRecord
 
 logger = logging.getLogger(__name__)
 
 # Printed to stdout by the pod; we parse the last JSON line from logs.
-_RUNNER = r"""
-import json, types, traceback
-src = open("/arc/workflow.py").read()
-inputs = json.load(open("/arc/inputs.json"))
-mod = types.ModuleType("wf")
-out = {"ok": False, "error": "no result"}
-try:
-    exec(compile(src, "workflow.py", "exec"), mod.__dict__)
-    fn = getattr(mod, "simulate", None)
-    if not callable(fn):
-        out = {"ok": False, "error": "simulate() not defined"}
-    else:
-        r = fn(**inputs)
-        if not isinstance(r, dict):
-            out = {"ok": False, "error": "simulate() must return dict"}
-        else:
-            def _d(v):
-                if hasattr(v, "tolist"): return v.tolist()
-                if hasattr(v, "item"): return v.item()
-                raise TypeError(type(v).__name__)
-            out = {"ok": True, "outputs": json.loads(json.dumps(r, default=_d))}
-except Exception as exc:
-    out = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
-print("ARC_RESULT::" + json.dumps(out))
-"""
-
 _RESULT_MARKER = "ARC_RESULT::"
+_RUNNER = runner_script(
+    workflow_path="/arc/workflow.py",
+    inputs_path="/arc/inputs.json",
+    stdout_marker=_RESULT_MARKER,
+)
 
 
 class KubernetesRuntimeAdapter(BaseSubmitPollAdapter):

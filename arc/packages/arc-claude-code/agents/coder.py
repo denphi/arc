@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import shlex
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from arc.contracts.agent import AgentContract
+from arc.core.env import env_flag
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
@@ -54,13 +56,6 @@ ProgressCallback = Callable[[str], None]
 def _append_option(args: list[str], flag: str, value: str | None) -> None:
     if value:
         args.extend([flag, value])
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
 
 
 def _build_claude_code_args(mcp_config_path: str | None = None) -> list[str]:
@@ -260,7 +255,7 @@ class ClaudeCodeCoderAgent(AgentContract):
         else:
             allow_non_interactive = bool(
                 self.context.config.get("allow_non_interactive")
-                or _env_flag("ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE", False)
+                or env_flag("ARC_CLAUDE_CODE_ALLOW_NON_INTERACTIVE", False)
             )
             if not allow_non_interactive:
                 raise RuntimeError(
@@ -553,4 +548,8 @@ class ClaudeCodeCoderAgent(AgentContract):
 
         words = re.sub(r"[^a-z0-9 ]", " ", plan.proposal.objective.lower()).split()
         stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by", "via"}
-        return "_".join([w for w in words if w not in stop][:4])[:40] or "claude_code_sim2l_artifact"
+        stem = "_".join([w for w in words if w not in stop][:4])[:40] or "claude_code_sim2l_artifact"
+        digest = hashlib.sha256(
+            json.dumps(plan.model_dump(), sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:8]
+        return f"{stem}_{digest}"

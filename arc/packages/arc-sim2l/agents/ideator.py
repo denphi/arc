@@ -199,6 +199,17 @@ class IdeatorAgent(AgentContract):
                     f"Domain: {goal.domain or 'general'}\n"
                     f"Constraints: {goal.constraints}\n\n"
                 )
+                if self.context.memory.get("goal_mode") == "artifact_generation":
+                    prompt += (
+                        "This is an artifact/code-generation request, not a "
+                        "parameter-optimization study. Frame the proposal around "
+                        "faithfully producing the requested computational artifact "
+                        "from the user's source material. Do not invent numeric "
+                        "target output keys from instruction words such as "
+                        "'workflow', 'package', 'skill', or 'chain'. Preserve "
+                        "requested implementation constraints such as solver stack, "
+                        "paper section/figure locator, mesh handling, and plotting.\n\n"
+                    )
                 if context_section:
                     prompt += (
                         "Available context — use this to avoid duplicating existing work "
