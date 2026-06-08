@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import json
 import re
 
 from arc.contracts.agent import AgentContract
+from arc.core.build_context import render_build_contexts
 from arc.providers.utils import strip_code_fences as _strip_fences
 from arc.runtime.workflow_safety import (
     check_workflow_source_safe,
@@ -48,6 +51,8 @@ Objective   : {objective}
 Methodology : {methodology}
 Parameters  : {parameters}
 Target      : {target}
+Build context:
+{build_context}
 
 Requirements:
 - Define exactly one function: def simulate(**inputs) -> dict
@@ -387,6 +392,7 @@ class Sim2LBuilderAgent(AgentContract):
                 methodology=plan.proposal.methodology[:300],
                 parameters=plan.parameters,
                 target=target or "none specified",
+                build_context=render_build_contexts(getattr(plan, "build_contexts", [])),
             ) + required_hint + canonical_hint
             try:
                 code = await provider.complete(prompt)

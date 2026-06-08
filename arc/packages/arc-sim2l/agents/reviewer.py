@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from arc.contracts.agent import AgentContract
 from arc.runtime.key_matching import (
     fuzzy_keys_match as _keys_match,
@@ -83,6 +85,78 @@ def _check_target(
     return approved, errors
 
 
+def _build_context_acceptance(
+    outputs: dict,
+    contexts: list[dict],
+    target: dict,
+    registry: dict | None = None,
+) -> tuple[bool | None, dict[str, float | str]]:
+    """Evaluate generic build-context acceptance criteria.
+
+    The schema is intentionally permissive for package authors:
+    ``acceptance.metrics`` requires matching output keys; ``tolerance`` is
+    applied when a reference value is available from ``reference_values``,
+    ``targets``, or the normal research target.
+    """
+    checks: dict[str, float | str] = {}
+    saw_criteria = False
+    ok = True
+    for context in contexts or []:
+        acceptance = (context or {}).get("acceptance") or {}
+        if not isinstance(acceptance, dict):
+            continue
+        metrics = acceptance.get("metrics") or acceptance.get("required_outputs") or []
+        if isinstance(metrics, str):
+            metrics = [metrics]
+        if not isinstance(metrics, list):
+            metrics = []
+        tolerances = acceptance.get("tolerance") or {}
+        if isinstance(tolerances, (int, float)):
+            tolerances = {str(metric): tolerances for metric in metrics}
+        if not isinstance(tolerances, dict):
+            tolerances = {}
+        references = (
+            acceptance.get("reference_values")
+            or acceptance.get("targets")
+            or acceptance.get("expected")
+            or {}
+        )
+        if not isinstance(references, dict):
+            references = {}
+        references = {**target, **references}
+
+        for metric in metrics:
+            metric = str(metric)
+            saw_criteria = True
+            matched_key = None
+            for key in outputs:
+                if _registry_keys_match(metric, key, registry or {}) or _keys_match(metric, key):
+                    matched_key = key
+                    break
+            if matched_key is None:
+                checks[metric] = "missing output"
+                ok = False
+                continue
+            ref = references.get(metric, references.get(matched_key))
+            tol = tolerances.get(metric, tolerances.get(matched_key))
+            value = outputs.get(matched_key)
+            if ref is None or tol is None:
+                checks[matched_key] = "present"
+                continue
+            if not isinstance(value, (int, float)) or not isinstance(ref, (int, float)):
+                checks[matched_key] = "non-numeric comparison"
+                ok = False
+                continue
+            error = abs(value - ref) / max(abs(ref), 1e-12)
+            checks[matched_key] = round(error * 100, 2)
+            if error > float(tol):
+                ok = False
+
+    if not saw_criteria:
+        return None, {}
+    return ok, checks
+
+
 class ReviewerAgent(AgentContract):
     name = "reviewer"
     description = "Evaluates execution results and provides structured feedback."
@@ -97,22 +171,43 @@ class ReviewerAgent(AgentContract):
         target = self.context.memory.get("target", {})
         outputs = result.outputs or {}
         registry = self.context.memory.get("schema_registry", {})
+        build_contexts = self.context.memory.get("build_contexts", []) or []
 
         # ── Hard deterministic verdict ────────────────────────────────────
         if result.status != "completed" or not outputs:
             approved = False
             target_errors: dict[str, float] = {}
+            context_approved = None
+            context_errors: dict[str, float | str] = {}
             iteration_complete = False
         elif target:
             approved, target_errors = _check_target(outputs, target, registry=registry)
+            context_approved, context_errors = _build_context_acceptance(
+                outputs, build_contexts, target, registry=registry,
+            )
+            if context_approved is not None:
+                approved = approved and context_approved
             iteration_complete = approved
         else:
-            # A completed run without a target is useful evidence, but it is not
-            # a goal-achievement condition. Keep the loop alive so ARC can ask
-            # for/derive a target or continue exploration.
-            approved = False
             target_errors = {}
-            iteration_complete = False
+            context_approved, context_errors = _build_context_acceptance(
+                outputs, build_contexts, target, registry=registry,
+            )
+            # A context with explicit acceptance criteria can serve as the
+            # goal-achievement condition. Without it, keep the loop alive.
+            approved = bool(context_approved) if context_approved is not None else False
+            iteration_complete = approved
+
+        if result.status != "completed":
+            failure_classification = "runtime_failure"
+        elif approved:
+            failure_classification = "none"
+        elif context_errors:
+            failure_classification = "acceptance_failure"
+        elif target_errors or target:
+            failure_classification = "implementation_failure"
+        else:
+            failure_classification = "implementation_failure"
 
         provider = self.context.memory.get("provider")
         if provider:
@@ -125,6 +220,11 @@ class ReviewerAgent(AgentContract):
                 {k: f"{v:.1f}%" for k, v in target_errors.items()}
                 if target_errors else "no target matches found"
             )
+            if context_errors:
+                errors_display = {
+                    "target": errors_display,
+                    "build_context_acceptance": context_errors,
+                }
             # Send only actual simulation inputs — strip metrics noise
             schema_keys: set = set(
                 self.context.memory.get("current_artifact", None)
@@ -152,6 +252,7 @@ class ReviewerAgent(AgentContract):
                 # Override the LLM's verdict with our computed one
                 llm_review.approved = approved
                 llm_review.iteration_complete = iteration_complete
+                llm_review.failure_classification = failure_classification
                 # If approved, force strategy to "stop"; otherwise never let a
                 # no-target review stop the loop as if the goal were achieved.
                 if approved:
@@ -191,4 +292,5 @@ class ReviewerAgent(AgentContract):
             next_parameters={},
             iteration_complete=iteration_complete,
             strategy="stop" if approved else ("step" if target else "explore"),
+            failure_classification=failure_classification,
         )

@@ -11,6 +11,8 @@ return the *default* strategy's module — they exist so that callers
 needing module-level helpers (``_keys_match`` on the reviewer module, for
 example) keep working unchanged.
 """
+from __future__ import annotations
+
 
 import importlib.util
 import sys

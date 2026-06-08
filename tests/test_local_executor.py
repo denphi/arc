@@ -222,6 +222,97 @@ def test_load_simulate_allowed_imports_widens_the_lint():
     assert callable(func)
 
 
+# ── `from <allowed> import X` / `import *` (review item F1) ───────────────
+#
+# The FEniCS adapter's whole reason to exist is running `from dolfin import …`
+# and `from fenics import *`. The lint used to gate each imported *member*
+# against the *module* allow-list, so `from json import dumps` was rejected on
+# `dumps` even with `json` allow-listed. These pin the source-module-only rule.
+
+
+def test_allowed_imports_accepts_from_module_import_member():
+    # `from json import dumps` must pass when `json` is allow-listed — the
+    # member name `dumps` is a binding, not a module to vet. (Mirrors
+    # `from dolfin import UnitSquareMesh` for the FEniCS adapter.)
+    src = (
+        "from json import dumps\n"
+        "def simulate(x=1.0):\n"
+        "    return {'z': len(dumps([x]))}\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
+    assert r["ok"] is True, r
+    assert "z" in r["outputs"]
+
+
+def test_allowed_imports_accepts_star_import_from_allowed_module():
+    # `from json import *` is the FEniCS-tutorial `from fenics import *` shape.
+    src = (
+        "from json import *\n"
+        "def simulate(x=1.0):\n"
+        "    return {'z': len(dumps([x]))}\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
+    assert r["ok"] is True, r
+
+
+def test_from_import_still_blocks_disallowed_source_module():
+    # The source module is still gated: `from os import getcwd` must fail
+    # because `os` isn't allow-listed (not because of the member name).
+    src = (
+        "from os import getcwd\n"
+        "def simulate(x=1.0):\n"
+        "    return {'z': getcwd()}\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
+    assert r["ok"] is False
+    assert "disallowed import" in r["error"]
+
+
+def test_relative_from_import_is_blocked():
+    # `from . import helpers` has no vettable source module → reject.
+    src = (
+        "from . import helpers\n"
+        "def simulate(x=1.0):\n"
+        "    return {'z': 1}\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
+    assert r["ok"] is False
+    assert "disallowed import" in r["error"]
+
+
+def test_name_main_guard_is_permitted():
+    # Coding agents emit an `if __name__ == "__main__":` self-test footer
+    # (review item F2). `__name__` read is safe; it must not get the source
+    # rejected, while `__class__` etc. stay blocked.
+    src = (
+        "def simulate(x=1.0):\n"
+        "    return {'z': x}\n"
+        "if __name__ == '__main__':\n"
+        "    print(simulate())\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 2.0})
+    assert r["ok"] is True, r
+    assert r["outputs"]["z"] == 2.0
+
+
+def test_dunder_attribute_name_still_blocked():
+    # The bare-Name `__name__` exemption must NOT leak to attribute access:
+    # `f.__name__` (a stepping stone to `__globals__`) stays rejected.
+    src = (
+        "def simulate(x=1.0):\n"
+        "    return {'z': simulate.__name__}\n"
+    )
+    d = _artifact_dir(src)
+    r = execute_workflow(d, "a", {"x": 1.0})
+    assert r["ok"] is False
+    assert "safety" in r["error"].lower() or "disallowed" in r["error"].lower()
+
+
 def test_execute_workflow_reads_timeout_env_at_call_time(monkeypatch):
     import arc.runtime.executor as executor
 

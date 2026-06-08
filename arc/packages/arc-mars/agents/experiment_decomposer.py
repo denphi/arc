@@ -1,4 +1,6 @@
 """Decomposes a high-level research goal into a set of sub-experiments."""
+from __future__ import annotations
+
 
 from typing import Any
 

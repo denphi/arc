@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from arc.contracts.agent import AgentContract
@@ -63,8 +65,10 @@ class ReflectorAgent(AgentContract):
             "weaknesses": review.weaknesses,
             "recommendations": review.recommendations,
             "next_parameters": review.next_parameters,
+            "failure_classification": review.failure_classification,
             "should_continue": not review.approved and not review.iteration_complete,
         }
+        self.context.memory["last_failure_classification"] = review.failure_classification
 
         provenance = self.context.memory.get("provenance")
         if provenance:

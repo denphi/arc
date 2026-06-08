@@ -21,7 +21,7 @@ Session state is split across two JSON files in the session directory:
 
   * ``session.json`` — the legacy schema (goal, iteration, run_history,
     target, …). Written by ``arc.session.save_session_meta``.
-  * ``session_state.json`` — strategy / recipe choices the user made
+  * ``session_state.json`` — strategy / recipe / build-context choices the user made
     during the session: ``strategy_overrides``, ``active_recipe``,
     ``recipe_applied``, ``recipe_suggested``. Written via
     ``arc.api.session_state.save_state`` so the same file format
@@ -50,6 +50,7 @@ _STATE_KEYS: tuple[str, ...] = (
     "active_recipe",
     "recipe_applied",
     "recipe_suggested",
+    "build_context_workflows",
 )
 
 

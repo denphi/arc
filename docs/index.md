@@ -82,6 +82,7 @@ Audit actions, auditors, and reports <core/audit>
 core/memory
 core/orchestrator
 core/workflows
+Build-context workflows <core/build-context-workflows>
 File assets and file loaders <core/file-assets>
 core/providers
 core/sessions

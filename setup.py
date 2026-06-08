@@ -37,7 +37,10 @@ setup(
             "extensions/**/*",
         ]
     },
-    python_requires=">=3.10",
+    # 3.9 is supported only so arc can run inside the legacy-FEniCS/DOLFIN
+    # 2019.1.x conda env (py39-only builds). On 3.9, pydantic v2 needs
+    # eval_type_backport to evaluate `X | None` annotations; on 3.10+ it's unused.
+    python_requires=">=3.9",
     install_requires=[
         "fastapi>=0.110.0",
         "uvicorn[standard]>=0.29.0",
@@ -46,6 +49,9 @@ setup(
         "prompt-toolkit>=3.0.0",
         "httpx>=0.27.0",
         "pyyaml>=6.0.0",
+        "eval_type_backport>=0.2.0; python_version < '3.10'",
+        # tomllib is stdlib only on 3.11+; arc.core.config falls back to tomli.
+        "tomli>=2.0.0; python_version < '3.11'",
     ],
     extras_require={
         "dev": [

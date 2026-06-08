@@ -21,11 +21,15 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Any, Awaitable, Callable, Iterable, Optional
+from typing import Any, Awaitable, Callable, Iterable, Optional, Union
 
 
 # A handler is either a callable or a "module:attr" string for lazy import.
-HandlerRef = Callable[..., Awaitable[None]] | str
+# NB: this is a *module-level* alias evaluated at import time, so PEP 604
+# `X | Y` is NOT deferred by `from __future__ import annotations` — it must use
+# typing.Union to stay importable on Python 3.9 (the only interpreter the
+# legacy-FEniCS conda stack ships for).
+HandlerRef = Union[Callable[..., Awaitable[None]], str]
 
 
 @dataclass(frozen=True)

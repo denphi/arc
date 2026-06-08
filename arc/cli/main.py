@@ -42,6 +42,11 @@ if HAS_TYPER:
             "-i",
             help="Workflow input as key=value; can be supplied multiple times.",
         ),
+        build_context: list[str] = typer.Option(
+            [],
+            "--build-context",
+            help="Pre-build context workflow name; can be supplied multiple times.",
+        ),
         output: str = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
     ):
         """Run a research workflow for the given goal."""
@@ -63,6 +68,8 @@ if HAS_TYPER:
             base_url=base_url,
             workflow_name=workflow_name,
         )
+        if build_context:
+            workflow._context.memory["build_context_workflows"] = list(build_context)
 
         async def _run():
             results = []
@@ -208,6 +215,11 @@ if HAS_TYPER:
         events_path: str = typer.Option(None, "--events-path",
                                          help="When --events=jsonl|multi, the file to write to "
                                               "(default: <session_dir>/events.jsonl)"),
+        build_context: list[str] = typer.Option(
+            [],
+            "--build-context",
+            help="Pre-build context workflow name; can be supplied multiple times.",
+        ),
     ):
         """Start the interactive ARC research chat."""
         if plan:
@@ -275,6 +287,8 @@ if HAS_TYPER:
             args += ["--delete-session", delete_session_id]
         if delete_all:
             args += ["--delete-all-sessions"]
+        for name in build_context or []:
+            args += ["--build-context", name]
         args += ["--max-iterations", str(max_iterations)]
 
         sys.argv = [sys.argv[0]] + args

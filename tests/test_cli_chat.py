@@ -107,6 +107,11 @@ def test_events_help_lists_options(runner):
     assert "--events" in result.stdout
 
 
+def test_chat_help_lists_build_context_option(runner):
+    result = runner.invoke(app, ["chat", "--help"])
+    assert "--build-context" in result.stdout
+
+
 # ── --plan ───────────────────────────────────────────────────────────────
 
 

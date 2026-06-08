@@ -11,7 +11,8 @@ are the contract for what each loop step produces and consumes.
 |---|---|---|
 | `ResearchGoal` | the user / CLI / API | `goal`, `domain`, `constraints`, `target`, `mode` |
 | `ResearchProposal` | `ideator` | `hypothesis`, `objective`, `variables`, `methodology`, `expected_outcomes`, `evaluation_metrics`, `risk_level` |
-| `ExperimentPlan` | `planner` | `proposal`, `artifact_strategy`, `parameters`, `parameter_sweep`, `parameter_constraints`, `experimental_design`, `success_criteria` |
+| `BuildContext` | build-context workflow | `kind`, `workflow`, `summary`, `requirements`, `inputs`, `facts`, `acceptance`, `provenance` |
+| `ExperimentPlan` | `planner` plus build-context workflows | `proposal`, `artifact_strategy`, `parameters`, `parameter_sweep`, `parameter_constraints`, `experimental_design`, `success_criteria`, `build_contexts` |
 | `SearchResult` | `searcher` | `catalog_hits`, `prior_results` |
 | `ValidatorReport` | `validator` | `passed`, `errors`, `warnings`, `evaluations` |
 
@@ -29,7 +30,7 @@ are the contract for what each loop step produces and consumes.
 |---|---|
 | `ExecutionRequest` | `artifact_id`, `version`, `inputs` |
 | `ExecutionResult` | `run_id`, `status`, `outputs`, `logs`, `metrics` |
-| `ReviewResult` | `approved`, `summary`, `strengths`, `weaknesses`, `recommendations`, `next_parameters`, `iteration_complete`, `strategy` |
+| `ReviewResult` | `approved`, `summary`, `strengths`, `weaknesses`, `recommendations`, `next_parameters`, `iteration_complete`, `strategy`, `failure_classification` |
 
 ## API reference
 

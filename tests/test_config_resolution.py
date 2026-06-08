@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from arc.core.config import load_arc_toml, resolve_config_path
+from arc.core.config import build_context_workflow_specs, load_arc_toml, resolve_config_path
 
 try:
     import tomllib  # Python 3.11+
@@ -82,3 +82,40 @@ def test_no_web_ui_extension_block_anywhere():
     for toml_path in (_REPO_TOML, _FALLBACK_TOML):
         data = tomllib.loads(toml_path.read_text())
         assert "web-ui" not in (data.get("extensions") or {})
+
+
+def test_build_context_workflow_specs_accepts_list_form():
+    specs = build_context_workflow_specs({
+        "workflows": {"build": {"context": ["paper-context"]}},
+    })
+
+    assert specs == [{
+        "name": "paper-context",
+        "required": True,
+        "cache": "per_iteration",
+        "inputs": {},
+    }]
+
+
+def test_build_context_workflow_specs_accepts_table_form():
+    specs = build_context_workflow_specs({
+        "workflows": {
+            "build": {
+                "context": [
+                    {
+                        "name": "paper-context",
+                        "required": False,
+                        "cache": "per_plan",
+                        "inputs": {"paper": "paper24.pdf"},
+                    }
+                ]
+            }
+        },
+    })
+
+    assert specs == [{
+        "name": "paper-context",
+        "required": False,
+        "cache": "per_plan",
+        "inputs": {"paper": "paper24.pdf"},
+    }]

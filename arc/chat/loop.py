@@ -20,6 +20,8 @@ rendering, prompt-toolkit input) have been extracted into
 sister modules; this file imports them at module top so call sites
 inside ``chat_loop`` can use the legacy underscored names.
 """
+from __future__ import annotations
+
 
 # ruff: noqa: E402
 
@@ -2280,6 +2282,8 @@ def main():
                         help="Delete ALL sessions and exit (asks for confirmation).")
     parser.add_argument("--max-iterations", type=int, default=20,
                         help="Max auto-iterations per goal before stopping (default 20).")
+    parser.add_argument("--build-context", action="append", default=[],
+                        help="Pre-build context workflow name; can be supplied multiple times.")
     args = parser.parse_args()
 
     if args.list_sessions:
@@ -2392,6 +2396,8 @@ def main():
         base_url=base_url,
         session_id=session_id,
     )
+    if args.build_context:
+        workflow._context.memory["build_context_workflows"] = list(args.build_context)
 
     asyncio.run(chat_loop(workflow, provider, model, base_url, max_iterations=args.max_iterations))
 

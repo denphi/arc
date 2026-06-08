@@ -18,6 +18,8 @@ When a new artifact is built, the curator:
    with the LLM (or heuristically) and adds it to the registry.
 4. Returns the (possibly patched) artifact and the updated registry.
 """
+from __future__ import annotations
+
 
 import re
 from dataclasses import dataclass, field

@@ -200,3 +200,61 @@ def filter_package_paths(
             continue
         filtered.append(path_str)
     return filtered
+
+
+def build_context_workflow_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return normalized ``[workflows.build]`` context workflow specs.
+
+    Supported forms:
+
+    ``context = ["name"]``
+        The MVP shorthand.
+
+    ``[[workflows.build.context]]``
+        Future-friendly table entries with ``name``, ``required``, ``cache``,
+        and optional ``inputs``.
+
+    The function is intentionally permissive: malformed entries are skipped so
+    a partially edited local ``arc.toml`` does not break unrelated runs.
+    """
+    workflows = config.get("workflows") or {}
+    if not isinstance(workflows, dict):
+        return []
+    build = workflows.get("build") or {}
+    if not isinstance(build, dict):
+        return []
+    raw = build.get("context") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+
+    specs: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            if name:
+                specs.append({
+                    "name": name,
+                    "required": True,
+                    "cache": "per_iteration",
+                    "inputs": {},
+                })
+            continue
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        inputs = item.get("inputs") or {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+        specs.append({
+            "name": name,
+            "required": bool(item.get("required", True)),
+            "cache": str(item.get("cache") or "per_iteration"),
+            "inputs": dict(inputs),
+        })
+    return specs

@@ -23,6 +23,11 @@ Workflow-level `inputs:` can also declare `type: file` entries. ARC binds
 role/media type, and can run required loaders before steps execute. See
 {doc}`file-assets`.
 
+Workflows can also act as pre-build context providers. Configure them under
+`[workflows.build]` and ARC will run them before the selected builder, attach
+their `build_context` output to the experiment plan, and keep the builder
+strategy independent. See {doc}`build-context-workflows`.
+
 ---
 
 ## Execution model

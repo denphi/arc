@@ -3,6 +3,8 @@
 Wires together agents, adapter, registry, and stores for a single iteration.
 The provider is optional — without it, agents use deterministic stub logic.
 """
+from __future__ import annotations
+
 
 import logging
 import os
@@ -11,7 +13,13 @@ from typing import Any
 
 from arc.assets.files import FileAsset
 from arc.contracts.agent import AgentContext
-from arc.core.config import filter_package_paths, load_arc_toml, resolve_package_paths
+from arc.core.build_context import build_context_cache_key
+from arc.core.config import (
+    build_context_workflow_specs,
+    filter_package_paths,
+    load_arc_toml,
+    resolve_package_paths,
+)
 from arc.core.loader import load_packages
 from arc.core.registry import ComponentRegistry
 from arc.memory.artifact_registry import ArtifactRegistry
@@ -19,7 +27,7 @@ from arc.memory.provenance import ProvenanceLog
 from arc.memory.results_store import ResultsStore
 from arc.schemas.artifact import ArtifactDraft, ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
-from arc.schemas.research import ResearchGoal
+from arc.schemas.research import BuildContext, ExperimentPlan, ResearchGoal
 from arc.schemas.review import ReviewResult
 from arc.session import session_paths
 from arc.runtime.backend import safe_backend_action
@@ -390,6 +398,247 @@ class ResearchWorkflow:
             return [self._dump(v) for v in value]
         return value
 
+    def _build_context_specs(self) -> list[dict[str, Any]]:
+        """Configured pre-builder context workflows for this session."""
+        runtime_specs = self._context.memory.get("build_context_workflows")
+        if runtime_specs is not None:
+            return build_context_workflow_specs({"workflows": {"build": {"context": runtime_specs}}})
+        try:
+            _path, config = load_arc_toml()
+        except Exception:
+            config = {}
+        return build_context_workflow_specs(config)
+
+    def _workflow_disabled(self, name: str) -> bool:
+        owner = self.registry.component_source("workflow", name)
+        return bool(owner and owner in self._disabled_packages())
+
+    def _coerce_build_contexts(
+        self,
+        raw: Any,
+        *,
+        workflow_name: str,
+    ) -> list[BuildContext]:
+        if raw is None:
+            return []
+        values = raw if isinstance(raw, list) else [raw]
+        contexts: list[BuildContext] = []
+        for item in values:
+            data = item.model_dump() if hasattr(item, "model_dump") else item
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"Build-context workflow {workflow_name!r} returned "
+                    f"{type(item).__name__}, expected a dict."
+                )
+            if data.get("kind") != "build_context":
+                raise ValueError(
+                    f"Build-context workflow {workflow_name!r} returned kind "
+                    f"{data.get('kind')!r}, expected 'build_context'."
+                )
+            data = dict(data)
+            data.setdefault("workflow", workflow_name)
+            if not data.get("workflow"):
+                data["workflow"] = workflow_name
+            data.setdefault("package_name", self.registry.component_source("workflow", workflow_name))
+            contexts.append(BuildContext(**data))
+        return contexts
+
+    def _build_context_output_from_state(
+        self,
+        workflow: dict,
+        state: dict[str, Any],
+        workflow_config: dict[str, Any],
+    ) -> Any:
+        outputs = workflow.get("outputs")
+        if outputs is not None:
+            return self._resolve_ref(outputs, state, workflow_config)
+        if "build_context" in state["steps"]:
+            return state["steps"]["build_context"]["output"]
+        if not state["steps"]:
+            return None
+        last_key = next(reversed(state["steps"]))
+        return state["steps"][last_key]["output"]
+
+    def _context_cache_invalidated(self) -> bool:
+        return (
+            self._context.memory.get("build_context_cache_invalidated") is True
+            or self._context.memory.get("last_failure_classification") == "context_failure"
+        )
+
+    def _context_cache_bucket(self) -> dict[str, list[dict[str, Any]]]:
+        return self._context.memory.setdefault("_build_context_cache", {})
+
+    async def _run_build_context_workflow(
+        self,
+        spec: dict[str, Any],
+        goal: ResearchGoal,
+        plan: ExperimentPlan,
+    ) -> list[BuildContext]:
+        name = str(spec.get("name") or "")
+        if not name:
+            return []
+        if self._workflow_disabled(name):
+            if spec.get("required", True):
+                raise KeyError(
+                    f"Build-context workflow {name!r} belongs to a disabled package"
+                )
+            return []
+        try:
+            workflow = self.registry.get_workflow(name)
+        except KeyError:
+            if spec.get("required", True):
+                raise
+            return []
+
+        package_name = self.registry.component_source("workflow", name)
+        explicit_inputs = dict(spec.get("inputs") or {})
+        cache_key = build_context_cache_key(
+            workflow_name=name,
+            package_name=package_name,
+            inputs=explicit_inputs,
+            goal=goal,
+            plan=plan.model_dump(exclude={"build_contexts"}),
+        )
+        if spec.get("cache", "per_iteration") != "off" and not self._context_cache_invalidated():
+            cached = self._context_cache_bucket().get(cache_key)
+            if cached is not None:
+                return [BuildContext(**item) for item in cached]
+
+        workflow_config = workflow.get("config", {})
+        steps = workflow.get("steps", [])
+        step_index = {step["id"]: idx for idx, step in enumerate(steps)}
+        conditions = workflow.get("conditions", [])
+        state = {
+            "user_goal": goal,
+            "inputs": self._bind_workflow_inputs(
+                workflow,
+                goal,
+                explicit_inputs=explicit_inputs,
+            ),
+            "steps": {},
+            "prepared_inputs": {},
+            "result_path": None,
+        }
+
+        idx = 0
+        transitions = 0
+        max_transitions = int(
+            workflow_config.get("max_transitions", max(len(steps) * 10, len(steps) + 1))
+        )
+        while idx < len(steps):
+            if transitions >= max_transitions:
+                raise RuntimeError(
+                    f"Build-context workflow {name!r} exceeded transition limit"
+                )
+            step = steps[idx]
+            step_id = step["id"]
+            output = await self._execute_step_with_policy(step, state, workflow_config)
+            state["steps"][step_id] = {"definition": step, "output": output}
+            self.provenance.record(
+                self.session_id,
+                f"build_context:{name}:{step_id}",
+                step.get("agent") or step.get("skill") or step.get("adapter", "workflow"),
+                outputs=self._dump(output),
+            )
+
+            jumped = False
+            for condition in conditions:
+                if condition.get("after") != step_id:
+                    continue
+                if self._condition_matches(condition.get("if", ""), state):
+                    goto = condition.get("goto")
+                    if goto in step_index:
+                        idx = step_index[goto]
+                        jumped = True
+                        break
+                    logger.warning(
+                        "Build-context workflow condition after %r has unknown "
+                        "goto=%r; known step ids are %s.",
+                        step_id, goto, sorted(step_index),
+                    )
+            if not jumped:
+                idx += 1
+            transitions += 1
+
+        raw = self._build_context_output_from_state(workflow, state, workflow_config)
+        contexts = self._coerce_build_contexts(raw, workflow_name=name)
+        context_payloads = [context.model_dump() for context in contexts]
+        if spec.get("cache", "per_iteration") != "off":
+            self._context_cache_bucket()[cache_key] = context_payloads
+        for context in contexts:
+            self.provenance.record(
+                self.session_id,
+                "build_context",
+                name,
+                outputs=context.model_dump(),
+            )
+        if contexts:
+            audit_record = {
+                "workflow": name,
+                "package_name": package_name,
+                "contexts": context_payloads,
+            }
+            self._context.memory.setdefault("build_context_provenance", []).append(audit_record)
+            if self.audit.has_actions():
+                await self.audit.dispatch(
+                    "build_context.after",
+                    iteration=self._context.iteration,
+                    role="build_context",
+                    output_summary=audit_record,
+                )
+        return contexts
+
+    def _plan_from_state_for_step(
+        self,
+        step: dict,
+        state: dict,
+        workflow_config: dict[str, Any],
+    ) -> ExperimentPlan | None:
+        input_data = self._resolve_ref(step.get("input", "user_goal"), state, workflow_config)
+        if isinstance(input_data, ExperimentPlan):
+            return input_data
+        if isinstance(input_data, dict):
+            try:
+                return ExperimentPlan(**input_data)
+            except Exception:
+                return None
+        return None
+
+    async def _attach_build_contexts_before_builder(
+        self,
+        step: dict,
+        state: dict,
+        workflow_config: dict[str, Any],
+        goal: ResearchGoal,
+    ) -> None:
+        if step.get("id") != "build" and step.get("agent") != "builder":
+            return
+        plan = self._plan_from_state_for_step(step, state, workflow_config)
+        if plan is None:
+            return
+        if getattr(plan, "build_contexts", None):
+            self._context.memory["build_contexts"] = [
+                item.model_dump() if hasattr(item, "model_dump") else item
+                for item in plan.build_contexts
+            ]
+            return
+        specs = self._build_context_specs()
+        if not specs:
+            return
+        contexts: list[BuildContext] = []
+        for spec in specs:
+            contexts.extend(await self._run_build_context_workflow(spec, goal, plan))
+        if not contexts:
+            return
+        self._context.memory.pop("build_context_cache_invalidated", None)
+        if self._context.memory.get("last_failure_classification") == "context_failure":
+            self._context.memory.pop("last_failure_classification", None)
+        existing = list(getattr(plan, "build_contexts", []) or [])
+        plan.build_contexts = existing + contexts
+        if "plan" in state["steps"]:
+            state["steps"]["plan"]["output"] = plan
+        self._context.memory["build_contexts"] = [item.model_dump() for item in plan.build_contexts]
+
     def _resolve_ref(self, ref, state: dict, workflow_config: dict):
         if isinstance(ref, dict):
             return {k: self._resolve_ref(v, state, workflow_config) for k, v in ref.items()}
@@ -423,7 +672,12 @@ class ResearchWorkflow:
             return value
         return ref
 
-    def _bind_workflow_inputs(self, workflow: dict, goal: ResearchGoal) -> dict[str, Any]:
+    def _bind_workflow_inputs(
+        self,
+        workflow: dict,
+        goal: ResearchGoal,
+        explicit_inputs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Bind workflow-level ``inputs:`` declarations from the research goal.
 
         Scalar inputs come from goal fields/constraints/target/defaults. File
@@ -435,6 +689,7 @@ class ResearchWorkflow:
         goal_data = goal.model_dump() if hasattr(goal, "model_dump") else dict(goal)
         constraints = goal_data.get("constraints") or {}
         target = goal_data.get("target") or {}
+        explicit_inputs = explicit_inputs or {}
 
         # Always expose the goal's first-class fields, constraints, and target
         # values. Explicit schema entries below can add defaults/required checks.
@@ -446,6 +701,7 @@ class ResearchWorkflow:
             "target": target,
             **target,
             **constraints,
+            **explicit_inputs,
         }
 
         if not isinstance(schema, dict):
@@ -456,7 +712,10 @@ class ResearchWorkflow:
             spec = spec or {}
             if not isinstance(spec, dict):
                 spec = {"type": spec}
-            raw = self._lookup_declared_input(name, spec, goal_data, constraints, target)
+            if name in explicit_inputs:
+                raw = explicit_inputs[name]
+            else:
+                raw = self._lookup_declared_input(name, spec, goal_data, constraints, target)
             if spec.get("type") == "file":
                 if raw is None and "default" in spec:
                     raw = spec["default"]
@@ -1052,6 +1311,7 @@ class ResearchWorkflow:
                 break
             step = steps[idx]
             step_id = step["id"]
+            await self._attach_build_contexts_before_builder(step, state, workflow_config, goal)
             await self._dispatch_step_audit_before(step, step_id, state)
             output = await self._execute_step_with_policy(step, state, workflow_config)
             state["steps"][step_id] = {"definition": step, "output": output}

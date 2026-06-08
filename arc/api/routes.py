@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -91,7 +93,8 @@ def _workflow(
 
         state = load_state(resolved_session) or {}
         for key in ("strategy_overrides", "active_recipe",
-                    "recipe_applied", "recipe_suggested"):
+                    "recipe_applied", "recipe_suggested",
+                    "build_context_workflows"):
             if key in state and state[key]:
                 workflow._context.memory[key] = state[key]
         meta = load_session_meta(resolved_session) or {}

@@ -16,6 +16,8 @@ This is the test that catches a future "silent regression" in
 post-fix review).
 """
 
+from __future__ import annotations
+
 from types import SimpleNamespace
 
 import pytest

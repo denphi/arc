@@ -6,6 +6,7 @@ slash command to inspect/steer it.*
 ```bash
 arc chat --stub                          # no LLM
 arc chat --provider openwebui --url https://… --token "$OPENWEBUI_KEY"
+arc chat --build-context paper-context
 ```
 
 Chat classifies each input as a **research goal**, a **question**, or a
@@ -22,6 +23,7 @@ answered from context; a command does the thing below.
 | `/packages` | List loaded packages + session state. |
 | `/package enable\|disable <name>` | Enable/disable a package for the session (a real runtime filter). See {doc}`../packages/enable-disable`. |
 | `/file add\|list\|show\|load ...` | Attach, inspect, and load session FileAssets. See {doc}`../core/file-assets`. |
+| `/build-context [workflow...\|reset]` | Show or set pre-build context workflows. See {doc}`../core/build-context-workflows`. |
 | `/coder [codex\|claude\|builder]` | Select the coding backend. |
 | `/sweep [artifact]` | Run the planner's parameter sweep (shows planner provenance). |
 | `/optimize [gens] [pop]` | Run the active optimizer (shows optimizer + planner provenance). |

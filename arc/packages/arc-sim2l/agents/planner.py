@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from arc.contracts.agent import AgentContract
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 

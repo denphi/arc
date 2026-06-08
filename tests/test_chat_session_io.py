@@ -1,5 +1,7 @@
 """Direct tests for ``arc.chat.session_io`` (Q14 extraction)."""
 
+from __future__ import annotations
+
 from types import SimpleNamespace
 from unittest.mock import patch
 

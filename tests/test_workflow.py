@@ -3,10 +3,11 @@
 import pytest
 
 from arc.core.registry import ComponentRegistry
+from arc.contracts.audit import AuditActionContract, AuditResult
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.runtime.local import LocalRuntimeAdapter
 from arc.schemas.execution import ExecutionResult
-from arc.schemas.research import ResearchGoal
+from arc.schemas.research import BuildContext, ExperimentPlan, ResearchGoal, ResearchProposal
 
 
 @pytest.mark.asyncio
@@ -96,6 +97,70 @@ class SpyBackend:
 class EchoSkill:
     async def execute(self, inputs, context):
         return inputs
+
+
+class StaticPlanSkill:
+    async def execute(self, inputs, context):
+        return ExperimentPlan(
+            proposal=ResearchProposal(
+                hypothesis="Context improves the build.",
+                objective="Build with structured context.",
+                variables=["x"],
+                methodology="Use the configured build context.",
+                expected_outcomes="A builder receives context.",
+                evaluation_metrics=["received_context"],
+            ),
+            artifact_strategy="create_new_sim2l",
+            parameters={"x": 1.0},
+            success_criteria=["builder receives context"],
+        )
+
+
+class BuildContextSkill:
+    calls = 0
+
+    async def execute(self, inputs, context):
+        type(self).calls += 1
+        return {
+            "kind": "build_context",
+            "workflow": "paper-context",
+            "summary": "Use the extracted paper facts.",
+            "requirements": ["preserve expected output files"],
+            "inputs": dict(inputs),
+            "facts": {"answer": 42},
+            "acceptance": {"metrics": ["answer"], "tolerance": {"answer": 0}},
+            "artifacts_expected": ["workflow.py", "sim2l.yaml"],
+            "provenance": [{"source": "test", "locator": "unit"}],
+        }
+
+
+class BadContextSkill:
+    async def execute(self, inputs, context):
+        return {"kind": "not_build_context"}
+
+
+class CaptureBuilderAgent:
+    def __init__(self, context=None):
+        self.context = context
+
+    async def run(self, input_data):
+        plan = input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        self.context.memory["captured_build_contexts"] = [
+            item.model_dump() for item in plan.build_contexts
+        ]
+        return {"ok": True, "contexts": self.context.memory["captured_build_contexts"]}
+
+
+class ContextAudit(AuditActionContract):
+    name = "context_audit"
+    phase = "build_context.after"
+
+    def __init__(self):
+        self.events = []
+
+    async def audit(self, event, context):
+        self.events.append(event)
+        return AuditResult(status="info", summary="context observed")
 
 
 @pytest.mark.asyncio
@@ -363,3 +428,321 @@ async def test_workflow_required_input_missing_fails_before_steps():
 
     with pytest.raises(ValueError, match="Missing required workflow input"):
         await workflow.run_once(ResearchGoal(goal="Missing paper"))
+
+
+def test_build_context_model_round_trips():
+    context = BuildContext(
+        workflow="paper-context",
+        summary="Domain context",
+        requirements=["write workflow.py"],
+        facts={"pde": "advection"},
+    )
+
+    dumped = context.model_dump()
+    restored = BuildContext(**dumped)
+
+    assert restored.kind == "build_context"
+    assert restored.workflow == "paper-context"
+    assert restored.facts["pde"] == "advection"
+
+
+@pytest.mark.asyncio
+async def test_build_context_workflow_runs_before_builder(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("context-skill", BuildContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "paper-context",
+        {
+            "name": "paper-context",
+            "inputs": {
+                "paper": {"type": "string", "required": True},
+            },
+            "steps": [
+                {"id": "build_context", "skill": "context-skill", "input": "inputs"},
+            ],
+        },
+        package_name="test-package",
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (
+            None,
+            {
+                "workflows": {
+                    "build": {
+                        "context": [
+                            {
+                                "name": "paper-context",
+                                "inputs": {"paper": "paper24.pdf"},
+                            }
+                        ]
+                    }
+                }
+            },
+        ),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+
+    result = await workflow.run_once(ResearchGoal(goal="Use context"))
+
+    captured = workflow._context.memory["captured_build_contexts"]
+    assert result["status"] == "completed"
+    assert captured[0]["kind"] == "build_context"
+    assert captured[0]["workflow"] == "paper-context"
+    assert captured[0]["package_name"] == "test-package"
+    assert captured[0]["inputs"]["paper"] == "paper24.pdf"
+    assert captured[0]["facts"]["answer"] == 42
+    assert result["plan"]["build_contexts"][0]["summary"] == "Use the extracted paper facts."
+
+
+@pytest.mark.asyncio
+async def test_build_context_runtime_override_independent_of_builder_override(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("context-skill", BuildContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "paper-context",
+        {
+            "name": "paper-context",
+            "steps": [{"id": "build_context", "skill": "context-skill"}],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (None, {"workflows": {"build": {"context": []}}}),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+    workflow._context.memory["strategy_overrides"] = {"builder": "codex"}
+    workflow._context.memory["build_context_workflows"] = ["paper-context"]
+
+    result = await workflow.run_once(ResearchGoal(goal="Use context"))
+
+    assert result["status"] == "completed"
+    assert workflow._context.memory["captured_build_contexts"][0]["workflow"] == "paper-context"
+    assert workflow._context.memory["strategy_overrides"]["builder"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_build_context_cache_reuses_implementation_retry(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    BuildContextSkill.calls = 0
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("context-skill", BuildContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "paper-context",
+        {
+            "name": "paper-context",
+            "steps": [{"id": "build_context", "skill": "context-skill"}],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (None, {"workflows": {"build": {"context": ["paper-context"]}}}),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+
+    await workflow.run_once(ResearchGoal(goal="Use context"))
+    await workflow.run_once(ResearchGoal(goal="Use context"))
+
+    assert BuildContextSkill.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_build_context_context_failure_invalidates_cache(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    BuildContextSkill.calls = 0
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("context-skill", BuildContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "paper-context",
+        {
+            "name": "paper-context",
+            "steps": [{"id": "build_context", "skill": "context-skill"}],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (None, {"workflows": {"build": {"context": ["paper-context"]}}}),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+
+    await workflow.run_once(ResearchGoal(goal="Use context"))
+    workflow._context.memory["last_failure_classification"] = "context_failure"
+    await workflow.run_once(ResearchGoal(goal="Use context"))
+
+    assert BuildContextSkill.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_build_context_audit_provenance_recorded(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("context-skill", BuildContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "paper-context",
+        {
+            "name": "paper-context",
+            "steps": [{"id": "build_context", "skill": "context-skill"}],
+        },
+        package_name="external-package",
+    )
+    audit = ContextAudit()
+    registry.register_audit_action(audit)
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (None, {"workflows": {"build": {"context": ["paper-context"]}}}),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+
+    await workflow.run_once(ResearchGoal(goal="Use context"))
+
+    assert audit.events
+    assert audit.events[0].phase == "build_context.after"
+    assert workflow._context.memory["build_context_provenance"][0]["package_name"] == "external-package"
+
+
+@pytest.mark.asyncio
+async def test_build_context_workflow_rejects_invalid_output(monkeypatch):
+    from arc.orchestrator import workflow as workflow_module
+
+    registry = ComponentRegistry()
+    registry.register_skill("static-plan", StaticPlanSkill())
+    registry.register_skill("bad-context", BadContextSkill())
+    registry.register_agent("capture_builder", CaptureBuilderAgent)
+    registry.register_workflow(
+        "main-loop",
+        {
+            "name": "main-loop",
+            "steps": [
+                {"id": "plan", "skill": "static-plan", "input": "user_goal"},
+                {"id": "build", "agent": "capture_builder", "input": "plan.output"},
+            ],
+        },
+    )
+    registry.register_workflow(
+        "bad-context-loop",
+        {
+            "name": "bad-context-loop",
+            "steps": [{"id": "build_context", "skill": "bad-context"}],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_arc_toml",
+        lambda: (None, {"workflows": {"build": {"context": ["bad-context-loop"]}}}),
+    )
+    workflow = ResearchWorkflow(registry=registry, workflow_name="main-loop")
+
+    with pytest.raises(ValueError, match="expected 'build_context'"):
+        await workflow.run_once(ResearchGoal(goal="Use context"))
+
+
+@pytest.mark.asyncio
+async def test_reviewer_uses_build_context_acceptance_and_reflector_records_failure():
+    from arc.contracts.agent import AgentContext
+    from arc.packages.arc_sim2l_agents.reflector import ReflectorAgent
+    from arc.packages.arc_sim2l_agents.reviewer import ReviewerAgent
+
+    memory = {
+        "build_contexts": [
+            {
+                "kind": "build_context",
+                "workflow": "paper-context",
+                "acceptance": {
+                    "metrics": ["result"],
+                    "reference_values": {"result": 10.0},
+                    "tolerance": {"result": 0.01},
+                },
+            }
+        ],
+    }
+    ctx = AgentContext(session_id="review-context", memory=memory)
+    reviewer = ReviewerAgent(context=ctx)
+    review = await reviewer.run(
+        ExecutionResult(
+            run_id="run-context",
+            status="completed",
+            outputs={"result": 9.0},
+            metrics={},
+        )
+    )
+
+    assert review.approved is False
+    assert review.failure_classification == "acceptance_failure"
+
+    reflector = ReflectorAgent(context=ctx)
+    lessons = await reflector.run(review)
+
+    assert lessons["failure_classification"] == "acceptance_failure"
+    assert memory["last_failure_classification"] == "acceptance_failure"

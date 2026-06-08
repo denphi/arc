@@ -30,6 +30,7 @@ AUDIT_PHASES: tuple[str, ...] = (
     "ideation.after",
     "search.after",
     "planning.after",
+    "build_context.after",
     "build.after",
     "validation.before",
     "validation.after",

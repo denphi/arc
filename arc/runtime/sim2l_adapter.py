@@ -3,6 +3,8 @@
 Bridges the ARC RuntimeAdapterContract to the real sim2l library.
 Uses sim2l's LocalExecutor, SimulationDefinition, and repository APIs.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

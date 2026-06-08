@@ -192,6 +192,21 @@ def test_coder_agent_class_resolves_through_builder_role():
     assert cls2.__name__ == "Sim2LBuilderAgent"
 
 
+@pytest.mark.asyncio
+async def test_build_context_command_sets_runtime_override():
+    from arc.chat.commands.build_context import run
+    from arc.chat.state import ChatState
+
+    wf = make_workflow(memory={})
+    wf.registry.list_workflows = lambda: ["paper-context", "other-loop"]
+    state = ChatState(workflow=wf)
+    state.persist = lambda: None
+
+    await run(state, ["paper-context"])
+
+    assert wf._context.memory["build_context_workflows"] == ["paper-context"]
+
+
 # ── /target ────────────────────────────────────────────────────────────────
 
 def test_target_show():

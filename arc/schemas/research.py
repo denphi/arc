@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -21,6 +23,28 @@ class ResearchProposal(BaseModel):
     risk_level: str = "medium"
 
 
+class BuildContext(BaseModel):
+    """Structured, coder-neutral context produced by package workflows.
+
+    A build-context workflow prepares domain facts, requirements, provenance,
+    and acceptance criteria before ARC invokes the selected builder. Builders
+    can render this model into their own prompt format, but the semantic
+    contract stays independent of Codex, Claude Code, Gemini, or any other
+    backend.
+    """
+
+    kind: str = "build_context"
+    workflow: str
+    package_name: str | None = None
+    summary: str = ""
+    requirements: list[str] = Field(default_factory=list)
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    facts: dict[str, Any] = Field(default_factory=dict)
+    acceptance: dict[str, Any] = Field(default_factory=dict)
+    artifacts_expected: list[str] = Field(default_factory=list)
+    provenance: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ExperimentPlan(BaseModel):
     proposal: ResearchProposal
     artifact_strategy: str
@@ -29,6 +53,7 @@ class ExperimentPlan(BaseModel):
     parameter_constraints: dict[str, dict[str, Any]] = Field(default_factory=dict)
     experimental_design: list[str] = Field(default_factory=list)
     success_criteria: list[str]
+    build_contexts: list[BuildContext] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):

@@ -3,6 +3,8 @@
 Wraps the Anthropic SDK and implements ProviderContract.
 Uses prompt caching on system prompts to reduce cost on repeated calls.
 """
+from __future__ import annotations
+
 
 import asyncio
 import json

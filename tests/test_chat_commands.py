@@ -28,7 +28,7 @@ def test_registry_loads_all_expected_commands():
         "services", "exec", "sweep",
         "optimize", "iterate", "run", "continue",
         "strategy", "preset", "clusters", "skills",
-        "file",
+        "file", "build-context",
     }
     names = {cmd.name for cmd in reg.all()}
     assert expected == names, f"missing or extra commands: {expected ^ names}"

@@ -69,6 +69,7 @@ STATE_KEYS = (
     "active_recipe",
     "recipe_applied",
     "recipe_suggested",
+    "build_context_workflows",
 )
 
 COMMANDS: list[dict[str, Any]] = [

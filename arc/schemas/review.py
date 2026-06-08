@@ -15,3 +15,10 @@ class ReviewResult(BaseModel):
     # "explore" → run genetic algorithm to search more broadly
     # "stop"   → no further progress possible
     strategy: Literal["step", "explore", "stop"] = "step"
+    failure_classification: Literal[
+        "context_failure",
+        "implementation_failure",
+        "runtime_failure",
+        "acceptance_failure",
+        "none",
+    ] = "none"

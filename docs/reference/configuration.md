@@ -112,6 +112,7 @@ See {doc}`../guides/sim2l-services`.
 | `[memory]` | `artifact_registry`, `results_store`, `provenance_log` |
 | `[api]` | `host`, `port`, `reload`, `provider_base_url_allowlist` |
 | `[strategies]` | `<role> = <strategy>` overrides |
+| `[workflows.build]` | `context` pre-build workflow names or tables. See {doc}`../core/build-context-workflows`. |
 | `[extensions.<name>]` | `enabled`, `entrypoint`/`path`, plus per-extension keys (mcp, openapi, vector-memory, docker/slurm/k8s-runtime, knowledge-graph) |
 
 ```{note}

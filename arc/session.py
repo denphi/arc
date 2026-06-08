@@ -8,6 +8,8 @@ Each session lives under ~/.sim2l/<session_id>/ and persists:
 
 Sessions are identified by a short human-readable ID like 'bandgap-abc1'.
 """
+from __future__ import annotations
+
 
 import json
 import os

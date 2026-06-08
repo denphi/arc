@@ -103,21 +103,36 @@ def _looks_unsafe_name(name: str) -> bool:
 
 
 def _check_import(node: ast.AST, allowed: frozenset[str]) -> None:
+    # Gate only on the *source module* — the thing that grants capability.
+    #
+    #   import a, b.c          → check {a, b}
+    #   from m import x, y, *  → check {m}, NOT {x, y, *}
+    #
+    # For ``ImportFrom`` the imported member names (``x``, ``y``, ``*``) are
+    # bindings pulled *from* a module that has already been allow-listed;
+    # checking them against a *module* allow-list is a category error. It
+    # used to reject ``from dolfin import UnitSquareMesh`` (member name not
+    # in the allow-list) and ``from fenics import *`` (``"*"`` not in the
+    # allow-list), which made idiomatic FEniCS — and any `from x import y`
+    # workflow — impossible even when ``x`` was explicitly permitted. The
+    # source module is the only safety-relevant axis: ``from os import *``
+    # stays blocked because ``os`` isn't allow-listed, not because of ``*``.
     names: list[str] = []
     if isinstance(node, ast.Import):
         names = [alias.name for alias in node.names]
     elif isinstance(node, ast.ImportFrom):
-        if node.module:
-            names.append(node.module)
-        names.extend(alias.name for alias in node.names)
+        # ``from . import x`` (relative, node.module is None) has no module to
+        # vet; treat the missing module as disallowed via an empty sentinel.
+        names = [node.module or ""]
 
     for name in names:
         top = name.split(".", 1)[0]
         if top not in allowed:
             allowed_list = ", ".join(sorted(allowed))
+            shown = name or "<relative import>"
             raise WorkflowSafetyError(
-                f"workflow.py uses disallowed import '{name}'. "
-                f"Only standard-library modules are permitted: {allowed_list}. "
+                f"workflow.py uses disallowed import '{shown}'. "
+                f"Only these modules are permitted: {allowed_list}. "
                 f"Remove the import and rewrite the logic using plain math."
             )
 
@@ -209,8 +224,19 @@ def _check_subscript(node: ast.Subscript) -> None:
         )
 
 
+# Module-level dunder names that are safe to *read* as a bare global. They
+# carry no capability on their own (unlike ``__class__`` / ``__globals__``,
+# which walk the object graph to an escape). Allowing ``__name__`` lets coding
+# agents keep the ``if __name__ == "__main__":`` self-test footer they reflexively
+# emit in a generated ``workflow.py`` (review item F2). Still blocked as an
+# *attribute* (``obj.__name__``) — only the bare-Name read is exempt.
+_READABLE_DUNDER_NAMES: frozenset[str] = frozenset({"__name__"})
+
+
 def _check_name(node: ast.Name) -> None:
     # Bare-name reference like `x = __class__`.
+    if node.id in _READABLE_DUNDER_NAMES:
+        return
     if _looks_unsafe_name(node.id):
         raise WorkflowSafetyError(
             f"workflow.py references disallowed name '{node.id}'. "

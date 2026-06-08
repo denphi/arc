@@ -127,7 +127,7 @@ def test_dispatcher_noop_without_actions():
 def test_all_phases_are_known():
     # Every step-phase the workflow dispatches must be a declared phase.
     for phase in ("goal.received", "ideation.after", "planning.after",
-                  "build.after", "validation.after", "register.after",
+                  "build_context.after", "build.after", "validation.after", "register.after",
                   "execution.after", "review.after", "reflection.after",
                   "iteration.after", "workflow.error"):
         assert phase in AUDIT_PHASES

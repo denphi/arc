@@ -15,6 +15,7 @@ Schema::
       "recipe_applied":       {role: impl, …},
       "active_recipe":        str | null,
       "recipe_suggested":     [recipe_name, …],
+      "build_context_workflows": [workflow_name, …],
     }
 
 Missing file → empty state. Writes are atomic-ish: we write the whole
@@ -42,6 +43,7 @@ _PERSISTED_KEYS = frozenset({
     "recipe_applied",
     "active_recipe",
     "recipe_suggested",
+    "build_context_workflows",
 })
 
 

@@ -30,6 +30,7 @@ arc run "Maximise the output metric" \
   --iterations 3 \
   --provider openwebui --model gpt-oss:120b --base-url https://… \
   --workflow research-loop \
+  --build-context paper-context \
   --output run.json
 ```
 
@@ -40,14 +41,15 @@ arc run "Maximise the output metric" \
 | `--provider, -p` / `--token, -t` / `--model, -m` / `--base-url, -u` | env | Provider overrides. |
 | `--workflow, -w` | `research-loop` | Registered workflow name. |
 | `--input, -i` | — | Workflow input as `key=value`; repeat as needed. |
+| `--build-context` | — | Pre-build context workflow; repeat as needed. |
 | `--output, -o` | stdout | Save results JSON to a file. |
 
 ## `arc chat`
 
 Key options: `--stub` (no LLM), `--provider/--token/--model/--url`,
 `--session <id>` (resume), `--list-sessions`, `--delete-session`,
-`--delete-all-sessions`, `--max-iterations`, `--check` (dry-run config/auth
-report), `--plan` (no files written, no sim2l pushes), `--events
+`--delete-all-sessions`, `--max-iterations`, `--build-context`,
+`--check` (dry-run config/auth report), `--plan` (no files written, no sim2l pushes), `--events
 ansi|jsonl|stdout-json|multi`. See {doc}`chat`.
 
 ## `arc serve` / `arc ui`

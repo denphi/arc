@@ -8,6 +8,8 @@ via crossover + mutation.
 Usage (via chat.py /optimize command):
     await GeneticOptimizerAgent(context=ctx).run(artifact, target, max_generations)
 """
+from __future__ import annotations
+
 
 import math
 import random

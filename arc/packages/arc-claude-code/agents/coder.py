@@ -41,6 +41,11 @@ sim2l.yaml requirements:
 
 Experiment plan JSON:
 {plan_json}
+
+If Experiment plan JSON includes build_contexts, treat them as authoritative
+pre-build domain context from package workflows. Satisfy their requirements,
+use their facts and provenance, and preserve their acceptance criteria in the
+generated artifact behavior where applicable.
 """
 
 _PKG_DIR = Path(__file__).parent.parent

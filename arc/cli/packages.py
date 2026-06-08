@@ -5,9 +5,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from textwrap import dedent
+from typing import Optional
 
 import typer
 import yaml
+
+# NB: typer calls ``typing.get_type_hints()`` on every command callback at
+# registration time, which *evaluates* the annotations. Under
+# ``from __future__ import annotations`` they are strings, and on Python 3.9
+# ``eval("Path | None")`` raises (PEP 604 unions are 3.10+ at runtime). So
+# typer-introspected params MUST use ``Optional[X]`` — it evaluates on 3.9 and
+# 3.10 alike — not ``X | None``. (eval_type_backport only patches pydantic,
+# not the stdlib get_type_hints typer uses.)
 
 package_app = typer.Typer(
     name="package",
@@ -59,18 +68,18 @@ def _write_new(path: Path, content: str, *, force: bool) -> None:
 @package_app.command("init")
 def init_package(
     name: str = typer.Argument(..., help="Package name, for example arc-my-lab or my-lab."),
-    path: Path | None = typer.Argument(
+    path: Optional[Path] = typer.Argument(
         None,
         help="Target folder. Defaults to ./<package-name>.",
     ),
     role: str = typer.Option("ideator", "--role", "-r", help="Initial strategy role."),
-    strategy: str | None = typer.Option(
+    strategy: Optional[str] = typer.Option(
         None,
         "--strategy",
         "-s",
         help="Initial strategy name. Defaults to <package>_<role>.",
     ),
-    description: str | None = typer.Option(
+    description: Optional[str] = typer.Option(
         None,
         "--description",
         "-d",

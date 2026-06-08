@@ -11,6 +11,8 @@ Environment variables:
     OPENWEBUI_MODEL  Model name to use (e.g. "llama3", "mistral").
                      Default: first available model from the /models endpoint.
 """
+from __future__ import annotations
+
 
 import json
 import os
