@@ -601,6 +601,20 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             logger.error("Failed to load adapter '%s': %s", adapter_def.get("name"), exc)
             record_error("runtime_adapter", adapter_def.get("name"), exc)
 
+    for backend_def in manifest.get("provides", {}).get("backends", []):
+        # Register the backend *class* under its name. ``resolve_backend``
+        # instantiates it when ``ARC_BACKEND`` / ``arc.toml [backend] kind``
+        # names it — the seam that lets a package ship a publish backend
+        # (S3, Zenodo, LIMS, …) without touching core.
+        try:
+            backend_class = _import_declared(backend_def, package_dir)
+            registry.register_backend(backend_def["name"], backend_class, package_name=pkg_name)
+            for alias in backend_def.get("aliases", []) or []:
+                registry.register_backend(alias, backend_class, package_name=pkg_name)
+        except Exception as exc:
+            logger.error("Failed to load backend '%s': %s", backend_def.get("name"), exc)
+            record_error("backend", backend_def.get("name"), exc)
+
     for provider_def in manifest.get("provides", {}).get("providers", []):
         # Register the provider *class* (not an instance) under its name.
         # ``build_provider`` instantiates it on demand with the caller's

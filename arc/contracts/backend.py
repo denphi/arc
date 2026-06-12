@@ -96,3 +96,22 @@ class BackendActions(ABC):
         Returns ``{"recorded": bool, ...}``. Never raises.
         """
         raise NotImplementedError
+
+    async def publish_provenance(
+        self,
+        session_id: str,
+        entries: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Publish a batch of agent-action provenance entries.
+
+        ``entries`` are JSON-able dicts from the local provenance log (see
+        :class:`arc.memory.provenance.ProvenanceLog`). Backends that store
+        the audit trail (sim2l results service, GitHub) override this; the
+        default is a skip so existing backends keep working unchanged.
+
+        Returns ``{"published": bool, ...}`` — ``"skipped": True`` means the
+        backend doesn't publish provenance (don't retry); ``published=False``
+        with an ``error`` means a real failure (the caller may retry).
+        Never raises.
+        """
+        return {"published": False, "skipped": True, "backend": self.name}

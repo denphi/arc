@@ -77,23 +77,85 @@ def _import_workflow_func(artifact_path: str, artifact_id: str):
     return func
 
 
-def _function_workflow_bundle(source: str, *, workflow_hash: str | None = None) -> dict[str, Any]:
-    """Build the catalog-service portable bundle for an ARC function artifact."""
+_SIM_NAME_MAX = 50
+
+
+def _sim_name_for_artifact(name: str) -> str:
+    """Map an artifact name to a sim2l simulation name (≤ 50 chars).
+
+    A long name is *disambiguated*, not just truncated: two artifacts whose
+    names share a 50-char prefix must not collide on the same catalog
+    identity (the second deploy would replace the first). The suffix is a
+    short hash of the full name, so the mapping is deterministic.
+    """
+    if len(name) <= _SIM_NAME_MAX:
+        return name
+    import hashlib
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    truncated = name[: _SIM_NAME_MAX - len(digest) - 1].rstrip("-_ ")
+    logger.warning(
+        "Artifact name %r exceeds %d chars — using %r for the sim2l catalog",
+        name, _SIM_NAME_MAX, f"{truncated}-{digest}",
+    )
+    return f"{truncated}-{digest}"
+
+
+# Per-file ceiling for bundled artifact files. Anything larger (run outputs,
+# datasets accidentally left in the artifact dir) is skipped — the bundle is
+# for reproducing the artifact, not for bulk data transport.
+_BUNDLE_FILE_LIMIT_BYTES = 2 * 1024 * 1024
+
+
+def _function_workflow_bundle(
+    source: str,
+    *,
+    workflow_hash: str | None = None,
+    artifact_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build the catalog-service portable bundle for an ARC function artifact.
+
+    Bundles ``workflow.py`` plus every other file in the artifact directory
+    (``sim2l.yaml``, tests, ``arc_record.json``, …) so an artifact restored
+    from the catalog carries its schema and provenance, not just the code.
+    """
+    import hashlib
+
+    def _entry(rel_path: str, data: bytes, sha256: str | None = None) -> dict[str, Any]:
+        return {
+            "path": rel_path,
+            "encoding": "base64",
+            "content_base64": base64.b64encode(data).decode("ascii"),
+            "size_bytes": len(data),
+            "sha256": sha256 or hashlib.sha256(data).hexdigest(),
+        }
 
     source_bytes = source.encode("utf-8")
+    files = [_entry("workflow.py", source_bytes, workflow_hash)]
+
+    if artifact_dir is not None:
+        base = Path(artifact_dir)
+        try:
+            candidates = sorted(p for p in base.rglob("*") if p.is_file())
+        except OSError as exc:
+            logger.debug("bundle scan of %s failed: %s", base, exc)
+            candidates = []
+        for f in candidates:
+            rel = f.relative_to(base).as_posix()
+            if rel == "workflow.py" or f.is_symlink():
+                continue
+            try:
+                if f.stat().st_size > _BUNDLE_FILE_LIMIT_BYTES:
+                    logger.debug("bundle skips %s (> %d bytes)", rel, _BUNDLE_FILE_LIMIT_BYTES)
+                    continue
+                files.append(_entry(rel, f.read_bytes()))
+            except OSError as exc:
+                logger.debug("bundle skips unreadable %s: %s", rel, exc)
+
     return {
         "format_version": 1,
         "workflow_type": "function",
         "entrypoint": "workflow.py",
-        "files": [
-            {
-                "path": "workflow.py",
-                "encoding": "base64",
-                "content_base64": base64.b64encode(source_bytes).decode("ascii"),
-                "size_bytes": len(source_bytes),
-                "sha256": workflow_hash,
-            }
-        ],
+        "files": files,
     }
 
 
@@ -310,7 +372,8 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         self.last_push_errors.append((label, msg))
 
     def _push_to_catalog(self, sim_def, sim_name: str, sim_version: str,
-                         workflow_source: str | None = None) -> bool:
+                         workflow_source: str | None = None,
+                         artifact_path: str | None = None) -> bool:
         """Register or update the simulation in the catalog service.
 
         On 409 (already registered), fetches the existing record and PATCHes
@@ -339,6 +402,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
                     _function_workflow_bundle(
                         workflow_source,
                         workflow_hash=sim_def.workflow_hash,
+                        artifact_dir=artifact_path,
                     )
                     if workflow_source
                     else None
@@ -369,6 +433,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
                                 updates["workflow_bundle"] = _function_workflow_bundle(
                                     workflow_source,
                                     workflow_hash=sim_def.workflow_hash,
+                                    artifact_dir=artifact_path,
                                 )
                             return bool(client.update_simulation(sim_id, updates))
                 except Exception as upd_exc:
@@ -421,9 +486,47 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             self._classify_push_error(exc, "results")
             return False
 
+    def _catalog_simulation_id(self, sim_name: str, sim_version: str) -> Any:
+        """Resolve (and cache) the catalog's numeric id for name+version.
+
+        The id is stable for a deployed simulation, so it's cached on
+        ``_catalog_sim_ids`` — without this, every run of a sweep repeats
+        the same GET. Returns ``None`` when the simulation isn't in the
+        catalog (or the lookup fails); errors are recorded by the caller.
+        """
+        import requests
+
+        cache = getattr(self, "_catalog_sim_ids", None)
+        if cache is None:
+            cache = self._catalog_sim_ids = {}
+        key = (sim_name, sim_version)
+        if key in cache:
+            return cache[key]
+
+        headers = {}
+        if self._catalog_session_id:
+            headers["X-Session-ID"] = self._catalog_session_id
+        lookup = requests.get(
+            f"{self._catalog_url}/simulations/{sim_name}",
+            params={"version": sim_version},
+            headers=headers,
+            timeout=5,
+        )
+        if lookup.status_code == 404:
+            # Don't cache a miss — the simulation may be registered later
+            # in the same session.
+            return None
+        lookup.raise_for_status()
+        sim_id = (lookup.json() or {}).get("id")
+        if sim_id:
+            cache[key] = sim_id
+        return sim_id
+
     def _push_to_catalog_execution_registry(
         self, sim2l_result, sim_name: str, sim_version: str,
         reconciled_inputs: dict, outputs: dict,
+        *,
+        started_at=None, completed_at=None, cache_hit: bool = False,
     ) -> bool:
         """Record the execution in the catalog's execution_registry table.
 
@@ -432,6 +535,13 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         call, the catalog stays at 0 even when /register_direct
         succeeds on the results service.
 
+        ``started_at``/``completed_at`` are the adapter-observed run window
+        (aware datetimes). A cache hit is recorded under a *fresh*
+        execution_id with ``cache_hit=True`` and the source execution id in
+        ``environment`` — re-using the original id would collide with the
+        original row (the registry is unique on execution_id) and recording
+        nothing would leave the dashboard's cached-executions counter at 0.
+
         Best-effort: a failure here doesn't fail the run. The
         ``last_push_errors`` list records what happened so the chat
         surfaces a single combined warning.
@@ -439,48 +549,46 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         try:
             import hashlib
             import json
-            import time
             import requests
 
-            # We need the catalog's numeric simulation_id. Look it up by
-            # name+version. If the simulation isn't in the catalog, this
-            # GET returns 404 and we silently skip (the chat already
-            # warns about that elsewhere).
             headers = {}
             if self._catalog_session_id:
                 headers["X-Session-ID"] = self._catalog_session_id
-            lookup = requests.get(
-                f"{self._catalog_url}/simulations/{sim_name}",
-                params={"version": sim_version},
-                headers=headers,
-                timeout=5,
-            )
-            if lookup.status_code == 404:
-                # No catalog record yet — the dashboard counter only
-                # tracks executions of catalog-known simulations.
-                return False
-            lookup.raise_for_status()
-            sim_record = lookup.json() or {}
-            sim_id = sim_record.get("id")
+            sim_id = self._catalog_simulation_id(sim_name, sim_version)
             if not sim_id:
                 return False
 
             from datetime import datetime, timezone
-            started_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            now = datetime.now(timezone.utc)
+            started = started_at or now
+            completed = completed_at or now
+            wall_seconds = max((completed - started).total_seconds(), 0.0)
             input_hash = hashlib.sha256(
                 json.dumps(reconciled_inputs, sort_keys=True, default=str).encode("utf-8"),
             ).hexdigest()
+
+            environment: dict[str, Any] = {"source": "arc.chat"}
+            if cache_hit:
+                execution_id = str(uuid.uuid4())
+                environment["source_execution_id"] = sim2l_result.execution_id
+                duration = wall_seconds
+            else:
+                execution_id = sim2l_result.execution_id
+                duration = getattr(sim2l_result, "duration_seconds", None)
+
             payload = {
-                "execution_id": sim2l_result.execution_id,
+                "execution_id": execution_id,
                 "squid_id": sim2l_result.squid_id or sim2l_result.execution_id,
                 "simulation_id": sim_id,
+                # The catalog service resolves the user from the
+                # authenticated session when user_id is omitted.
                 "user_id": None,
-                "started_at": started_at,
-                "completed_at": started_at,
-                "duration_seconds": getattr(sim2l_result, "duration_seconds", None),
+                "started_at": started.replace(tzinfo=None).isoformat(),
+                "completed_at": completed.replace(tzinfo=None).isoformat(),
+                "duration_seconds": duration,
                 "status": sim2l_result.status,
                 "executor_type": getattr(sim2l_result, "executor_type", "isolated"),
-                "cache_hit": False,
+                "cache_hit": cache_hit,
                 "run_db_path": None,
                 "run_db_size_bytes": None,
                 "input_hash": input_hash,
@@ -488,7 +596,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
                 "artifact_count": 0,
                 "error_count": 1 if sim2l_result.status != "completed" else 0,
                 "warning_count": 0,
-                "environment": {"source": "arc.chat"},
+                "environment": environment,
             }
             resp = requests.post(
                 f"{self._catalog_url}/executions",
@@ -538,6 +646,50 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
     ) -> dict[str, Any]:
         return parameters
 
+    @classmethod
+    def _sim2l_field_type(cls, value: Any) -> str:
+        # One shared mapping with the schema loader (arc/sim2l_schema.py)
+        # so the adapter and the standalone backend register identical
+        # schema types for the same artifact.
+        from arc.sim2l_schema import normalize_field_type
+        return normalize_field_type(value)
+
+    @staticmethod
+    def _field_type_for_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "Boolean"
+        if isinstance(value, int):
+            return "Integer"
+        if isinstance(value, float):
+            return "Number"
+        if isinstance(value, str):
+            return "Text"
+        if isinstance(value, (list, tuple)):
+            return "List"
+        if isinstance(value, dict):
+            return "Dict"
+        return "Number"
+
+    @classmethod
+    def _coerce_field_spec(cls, raw: Any, *, include_default: bool) -> dict[str, Any]:
+        """Normalize one sim2l.yaml field entry into a Schema.from_dict spec.
+
+        Preserves everything the yaml declared (default, min, max, units,
+        description, …); only the type name is normalized so non-canonical
+        spellings ("float", "string") still resolve to a registered field
+        class. A bare scalar entry is shorthand for a default value.
+        """
+        if isinstance(raw, dict):
+            spec = dict(raw)
+            spec["type"] = cls._sim2l_field_type(spec.get("type"))
+            if not include_default:
+                spec.pop("default", None)
+            return spec
+        spec = {"type": cls._field_type_for_value(raw)}
+        if include_default and raw is not None:
+            spec["default"] = raw
+        return spec
+
     def _schemas_for_artifact(self, artifact: ArtifactRecord, inputs: dict[str, Any] | None = None):
         from sim2l.schema import InputSchema, OutputSchema
 
@@ -545,27 +697,28 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         if sim2l_yaml.exists():
             import yaml
             spec = yaml.safe_load(sim2l_yaml.read_text()) or {}
-            in_schema = InputSchema.from_yaml(
-                "\n".join(
-                    f"{k}:\n  type: Number\n  default: {v.get('default', 1.0)}"
-                    for k, v in spec.get("inputs", {}).items()
-                )
-            )
-            out_schema = OutputSchema.from_yaml(
-                "\n".join(
-                    f"{k}:\n  type: Number"
-                    for k in spec.get("outputs", {})
-                )
-            )
+            # Pass the declared fields through nearly verbatim so the catalog
+            # indexes the *real* input/output schemas (types, units, bounds,
+            # descriptions) instead of an everything-is-Number approximation.
+            in_schema = InputSchema.from_dict({
+                k: self._coerce_field_spec(v, include_default=True)
+                for k, v in (spec.get("inputs") or {}).items()
+            })
+            out_schema = OutputSchema.from_dict({
+                k: self._coerce_field_spec(v, include_default=False)
+                for k, v in (spec.get("outputs") or {}).items()
+            })
             return in_schema, out_schema
 
         input_values = inputs or {}
-        in_fields = "\n".join(
-            f"{k}:\n  type: Number\n  default: {v}"
+        in_fields = {
+            k: {"type": self._field_type_for_value(v), "default": v}
             for k, v in input_values.items()
+        }
+        in_schema = InputSchema.from_dict(
+            in_fields or {"x": {"type": "Number", "default": 1.0}}
         )
-        in_schema = InputSchema.from_yaml(in_fields or "x:\n  type: Number\n  default: 1.0")
-        out_schema = OutputSchema.from_yaml("result:\n  type: Number")
+        out_schema = OutputSchema.from_dict({"result": {"type": "Number"}})
         return in_schema, out_schema
 
     def _workflow_source(self, artifact: ArtifactRecord) -> str | None:
@@ -593,7 +746,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
 
         func = _import_workflow_func(artifact.path, artifact.artifact_id)
         in_schema, out_schema = self._schemas_for_artifact(artifact, inputs)
-        sim_name = artifact.name[:50]
+        sim_name = _sim_name_for_artifact(artifact.name)
         sim_version = artifact.version
         sim_def = sim2l.SimulationDefinition.from_function(
             func=func,
@@ -616,6 +769,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         sim_name: str,
         sim_version: str,
         workflow_source: str | None,
+        artifact_path: str | None = None,
     ) -> bool:
         repo = self._get_repo()
         try:
@@ -623,7 +777,9 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         except ValueError:
             repo.delete(sim_name, version=sim_version)
             repo.deploy(sim_def)
-        return self._push_to_catalog(sim_def, sim_name, sim_version, workflow_source)
+        return self._push_to_catalog(
+            sim_def, sim_name, sim_version, workflow_source, artifact_path,
+        )
 
     def _ensure_deployed(
         self,
@@ -666,7 +822,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         )
         try:
             catalog_persisted = self._deploy_simulation_definition(
-                sim_def, sim_name, sim_version, source or None
+                sim_def, sim_name, sim_version, source or None, artifact.path,
             )
         except Exception as exc:
             logger.debug(f"deploy failed (non-fatal): {exc}")
@@ -770,21 +926,37 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             # ``sim_def.run`` is a blocking call (it may spawn a subprocess
             # and wait); offload it so it doesn't stall the event loop when
             # the adapter is driven from the async API / research loop.
+            from datetime import datetime, timezone
             executor = self._build_executor()
+            started_at = datetime.now(timezone.utc)
             sim2l_result = await asyncio.to_thread(
                 sim_def.run, **reconciled, executor=executor
             )
+            completed_at = datetime.now(timezone.utc)
+            # Set by the sim2l executors' check_cache paths; False on older
+            # sim2l builds that don't stamp it.
+            cache_hit = bool(getattr(sim2l_result, "cache_hit", False))
 
             outputs = {
                 k: getattr(sim2l_result.outputs, k, None)
                 for k in out_schema.fields
             }
             # The persist/record helpers do blocking HTTP (requests.*); run
-            # them off the loop too.
-            results_persisted = await asyncio.to_thread(
-                self._push_to_results,
-                sim2l_result, sim_name, sim_version, reconciled, outputs,
-            )
+            # them off the loop too. A cache hit returns the *original*
+            # execution's result — its outputs were registered when the
+            # source execution ran, so re-pushing would only re-upsert the
+            # same row. That's an *assumption* (a hit served from another
+            # installation's cache may not be in *our* results service);
+            # flag it so audits can tell verified from assumed persistence.
+            persistence_assumed = False
+            if cache_hit:
+                results_persisted = True
+                persistence_assumed = True
+            else:
+                results_persisted = await asyncio.to_thread(
+                    self._push_to_results,
+                    sim2l_result, sim_name, sim_version, reconciled, outputs,
+                )
             if self._services_required and not results_persisted:
                 return ExecutionResult(
                     run_id=sim2l_result.execution_id,
@@ -799,32 +971,38 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             # advances. This is best-effort: a 404 (sim not in catalog)
             # or 401 doesn't fail the run, but is surfaced via
             # ``last_push_errors`` to the chat.
-            await asyncio.to_thread(
-                self._push_to_catalog_execution_registry,
-                sim2l_result, sim_name, sim_version, reconciled, outputs,
+            execution_recorded = await asyncio.to_thread(
+                lambda: self._push_to_catalog_execution_registry(
+                    sim2l_result, sim_name, sim_version, reconciled, outputs,
+                    started_at=started_at, completed_at=completed_at,
+                    cache_hit=cache_hit,
+                ),
             )
-
-            outputs = {
-                k: getattr(sim2l_result.outputs, k, None)
-                for k in out_schema.fields
-            }
 
             return ExecutionResult(
                 run_id=sim2l_result.execution_id,
                 status=sim2l_result.status,
+                inputs=reconciled,
                 outputs=outputs,
                 logs=[
                     f"sim2l run_id : {sim2l_result.execution_id}",
                     f"squid_id     : {sim2l_result.squid_id}",
                     f"duration     : {sim2l_result.duration_seconds:.3f}s",
                     f"inputs used  : {reconciled}",
-                ],
+                ] + ([f"cache        : hit (reusing {sim2l_result.execution_id[:8]}...)"]
+                     if cache_hit else []),
+                # Inputs first, metric keys after — an input that happens to
+                # be named ``cache_hit`` / ``duration_seconds`` / … must not
+                # overwrite the metric.
                 metrics={
+                    **reconciled,
                     "duration_seconds": sim2l_result.duration_seconds,
                     "squid_id": sim2l_result.squid_id,
+                    "cache_hit": cache_hit,
                     "catalog_persisted": catalog_persisted,
                     "results_persisted": results_persisted,
-                    **reconciled,
+                    "results_persistence_assumed": persistence_assumed,
+                    "execution_recorded": execution_recorded,
                 },
             )
 
@@ -871,10 +1049,40 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             return {}
 
     async def collect_logs(self, run_id: str) -> list[str]:
-        return []
+        if not self._sim2l_ok:
+            return []
+        try:
+            from sim2l.result import load_result
+            r = load_result(run_id)
+        except Exception:  # noqa: BLE001 — unknown run id → no logs
+            return []
+        lines = [
+            f"execution {r.execution_id}: {r.status} ({r.executor_type})",
+        ]
+        if getattr(r, "executed_at", None) is not None:
+            lines.append(f"executed_at: {r.executed_at.isoformat()}")
+        if getattr(r, "duration_seconds", None) is not None:
+            lines.append(f"duration: {r.duration_seconds:.3f}s")
+        if getattr(r, "error_message", None):
+            lines.append(f"error: {r.error_message}")
+        return lines
 
     async def collect_metrics(self, run_id: str) -> dict[str, Any]:
-        return {}
+        if not self._sim2l_ok:
+            return {}
+        try:
+            from sim2l.result import load_result
+            r = load_result(run_id)
+        except Exception:  # noqa: BLE001 — unknown run id → no metrics
+            return {}
+        executed_at = getattr(r, "executed_at", None)
+        return {
+            "status": r.status,
+            "duration_seconds": getattr(r, "duration_seconds", None),
+            "executor_type": getattr(r, "executor_type", None),
+            "squid_id": getattr(r, "squid_id", None),
+            "executed_at": executed_at.isoformat() if executed_at else None,
+        }
 
     async def normalize_errors(self, error: Exception) -> dict[str, Any]:
         return {"type": error.__class__.__name__, "message": str(error)}

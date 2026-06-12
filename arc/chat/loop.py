@@ -781,6 +781,23 @@ def _attach_chat_audit_sink(workflow: ResearchWorkflow) -> None:
         pass
 
 
+async def _flush_provenance(workflow: ResearchWorkflow) -> None:
+    """Best-effort publish of buffered provenance entries.
+
+    Completed iterations publish in ``ProvenancePhase``; this covers the
+    paths that never get there — aborted pipelines (validation failure)
+    and session exit after ideation/plan-only work — so the audit trail
+    reaches the backend even when no iteration completed.
+    """
+    publish = getattr(workflow, "publish_provenance", None)
+    if publish is None:
+        return
+    try:
+        await publish()
+    except Exception:  # noqa: BLE001 — publishing is best-effort
+        pass
+
+
 async def _audit(workflow: ResearchWorkflow, phase: str, **fields) -> None:
     """Fire a package audit phase from the chat loop (item 7).
 
@@ -1310,6 +1327,8 @@ async def run_research(
     pstate = await pipe.run(pstate)
 
     if pstate.aborted:
+        # ProvenancePhase won't run — publish what was recorded so far.
+        await _flush_provenance(workflow)
         print()
         return None
 
@@ -1958,6 +1977,21 @@ async def _authenticate_and_prompt(workflow) -> bool:
                     # Adapter doesn't accept it (LocalRuntimeAdapter, …).
                     pass
 
+    # Attach to the backend too: a standalone Sim2lBackend (run locally,
+    # publish to sim2l) has no adapter to inherit ids from, and the
+    # backend was constructed before this login ran. Without this,
+    # publish_provenance and the standalone pushes 401 under require_auth.
+    backend = getattr(workflow, "backend", None)
+    setter = getattr(backend, "set_session_ids", None)
+    if callable(setter):
+        try:
+            setter(
+                catalog_session_id=auth.catalog_session,
+                results_session_id=auth.results_session,
+            )
+        except Exception:  # noqa: BLE001 — auth attach is best-effort
+            pass
+
     if auth.authenticated:
         ok(f"Signed in to sim2l services as {c(auth.username, CYAN)}.")
         return True
@@ -2255,6 +2289,9 @@ async def chat_loop(
             except Exception:  # noqa: BLE001 — never fail inside the failure path
                 pass
 
+    # Session is ending (every exit from the REPL is a ``break``) — flush
+    # any provenance recorded since the last completed iteration.
+    await _flush_provenance(workflow)
 
 
 def main():

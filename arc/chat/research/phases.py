@@ -369,6 +369,15 @@ class ProvenancePhase:
             run_id=state.execution.run_id,
             output_summary={"approved": state.review.approved},
         )
+        # Push this iteration's provenance to the active backend so the
+        # audit trail outlives the local workspace (skip/no-op for backends
+        # that don't store provenance).
+        publish = getattr(workflow, "publish_provenance", None)
+        if publish is not None:
+            try:
+                await publish()
+            except Exception:  # noqa: BLE001 — publishing is best-effort
+                pass
         return state
 
 

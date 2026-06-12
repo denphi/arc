@@ -42,21 +42,67 @@ async def run(state: ChatState, argv: list[str]) -> None:
     step("Sweep source",
          f"planner={c(planner_key, CYAN)}, design={c(design, DIM)}, "
          f"artifact={c(artifact.name, CYAN)}")
+    # Sweep points get the same bookkeeping as single runs: audit phases,
+    # results save + run_history + memory hooks + backend publish
+    # (workflow.record_run), and a provenance entry for the sweep. A
+    # *blocking* execution.before audit aborts the sweep, same as it
+    # would abort a normal run.
+    from arc.runtime.audit import AuditBlockedError
+
+    async def _audit(phase: str, **fields) -> None:
+        dispatcher = getattr(workflow, "audit", None)
+        if dispatcher is None or not dispatcher.has_actions():
+            return
+        await dispatcher.dispatch(phase, **fields)
+
     all_results = []
-    for param, values in sweep.items():
-        for v in values:
-            inputs = {param: v}
-            execution = await workflow.adapter.run(artifact, inputs)
-            workflow.results.save(execution)
-            row = {param: v, **execution.outputs}
-            all_results.append(row)
-            cols = "  ".join(
-                f"{k}={val:.4g}" for k, val in row.items()
-                if isinstance(val, (int, float))
+    run_ids: list[str] = []
+    try:
+        for param, values in sweep.items():
+            for v in values:
+                inputs = {param: v}
+                await _audit(
+                    "execution.before",
+                    artifact_id=artifact.artifact_id,
+                    input_summary=inputs,
+                    payload={"sweep": True},
+                )
+                execution = await workflow.adapter.run(artifact, inputs)
+                await workflow.record_run(artifact, execution, inputs)
+                run_ids.append(execution.run_id)
+                await _audit(
+                    "execution.after",
+                    artifact_id=artifact.artifact_id,
+                    run_id=execution.run_id,
+                    output_summary={"status": execution.status,
+                                    "outputs": execution.outputs},
+                    payload={"sweep": True},
+                )
+                row = {param: v, **execution.outputs}
+                all_results.append(row)
+                cols = "  ".join(
+                    f"{k}={val:.4g}" for k, val in row.items()
+                    if isinstance(val, (int, float))
+                )
+                status_c = GREEN if execution.status == "completed" else RED
+                log_tail = execution.logs[1] if len(execution.logs) > 1 else ""
+                print(f"  {c('●', status_c)} {cols}  {c(log_tail, DIM)}")
+    except AuditBlockedError as exc:
+        err(f"Sweep blocked by audit: {exc}")
+    finally:
+        if run_ids:
+            workflow.provenance.record(
+                workflow.session_id,
+                "sweep",
+                type(workflow.adapter).__name__,
+                artifact_id=artifact.artifact_id,
+                inputs={"parameter_sweep": sweep},
+                outputs={"runs": len(run_ids), "run_ids": run_ids[:50]},
             )
-            status_c = GREEN if execution.status == "completed" else RED
-            log_tail = execution.logs[1] if len(execution.logs) > 1 else ""
-            print(f"  {c('●', status_c)} {cols}  {c(log_tail, DIM)}")
+            try:
+                await workflow.publish_provenance()
+            except Exception:  # noqa: BLE001 — publishing is best-effort
+                pass
     step("Total runs", len(all_results))
     hr()
     print()

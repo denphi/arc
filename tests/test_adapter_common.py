@@ -29,14 +29,21 @@ def test_reconcile_passes_through_when_no_schema():
     assert reconcile_inputs({}, {"anything": 1, "else": 2}) == {"anything": 1, "else": 2}
 
 
-def test_reconcile_uses_default_value_for_fieldless_default():
-    schema = {"x": {}}  # declared but no default
-    assert reconcile_inputs(schema, {}) == {"x": 1.0}
+def test_reconcile_omits_fields_with_no_declared_default():
+    """A field that declares no default is omitted — never given a
+    fabricated value (1.0 is nonsense for Text/Boolean inputs; let
+    simulate()'s own signature default apply)."""
+    schema = {"x": {}, "element": {"type": "Text"}}
+    assert reconcile_inputs(schema, {}) == {}
+    # The declared-but-defaultless key still accepts caller values.
+    assert reconcile_inputs(schema, {"element": "Si"}) == {"element": "Si"}
 
 
 def test_reconcile_tolerates_non_dict_field_spec():
     schema = {"x": "not-a-dict"}
-    assert reconcile_inputs(schema, {}) == {"x": 1.0}
+    # Declared (so caller values pass the filter) but contributes no default.
+    assert reconcile_inputs(schema, {}) == {}
+    assert reconcile_inputs(schema, {"x": 3.0}) == {"x": 3.0}
 
 
 def test_filter_outputs_projects_onto_schema_keys():

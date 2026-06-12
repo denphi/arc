@@ -24,8 +24,14 @@ from typing import Any, Literal
 
 # Stable lifecycle phases. Both the YAML workflow path and the chat phase
 # path dispatch at these points so audits are not UI-specific.
+# ``step.before`` / ``step.after`` are generic: the YAML workflow path fires
+# them around *every* step (with the step id/kind in ``payload``), so a
+# package-defined workflow whose step ids core doesn't know is still
+# observable. The named phases fire in addition for canonical steps.
 AUDIT_PHASES: tuple[str, ...] = (
     "goal.received",
+    "step.before",
+    "step.after",
     "ideation.before",
     "ideation.after",
     "search.after",

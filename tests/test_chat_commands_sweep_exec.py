@@ -267,3 +267,58 @@ async def test_exec_with_no_params_calls_run_artifact_with_empty_dict(monkeypatc
     state = ChatState(workflow=make_workflow())
     await reg.get("exec").resolve_handler()(state, ["my-art"])
     assert captured["params"] == {}
+
+
+# ── /sweep bookkeeping (review pass 3) ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sweep_appends_run_history_and_provenance(capsys):
+    """Sweep points get the same bookkeeping as single runs: run_history
+    entries per point and one provenance entry for the sweep."""
+    art = make_artifact(artifact_id="bk12345678", name="bk")
+    plan = SimpleNamespace(parameter_sweep={"p": [1, 2, 3]})
+    wf = _wf_with_artifact(art, memory={"current_plan": plan})
+    state = ChatState(workflow=wf)
+    state.current_artifact = art
+
+    reg = build_registry()
+    await reg.get("sweep").resolve_handler()(state, [])
+
+    history = wf._context.memory.get("run_history", [])
+    assert len(history) == 3
+    assert {h["inputs"]["p"] for h in history} == {1, 2, 3}
+
+    sweep_entries = [e for e in wf.provenance.entries if e["action"] == "sweep"]
+    assert len(sweep_entries) == 1
+    assert sweep_entries[0]["outputs"]["runs"] == 3
+
+
+@pytest.mark.asyncio
+async def test_sweep_blocked_by_audit_aborts(capsys):
+    """A blocking execution.before audit aborts the sweep cleanly."""
+    from arc.runtime.audit import AuditBlockedError
+    from arc.contracts.audit import AuditResult
+
+    art = make_artifact(artifact_id="blk1234567", name="blk")
+    plan = SimpleNamespace(parameter_sweep={"p": [1, 2]})
+    wf = _wf_with_artifact(art, memory={"current_plan": plan})
+
+    class _BlockingAudit:
+        def has_actions(self):
+            return True
+        async def dispatch(self, phase, **fields):
+            if phase == "execution.before":
+                raise AuditBlockedError(AuditResult(
+                    status="fail", summary="no unvalidated runs",
+                    blocking=True, name="gate", phase=phase,
+                ))
+    wf.audit = _BlockingAudit()
+    state = ChatState(workflow=wf)
+    state.current_artifact = art
+
+    reg = build_registry()
+    await reg.get("sweep").resolve_handler()(state, [])
+    out = capsys.readouterr().out
+    assert "blocked by audit" in out
+    assert len(wf.adapter.calls) == 0  # nothing ran

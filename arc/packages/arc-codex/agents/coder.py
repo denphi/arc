@@ -282,6 +282,13 @@ class CodexCoderAgent(AgentContract):
                 "codex_command": command,
                 "codex_args": global_args + args,
                 "codex_workspace": str(workspace),
+                # The instruction given to the external coding agent is the
+                # Build step's audit artifact — the workspace copy
+                # (PROMPT.md / codex.stdout.txt) is transient, so persist a
+                # hash + excerpts with the artifact itself.
+                "codex_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "codex_prompt_excerpt": prompt[:2000],
+                "codex_output_tail": (stdout or "")[-2000:],
                 "hypothesis": plan.proposal.hypothesis[:200],
                 "methodology": plan.proposal.methodology[:500],
                 "success_criteria": plan.success_criteria,

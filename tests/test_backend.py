@@ -112,14 +112,38 @@ def test_sim2l_backend_register_handles_sync_return():
     assert r["registered"] is True
 
 
-def test_sim2l_backend_persist_and_record_are_inline_noops():
+def _execution_with_metrics(**metrics):
+    return SimpleNamespace(run_id="r1", status="completed",
+                           outputs={"bandgap_ev": 1.1}, execution_id="e1",
+                           squid_id="sq1", duration_seconds=0.5,
+                           metrics=metrics)
+
+
+def test_sim2l_backend_persist_and_record_report_inline_outcome():
     """persist/record are handled inside Sim2LRuntimeAdapter.run(); the
-    backend reports that and doesn't double-push."""
+    backend reports the *actual* inline outcome (from execution.metrics)
+    and doesn't double-push."""
     backend = Sim2lBackend(_FakeSim2lAdapter())
-    p = asyncio.run(backend.persist_result(_artifact(), _execution(), {}))
-    rec = asyncio.run(backend.record_execution(_artifact(), _execution(), {}, {}))
-    assert p["handled_inline"] is True
-    assert rec["handled_inline"] is True
+    execution = _execution_with_metrics(results_persisted=True,
+                                        execution_recorded=True)
+    p = asyncio.run(backend.persist_result(_artifact(), execution, {}))
+    rec = asyncio.run(backend.record_execution(_artifact(), execution, {}, {}))
+    assert p["handled_inline"] is True and p["persisted"] is True
+    assert rec["handled_inline"] is True and rec["recorded"] is True
+
+
+def test_sim2l_backend_reports_inline_push_failure_honestly():
+    """An inline push that failed must not be reported as persisted=True."""
+    adapter = _FakeSim2lAdapter()
+    adapter.last_push_errors = [("results", "results: HTTPError: 401 Unauthorized")]
+    backend = Sim2lBackend(adapter)
+    execution = _execution_with_metrics(results_persisted=False,
+                                        execution_recorded=False)
+    p = asyncio.run(backend.persist_result(_artifact(), execution, {}))
+    rec = asyncio.run(backend.record_execution(_artifact(), execution, {}, {}))
+    assert p["persisted"] is False
+    assert "401" in p["error"]
+    assert rec["recorded"] is False
 
 
 def test_sim2l_backend_is_active_when_importable():
@@ -128,8 +152,15 @@ def test_sim2l_backend_is_active_when_importable():
     assert backend.is_active() == sim2l_importable()
 
 
-def test_sim2l_backend_inactive_with_none_adapter():
+def test_sim2l_backend_standalone_activity_follows_service_probe(monkeypatch):
+    """Standalone mode (adapter=None) is gated on service reachability —
+    patched here so the test doesn't depend on whether real services
+    happen to be listening on localhost."""
+    import arc.runtime.backend as backend_mod
+    monkeypatch.setattr(backend_mod, "sim2l_services_active", lambda *a, **k: False)
     assert Sim2lBackend(None).is_active() is False
+    monkeypatch.setattr(backend_mod, "sim2l_services_active", lambda *a, **k: True)
+    assert Sim2lBackend(None).is_active() is True
 
 
 # ── resolve_backend ────────────────────────────────────────────────────
@@ -460,3 +491,302 @@ def test_register_helper_skips_in_plan_mode():
         assert "plan mode" in result["error"]
     finally:
         set_plan_mode(False)
+
+
+# ── Standalone sim2l publishing (run locally, publish to sim2l) ─────────
+
+
+def test_resolve_explicit_sim2l_with_local_adapter_goes_standalone(monkeypatch):
+    """ARC_BACKEND=sim2l + a local adapter (no register_artifact) must give
+    the standalone sim2l backend when the services are reachable — not a
+    silent no-op."""
+    import arc.runtime.backend as backend_mod
+    monkeypatch.setenv("ARC_BACKEND", "sim2l")
+    monkeypatch.setattr(backend_mod, "sim2l_services_active", lambda *a, **k: True)
+
+    class _LocalLike:
+        pass
+
+    backend = resolve_backend(_LocalLike())
+    assert isinstance(backend, Sim2lBackend)
+    assert backend._adapter is None  # standalone mode
+
+
+def test_resolve_explicit_sim2l_unreachable_services_is_noop(monkeypatch):
+    import arc.runtime.backend as backend_mod
+    monkeypatch.setenv("ARC_BACKEND", "sim2l")
+    monkeypatch.setattr(backend_mod, "sim2l_services_active", lambda *a, **k: False)
+
+    class _LocalLike:
+        pass
+
+    assert isinstance(resolve_backend(_LocalLike()), NoopBackend)
+
+
+def test_standalone_persist_posts_to_results_service(monkeypatch):
+    import requests
+    posted = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return _FakeResponse(201)
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    backend = Sim2lBackend(None)
+    from arc.schemas.execution import ExecutionResult
+    execution = ExecutionResult(run_id="r1", status="completed",
+                                outputs={"z": 1.0},
+                                metrics={"squid_id": "sq1", "duration_seconds": 0.5})
+    result = asyncio.run(backend.persist_result(_artifact(), execution, {"x": 1.0}))
+    assert result["persisted"] is True
+    assert posted["url"].endswith("/register_direct")
+    assert posted["json"]["execution_id"] == "r1"
+    assert posted["json"]["squid_id"] == "sq1"
+
+
+def test_standalone_record_requires_catalog_entry(monkeypatch):
+    """Recording an execution for a simulation the catalog doesn't know
+    returns a clear error instead of raising."""
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(404))
+
+    backend = Sim2lBackend(None)
+    from arc.schemas.execution import ExecutionResult
+    execution = ExecutionResult(run_id="r1", status="completed", outputs={}, metrics={})
+    result = asyncio.run(backend.record_execution(_artifact(), execution, {}, {}))
+    assert result["recorded"] is False
+    assert "catalog" in result["error"]
+
+
+# ── Registry-resolved (package-provided) backends ───────────────────────
+
+
+class _CustomBackend(BackendActions):
+    name = "custom"
+
+    def is_active(self):
+        return True
+
+    async def register_artifact(self, artifact):
+        return {"registered": True, "backend": "custom"}
+
+    async def persist_result(self, artifact, execution, inputs):
+        return {"persisted": True, "backend": "custom"}
+
+    async def record_execution(self, artifact, execution, inputs, outputs):
+        return {"recorded": True, "backend": "custom"}
+
+
+def test_resolve_backend_from_registry(monkeypatch):
+    """A package-registered backend is selectable via ARC_BACKEND=<name>."""
+    from arc.core.registry import ComponentRegistry
+    registry = ComponentRegistry()
+    registry.register_backend("custom", _CustomBackend, package_name="my-pkg")
+    monkeypatch.setenv("ARC_BACKEND", "custom")
+    backend = resolve_backend(None, registry=registry)
+    assert isinstance(backend, _CustomBackend)
+
+
+def test_resolve_backend_registry_honours_package_disable(monkeypatch):
+    from arc.core.registry import ComponentRegistry
+    registry = ComponentRegistry()
+    registry.register_backend("custom", _CustomBackend, package_name="my-pkg")
+    monkeypatch.setenv("ARC_BACKEND", "custom")
+    backend = resolve_backend(None, registry=registry, disabled_packages={"my-pkg"})
+    assert isinstance(backend, NoopBackend)
+
+
+def test_resolve_backend_unknown_name_is_noop_not_error(monkeypatch):
+    from arc.core.registry import ComponentRegistry
+    monkeypatch.setenv("ARC_BACKEND", "does-not-exist")
+    backend = resolve_backend(None, registry=ComponentRegistry())
+    assert isinstance(backend, NoopBackend)
+
+
+# ── publish_provenance ───────────────────────────────────────────────────
+
+
+def test_publish_provenance_default_is_skip():
+    """Backends that don't override publish_provenance skip cleanly —
+    third-party BackendActions keep working unchanged."""
+    r = asyncio.run(NoopBackend().publish_provenance("s1", [{"action": "a"}]))
+    assert r["published"] is False
+    assert r["skipped"] is True
+
+
+def test_sim2l_publish_provenance_posts_batch(monkeypatch):
+    import requests
+    posted = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return _FakeResponse(201)
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    backend = Sim2lBackend(None)
+    entries = [{"action": "start", "agent": "orchestrator"}]
+    r = asyncio.run(backend.publish_provenance("sess-1", entries))
+    assert r["published"] is True and r["count"] == 1
+    assert posted["url"].endswith("/provenance")
+    assert posted["json"]["session_id"] == "sess-1"
+    assert posted["json"]["entries"] == entries
+
+
+def test_sim2l_publish_provenance_404_is_skip_not_retry(monkeypatch):
+    """An older results service without /provenance must not cause endless
+    requeue-retry loops."""
+    import requests
+    monkeypatch.setattr(
+        requests, "post", lambda *a, **k: _FakeResponse(404, text="not found"),
+    )
+    r = asyncio.run(Sim2lBackend(None).publish_provenance("s", [{"a": 1}]))
+    assert r["published"] is False
+    assert r["skipped"] is True
+
+
+def test_github_publish_provenance_commits_jsonl_batch(monkeypatch):
+    import requests
+    from arc.runtime.backend import GitHubBackend
+    _github_env(monkeypatch)
+    fake = _FakeRequests()
+    monkeypatch.setattr(requests, "get", fake.get)
+    monkeypatch.setattr(requests, "put", fake.put)
+
+    r = asyncio.run(GitHubBackend().publish_provenance(
+        "sess-1", [{"action": "start"}, {"action": "build"}],
+    ))
+    assert r["published"] is True and r["count"] == 2
+    assert any("/provenance/sess-1/" in url and url.endswith(".jsonl")
+               for url, _ in fake.puts)
+
+
+def test_workflow_publish_provenance_drains_and_requeues_on_failure():
+    """The workflow helper drains the log; a real failure requeues, a skip
+    drops (the local JSONL still has everything)."""
+    from arc.memory.provenance import ProvenanceLog
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = ProvenanceLog(log_path=f"{tmp}/p.jsonl")
+        log.record("s1", "start", "orchestrator")
+
+        class _FailingBackend(NoopBackend):
+            async def publish_provenance(self, session_id, entries):
+                return {"published": False, "backend": "x", "error": "down"}
+
+        workflow = SimpleNamespace(provenance=log, session_id="s1",
+                                   backend=_FailingBackend())
+        from arc.orchestrator.workflow import ResearchWorkflow
+        result = asyncio.run(ResearchWorkflow.publish_provenance(workflow))
+        assert result["published"] is False
+        # Real failure → requeued for the next attempt.
+        assert len(log.drain_unpublished()) == 1
+
+        # A skip result must NOT requeue (backend doesn't store provenance).
+        log.record("s1", "plan", "planner")
+        workflow.backend = NoopBackend()
+        asyncio.run(ResearchWorkflow.publish_provenance(workflow))
+        assert log.drain_unpublished() == []
+
+
+# ── Session-id lifecycle (constructed-before-login) ─────────────────────
+
+
+def test_sim2l_backend_session_ids_resolve_lazily(monkeypatch):
+    """The backend is constructed before the chat signs in; ids attached
+    to the adapter afterwards must be visible to the backend (capturing
+    them in __init__ froze them at None — the publish/provenance 401 bug)."""
+    monkeypatch.delenv("SIM2L_CATALOG_SESSION_ID", raising=False)
+    monkeypatch.delenv("SIM2L_RESULTS_SESSION_ID", raising=False)
+    adapter = _FakeSim2lAdapter()
+    backend = Sim2lBackend(adapter)
+    assert backend._catalog_session_id is None
+
+    # Chat login attaches ids to the adapter *after* backend construction.
+    adapter._catalog_session_id = "cat-1"
+    adapter._results_session_id = "res-1"
+    assert backend._catalog_session_id == "cat-1"
+    assert backend._results_session_id == "res-1"
+
+
+def test_sim2l_backend_set_session_ids_for_standalone(monkeypatch):
+    """Standalone mode has no adapter to inherit from — the login flow
+    attaches ids via set_session_ids."""
+    monkeypatch.delenv("SIM2L_CATALOG_SESSION_ID", raising=False)
+    monkeypatch.delenv("SIM2L_RESULTS_SESSION_ID", raising=False)
+    backend = Sim2lBackend(None)
+    assert backend._results_session_id is None
+    backend.set_session_ids(catalog_session_id="c-1", results_session_id="r-1")
+    assert backend._catalog_session_id == "c-1"
+    assert backend._results_session_id == "r-1"
+
+
+def test_standalone_provenance_post_carries_session_header(monkeypatch):
+    import requests
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["headers"] = headers or {}
+        return _FakeResponse(201)
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    backend = Sim2lBackend(None)
+    backend.set_session_ids(results_session_id="res-9")
+    r = asyncio.run(backend.publish_provenance("s", [{"action": "a"}]))
+    assert r["published"] is True
+    assert seen["headers"].get("X-Session-ID") == "res-9"
+
+
+def test_inline_outcome_flags_assumed_persistence():
+    """A cache hit's persisted=True is an inference, not a verified push —
+    the backend surfaces that."""
+    backend = Sim2lBackend(_FakeSim2lAdapter())
+    execution = _execution_with_metrics(
+        results_persisted=True, results_persistence_assumed=True,
+        execution_recorded=True,
+    )
+    p = asyncio.run(backend.persist_result(_artifact(), execution, {}))
+    assert p["persisted"] is True
+    assert p["assumed"] is True
+
+
+# ── execute_recorded (HTTP surfaces' bookkeeping, review pass 3) ─────────
+
+
+def test_execute_recorded_full_bookkeeping(tmp_path, monkeypatch):
+    """The HTTP-surface entry point saves the run, appends run_history,
+    and writes a provenance entry — same trail as chat/YAML runs."""
+    import uuid as _uuid
+    monkeypatch.setenv("ARC_RUNTIME_ADAPTER", "local")
+    from arc.orchestrator.workflow import ResearchWorkflow
+    from arc.schemas.artifact import ArtifactRecord
+
+    session_id = f"test-exec-rec-{_uuid.uuid4().hex[:8]}"
+    wf = ResearchWorkflow(session_id=session_id)
+
+    art_dir = tmp_path / "art"
+    art_dir.mkdir()
+    (art_dir / "workflow.py").write_text(
+        "def simulate(**inputs):\n"
+        "    return {'result': inputs.get('x', 1.0) * 2}\n"
+    )
+    artifact = ArtifactRecord(
+        artifact_id="exec-rec-art", name="exec-rec", version="0.1.0",
+        state="REGISTERED", path=str(art_dir), metadata={},
+    )
+
+    result = asyncio.run(
+        wf.execute_recorded(artifact, {"x": 3.0}, action="api_run"),
+    )
+    assert result.status == "completed"
+    # Saved to the session results store…
+    assert wf.results.get(result.run_id).run_id == result.run_id
+    # …in run_history…
+    history = wf._context.memory["run_history"]
+    assert history[-1]["run_id"] == result.run_id
+    # …and in the provenance trail with the caller's action label.
+    entries = wf.provenance.read_session(session_id)
+    assert any(e["action"] == "api_run" and e["run_id"] == result.run_id
+               for e in entries)

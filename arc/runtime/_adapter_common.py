@@ -19,21 +19,26 @@ from typing import Any
 def reconcile_inputs(
     input_schema: dict[str, Any],
     inputs: dict[str, Any],
-    *,
-    default_value: float = 1.0,
 ) -> dict[str, Any]:
     """Overlay caller ``inputs`` onto the artifact's declared defaults.
 
-    Starts from each declared field's ``default`` (``default_value`` when a
-    field declares none), then overlays the caller's values — but only for
-    keys the schema declares, when a schema exists. This prevents an
-    "unexpected fields" error when an LLM-generated ``simulate`` uses
-    different parameter names than the caller supplied, while still letting
-    a schema-less artifact accept arbitrary inputs.
+    Starts from each declared field's ``default``, then overlays the
+    caller's values — but only for keys the schema declares, when a schema
+    exists. This prevents an "unexpected fields" error when an
+    LLM-generated ``simulate`` uses different parameter names than the
+    caller supplied, while still letting a schema-less artifact accept
+    arbitrary inputs.
+
+    A field that declares **no** default is *omitted* rather than given a
+    fabricated value — ``1.0`` is nonsense for a Text/Boolean input, and
+    injecting it silently runs (and indexes) the simulation at parameter
+    values the author never chose. ``simulate()``'s own signature default
+    applies instead; a truly required input fails loudly in the workflow.
     """
     defaults = {
-        key: (field.get("default", default_value) if isinstance(field, dict) else default_value)
+        key: field["default"]
         for key, field in (input_schema or {}).items()
+        if isinstance(field, dict) and "default" in field
     }
     return {
         **defaults,
@@ -191,9 +196,10 @@ class BaseSubmitPollAdapter(RuntimeAdapterContract):
         raw_outputs, logs = await asyncio.to_thread(self._collect, native_id)
         return ExecutionResult(
             run_id=native_id or run_id, status="completed",
+            inputs=dict(inputs or {}),
             outputs=filter_outputs(output_schema, raw_outputs or {}),
             logs=list(logs or []),
-            metrics={"execution_success": True, "backend": self.backend_name, **inputs},
+            metrics={**inputs, "execution_success": True, "backend": self.backend_name},
         )
 
     async def run_sweep(self, artifact: ArtifactRecord, parameter_space: dict) -> list:

@@ -43,8 +43,21 @@ class FakeArtifactRegistry:
 class FakeResultsStore:
     runs: list[Any] = field(default_factory=list)
 
+    def save(self, result):
+        self.runs.append(result)
+        return f"/fake/runs/{getattr(result, 'run_id', 'run')}.json"
+
     def list_all(self):
         return list(self.runs)
+
+
+@dataclass
+class FakeProvenance:
+    entries: list[dict] = field(default_factory=list)
+
+    def record(self, session_id, action, agent, **kwargs):
+        self.entries.append({"session_id": session_id, "action": action,
+                             "agent": agent, **kwargs})
 
 
 @dataclass
@@ -75,7 +88,7 @@ def make_workflow(
     session_id: str = "test-session",
 ):
     ctx = make_context(memory=memory, session_id=session_id)
-    return SimpleNamespace(
+    wf = SimpleNamespace(
         _context=ctx,
         artifacts=FakeArtifactRegistry(records=artifacts or []),
         results=FakeResultsStore(runs=results or []),
@@ -83,7 +96,32 @@ def make_workflow(
         provider=provider,
         session_id=session_id,
         adapter=None,
+        provenance=FakeProvenance(),
+        # No package audit actions in unit tests — has_actions() False makes
+        # every dispatch a no-op, mirroring a bare ResearchWorkflow.
+        audit=SimpleNamespace(has_actions=lambda: False),
     )
+
+    # Mirror ResearchWorkflow.record_run / publish_provenance closely enough
+    # for command/loop unit tests: save + run_history, no backend.
+    async def _record_run(artifact, result, inputs=None):
+        path = wf.results.save(result)
+        ctx.memory.setdefault("run_history", []).append({
+            "run_id": getattr(result, "run_id", None),
+            "inputs": dict(inputs if inputs is not None
+                           else getattr(result, "inputs", {}) or {}),
+            "outputs": getattr(result, "outputs", {}),
+            "metrics": getattr(result, "metrics", {}),
+        })
+        return {"result_path": path, "backend_persist": {"persisted": False},
+                "backend_record": {"recorded": False}}
+
+    async def _publish_provenance():
+        return {"published": False, "skipped": True}
+
+    wf.record_run = _record_run
+    wf.publish_provenance = _publish_provenance
+    return wf
 
 
 def make_artifact(artifact_id="abc12345", name="silicon_bandgap", state="REGISTERED",

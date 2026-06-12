@@ -48,3 +48,24 @@ class ResultsStore:
             except Exception:
                 pass
         return results
+
+    def list_page(self, limit: int = 200, offset: int = 0) -> list[ExecutionResult]:
+        """Most-recent-first page of results (ordered by file mtime).
+
+        Reads only the requested page's files, so callers serving HTTP
+        (the UI results endpoint) don't materialize the whole store.
+        ``limit <= 0`` means no limit.
+        """
+        paths = sorted(
+            self.root.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        page = paths[offset:offset + limit] if limit > 0 else paths[offset:]
+        results = []
+        for path in page:
+            try:
+                results.append(ExecutionResult.model_validate_json(path.read_text()))
+            except Exception:
+                pass
+        return results

@@ -20,7 +20,24 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
     timeout by default, fully standalone with **no sim2l dependency**.
     This is the default adapter; ``Sim2LRuntimeAdapter`` is used only
     when ``ARC_RUNTIME_ADAPTER=sim2l``.
+
+    ``results_store`` (the session :class:`~arc.memory.results_store.
+    ResultsStore`, wired by ``_build_adapter``) backs the post-hoc query
+    methods — ``get_status`` / ``collect_*`` answer from the saved run
+    instead of pretending every id is "completed". Without a store they
+    answer "unknown"/empty.
     """
+
+    def __init__(self, results_store: Any = None):
+        self._results = results_store
+
+    def _saved_result(self, run_id: str) -> ExecutionResult | None:
+        if self._results is None:
+            return None
+        try:
+            return self._results.get(run_id)
+        except Exception:  # noqa: BLE001 — unknown/unsafe id → not found
+            return None
 
     async def validate_artifact(self, artifact: ArtifactRecord) -> ValidationResult:
         artifact_path = Path(artifact.path)
@@ -93,22 +110,26 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
             return ExecutionResult(
                 run_id=run_id,
                 status="error",
+                inputs=reconciled,
                 outputs={},
                 logs=[result.get("error", "execution failed")],
-                metrics={"execution_success": False, **reconciled},
+                # Inputs first so a parameter named execution_success can't
+                # overwrite the metric.
+                metrics={**reconciled, "execution_success": False},
             )
 
         outputs = filter_outputs(output_schema, result.get("outputs") or {})
         return ExecutionResult(
             run_id=run_id,
             status="completed",
+            inputs=reconciled,
             outputs=outputs,
             logs=[
                 f"Run {run_id} started.",
                 f"Inputs: {reconciled}",
                 "Execution completed via LocalRuntimeAdapter (arc executor).",
             ],
-            metrics={"execution_success": True, **reconciled},
+            metrics={**reconciled, "execution_success": True},
         )
 
     async def run_sweep(
@@ -126,16 +147,20 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
         return results
 
     async def get_status(self, run_id: str) -> str:
-        return "completed"
+        result = self._saved_result(run_id)
+        return result.status if result is not None else "unknown"
 
     async def collect_outputs(self, run_id: str) -> dict[str, Any]:
-        return {}
+        result = self._saved_result(run_id)
+        return dict(result.outputs or {}) if result is not None else {}
 
     async def collect_logs(self, run_id: str) -> list[str]:
-        return []
+        result = self._saved_result(run_id)
+        return list(result.logs or []) if result is not None else []
 
     async def collect_metrics(self, run_id: str) -> dict[str, Any]:
-        return {}
+        result = self._saved_result(run_id)
+        return dict(result.metrics or {}) if result is not None else {}
 
     async def normalize_errors(self, error: Exception) -> dict[str, Any]:
         return {"type": error.__class__.__name__, "message": str(error)}

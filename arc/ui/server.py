@@ -477,19 +477,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Artifact not found")
 
         workflow = ResearchWorkflow(session_id=session_id, workflow_name=body.workflow_name)
-        inputs = await workflow.adapter.prepare_inputs(artifact, body.inputs)
-        result = await workflow.adapter.run(artifact, inputs)
-        workflow.results.save(result)
         await safe_backend_action(workflow.backend, "register_artifact", artifact)
-        await safe_backend_action(workflow.backend, "persist_result", artifact, result, inputs)
-        await safe_backend_action(
-            workflow.backend,
-            "record_execution",
-            artifact,
-            result,
-            inputs,
-            result.outputs,
-        )
+        # Full bookkeeping (audit phases + provenance + save/publish) — a
+        # blocking execution.before audit gates UI runs like chat/YAML runs.
+        from arc.runtime.audit import AuditBlockedError
+        try:
+            result = await workflow.execute_recorded(
+                artifact, body.inputs, action="ui_run",
+            )
+        except AuditBlockedError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         _append_thread(
             session_id,
             "tool",
@@ -539,11 +536,16 @@ def create_app() -> FastAPI:
                 "path": file_path, "content": content}
 
     @app.get("/api/sessions/{session_id}/results", dependencies=auth)
-    def list_session_results(session_id: str) -> dict[str, Any]:
+    def list_session_results(
+        session_id: str, limit: int = 200, offset: int = 0,
+    ) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         paths = session_paths(session_id)
         return {"session_id": session_id,
-                "results": _list_results_readonly(Path(paths["runs"]))}
+                "limit": limit,
+                "offset": offset,
+                "results": _list_results_readonly(
+                    Path(paths["runs"]), limit=limit, offset=offset)}
 
     @app.get("/api/sessions/{session_id}/results/{run_id}", dependencies=auth)
     def get_session_result(session_id: str, run_id: str) -> dict[str, Any]:
@@ -949,10 +951,15 @@ def _list_artifacts_readonly(root: Path) -> list[dict[str, Any]]:
     return [artifact.model_dump() for artifact in ArtifactRegistry(root=str(root)).list_all()]
 
 
-def _list_results_readonly(root: Path) -> list[dict[str, Any]]:
+def _list_results_readonly(
+    root: Path, limit: int = 200, offset: int = 0,
+) -> list[dict[str, Any]]:
     if not root.is_dir():
         return []
-    return [result.model_dump() for result in ResultsStore(root=str(root)).list_all()]
+    return [
+        result.model_dump()
+        for result in ResultsStore(root=str(root)).list_page(limit=limit, offset=offset)
+    ]
 
 
 # Artifact files we expose to the browser viewer. A fixed allowlist of names
@@ -1154,19 +1161,14 @@ async def _execute_artifact(
     workflow = ResearchWorkflow(session_id=session_id, workflow_name=workflow_name)
     _hydrate_workflow_state(workflow)
     artifact = _resolve_artifact(workflow.artifacts, artifact_ref, version or "0.1.0")
-    prepared = await workflow.adapter.prepare_inputs(artifact, inputs)
-    result = await workflow.adapter.run(artifact, prepared)
-    workflow.results.save(result)
     await safe_backend_action(workflow.backend, "register_artifact", artifact)
-    await safe_backend_action(workflow.backend, "persist_result", artifact, result, prepared)
-    await safe_backend_action(
-        workflow.backend,
-        "record_execution",
-        artifact,
-        result,
-        prepared,
-        result.outputs,
-    )
+    # Full bookkeeping (audit phases + provenance + save/publish); a
+    # blocking execution.before audit gates UI runs like chat/YAML runs.
+    from arc.runtime.audit import AuditBlockedError
+    try:
+        result = await workflow.execute_recorded(artifact, inputs, action="ui_run")
+    except AuditBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     return {
         "session_id": session_id,
         "artifact": artifact.model_dump(),
@@ -1673,22 +1675,53 @@ async def _handle_sweep_command(
     if not sweep:
         raise HTTPException(status_code=400, detail="No parameter sweep is available for this session.")
 
+    # Sweep points get the same bookkeeping as single runs (audits, save,
+    # run_history, hooks, backend publish) plus one provenance entry for
+    # the sweep. A blocking execution.before audit gates the sweep.
+    from arc.runtime.audit import AuditBlockedError
+
     rows: list[dict[str, Any]] = []
-    for parameter, values in sweep.items():
-        for value in values:
-            inputs = {parameter: value}
-            result = await workflow.adapter.run(artifact, inputs)
-            workflow.results.save(result)
-            await safe_backend_action(workflow.backend, "persist_result", artifact, result, inputs)
-            await safe_backend_action(
-                workflow.backend,
-                "record_execution",
-                artifact,
-                result,
-                inputs,
-                result.outputs,
+    run_ids: list[str] = []
+    try:
+        for parameter, values in sweep.items():
+            for value in values:
+                inputs = {parameter: value}
+                if workflow.audit.has_actions():
+                    await workflow.audit.dispatch(
+                        "execution.before",
+                        artifact_id=artifact.artifact_id,
+                        input_summary=inputs,
+                        payload={"sweep": True},
+                    )
+                result = await workflow.adapter.run(artifact, inputs)
+                await workflow.record_run(artifact, result, inputs)
+                run_ids.append(result.run_id)
+                if workflow.audit.has_actions():
+                    await workflow.audit.dispatch(
+                        "execution.after",
+                        artifact_id=artifact.artifact_id,
+                        run_id=result.run_id,
+                        output_summary={"status": result.status,
+                                        "outputs": result.outputs},
+                        payload={"sweep": True},
+                    )
+                rows.append({"inputs": inputs, "run": result.model_dump()})
+    except AuditBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    finally:
+        if run_ids:
+            workflow.provenance.record(
+                workflow.session_id,
+                "sweep",
+                type(workflow.adapter).__name__,
+                artifact_id=artifact.artifact_id,
+                inputs={"parameter_sweep": sweep},
+                outputs={"runs": len(run_ids), "run_ids": run_ids[:50]},
             )
-            rows.append({"inputs": inputs, "run": result.model_dump()})
+            try:
+                await workflow.publish_provenance()
+            except Exception:  # noqa: BLE001 — publishing is best-effort
+                pass
     _save_workflow_meta(workflow, load_session_meta(session_id).get("goal", ""), workflow._context.memory.get("target", {}))
     return f"Sweep completed with {len(rows)} runs.", {"artifact": artifact.model_dump(), "runs": rows}
 

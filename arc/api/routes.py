@@ -319,13 +319,16 @@ async def run_execution(request: ExecutionRequest, session_id: str | None = None
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     workflow = _workflow(LLMConfig(), session_id=session_id)
-    inputs = await workflow.adapter.prepare_inputs(artifact, request.inputs)
-    result = await workflow.adapter.run(artifact, inputs)
-    workflow.results.save(result)
-    await safe_backend_action(workflow.backend, "persist_result", artifact, result, inputs)
-    await safe_backend_action(
-        workflow.backend, "record_execution", artifact, result, inputs, result.outputs,
-    )
+    # Full bookkeeping (audit phases + provenance + save/publish) — a
+    # blocking execution.before audit must gate HTTP runs the same way it
+    # gates chat/YAML runs.
+    from arc.runtime.audit import AuditBlockedError
+    try:
+        result = await workflow.execute_recorded(
+            artifact, request.inputs, action="api_run",
+        )
+    except AuditBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     return result
 
 

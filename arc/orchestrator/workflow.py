@@ -51,7 +51,7 @@ def _build_adapter(
     if adapter_name in {"local", "python"}:
         from arc.runtime.local import LocalRuntimeAdapter
         logger.info("Using LocalRuntimeAdapter")
-        return LocalRuntimeAdapter()
+        return LocalRuntimeAdapter(results_store=_session_results_store(session_id))
     if adapter_name in {"sim2l", "sim2l-local"}:
         from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
         logger.info("Using Sim2LRuntimeAdapter")
@@ -94,7 +94,20 @@ def _build_adapter(
 
     logger.warning("Unknown ARC_RUNTIME_ADAPTER=%s; falling back to local", adapter_name)
     from arc.runtime.local import LocalRuntimeAdapter
-    return LocalRuntimeAdapter()
+    return LocalRuntimeAdapter(results_store=_session_results_store(session_id))
+
+
+def _session_results_store(session_id: str | None):
+    """The session's ResultsStore, for adapters that answer post-hoc
+    queries (``get_status`` / ``collect_*``) from saved runs. ``None``
+    when no session id is available (bare adapter construction)."""
+    if not session_id:
+        return None
+    try:
+        return ResultsStore(root=session_paths(session_id)["runs"])
+    except Exception as exc:  # noqa: BLE001 — adapter still works without it
+        logger.debug("session results store unavailable: %s", exc)
+        return None
 
 
 def _build_auto_adapter(db_path: str | None = None, session_id: str | None = None):
@@ -113,7 +126,7 @@ def _build_auto_adapter(db_path: str | None = None, session_id: str | None = Non
     except ImportError:
         from arc.runtime.local import LocalRuntimeAdapter
         logger.info("sim2l not found — using LocalRuntimeAdapter (auto fallback)")
-        return LocalRuntimeAdapter()
+        return LocalRuntimeAdapter(results_store=_session_results_store(session_id))
 
 
 def _instantiate_adapter(adapter_class, db_path: str | None = None, session_id: str | None = None):
@@ -232,7 +245,10 @@ class ResearchWorkflow:
         # runs fully local with no shared persistence. See
         # arc/runtime/backend.py and design/architecture.md.
         from arc.runtime.backend import resolve_backend
-        self.backend = resolve_backend(self.adapter)
+        self.backend = resolve_backend(
+            self.adapter, registry=self.registry,
+            disabled_packages=self._disabled_packages(),
+        )
         self.artifacts = ArtifactRegistry(root=artifact_root)
         self.results = ResultsStore(root=results_root)
         self.provenance = ProvenanceLog(log_path=provenance_path)
@@ -327,7 +343,9 @@ class ResearchWorkflow:
         )
         self._context.memory["adapter"] = self.adapter
         from arc.runtime.backend import resolve_backend
-        self.backend = resolve_backend(self.adapter)
+        self.backend = resolve_backend(
+            self.adapter, registry=self.registry, disabled_packages=disabled,
+        )
 
     def _agent(self, agent_class):
         return agent_class(context=self._context)
@@ -1177,21 +1195,22 @@ class ResearchWorkflow:
                 state["prepared_inputs"] = prepared
                 result = await method(artifact, prepared)
                 if isinstance(result, ExecutionResult):
-                    result_path = self.results.save(result)
-                    state["result_path"] = result_path
-                    self._context.memory.setdefault("run_history", []).append({
-                        "run_id": result.run_id,
-                        "inputs": prepared,
-                        "outputs": result.outputs,
-                        "metrics": result.metrics,
-                    })
-                    self.memory_hooks.on_result_saved(artifact, result, prepared)
-                    state["backend_persist"] = await safe_backend_action(
-                        self.backend, "persist_result", artifact, result, prepared,
-                    )
-                    state["backend_record"] = await safe_backend_action(
-                        self.backend, "record_execution", artifact, result, prepared, result.outputs,
-                    )
+                    book = await self.record_run(artifact, result, prepared)
+                    state["result_path"] = book["result_path"]
+                    state["backend_persist"] = book["backend_persist"]
+                    state["backend_record"] = book["backend_record"]
+                elif isinstance(result, list):
+                    # run_sweep returns a list — record every point.
+                    # (Previously the isinstance guard above silently skipped
+                    # sweeps: no results save, no run_history, no publish.)
+                    for item in result:
+                        if not isinstance(item, ExecutionResult):
+                            continue
+                        # Each sweep point carries its own reconciled inputs.
+                        book = await self.record_run(artifact, item)
+                        state["result_path"] = book["result_path"]
+                        state["backend_persist"] = book["backend_persist"]
+                        state["backend_record"] = book["backend_record"]
                 return result
             return await method(input_data)
         raise ValueError(f"Unsupported workflow step: {step}")
@@ -1251,34 +1270,77 @@ class ResearchWorkflow:
         "run": "execution.before",
     }
 
+    @staticmethod
+    def _step_kind(step: dict) -> str:
+        for kind in ("agent", "skill", "script", "adapter"):
+            if kind in step:
+                return kind
+        return "unknown"
+
     async def _dispatch_step_audit_before(self, step: dict, step_id: str, state: dict) -> None:
-        """Fire the `.before` audit phase for a step that's about to run."""
-        phase = self._STEP_AUDIT_BEFORE_PHASE.get(step_id)
-        if phase is None or not self.audit.has_actions():
+        """Fire the audit phases for a step that's about to run.
+
+        Every step fires the generic ``step.before`` (with the step id/kind
+        in the payload) so package audits can observe *any* workflow —
+        including package-defined steps core knows nothing about. Steps in
+        the canonical map additionally fire their named ``.before`` phase.
+        """
+        if not self.audit.has_actions():
             return
         artifact = self._context.memory.get("current_artifact")
+        artifact_id = self._get_field(artifact, "artifact_id")
+        await self.audit.dispatch(
+            "step.before",
+            iteration=self._context.iteration,
+            role=step.get("agent"),
+            artifact_id=artifact_id,
+            payload={"step_id": step_id, "step_kind": self._step_kind(step)},
+        )
+        phase = self._STEP_AUDIT_BEFORE_PHASE.get(step_id)
+        if phase is None:
+            return
         await self.audit.dispatch(
             phase,
             iteration=self._context.iteration,
             role=step.get("agent"),
-            artifact_id=self._get_field(artifact, "artifact_id"),
+            artifact_id=artifact_id,
         )
 
     async def _dispatch_step_audit(self, step: dict, step_id: str, output, state: dict) -> None:
-        """Fire the audit phase associated with a completed workflow step."""
-        phase = self._STEP_AUDIT_PHASE.get(step_id)
-        if phase is None or not self.audit.has_actions():
+        """Fire the audit phases for a completed workflow step.
+
+        Every step fires the generic ``step.after``; steps in the canonical
+        map additionally fire their named phase.
+        """
+        if not self.audit.has_actions():
             return
         artifact = self._context.memory.get("current_artifact")
         run_output = self._get_field(state["steps"].get("run", {}), "output")
+        artifact_id = self._get_field(artifact, "artifact_id")
+        run_id = self._get_field(run_output, "run_id")
+        output_summary = (
+            self._dump(output) if not isinstance(output, ArtifactRecord)
+            else output.model_dump()
+        )
+        await self.audit.dispatch(
+            "step.after",
+            iteration=self._context.iteration,
+            role=step.get("agent"),
+            artifact_id=artifact_id,
+            run_id=run_id,
+            output_summary=output_summary,
+            payload={"step_id": step_id, "step_kind": self._step_kind(step)},
+        )
+        phase = self._STEP_AUDIT_PHASE.get(step_id)
+        if phase is None:
+            return
         await self.audit.dispatch(
             phase,
             iteration=self._context.iteration,
             role=step.get("agent"),
-            artifact_id=self._get_field(artifact, "artifact_id"),
-            run_id=self._get_field(run_output, "run_id"),
-            output_summary=self._dump(output) if not isinstance(output, ArtifactRecord)
-            else output.model_dump(),
+            artifact_id=artifact_id,
+            run_id=run_id,
+            output_summary=output_summary,
         )
 
     async def _run_workflow_definition(self, workflow: dict, goal: ResearchGoal) -> dict:
@@ -1428,6 +1490,120 @@ class ResearchWorkflow:
                 except Exception:  # noqa: BLE001
                     pass
             raise
+        finally:
+            # Publish the run's provenance entries to the active backend
+            # (no-op/skip for backends that don't store provenance). Runs
+            # on success *and* failure — a failed run's audit trail is the
+            # one you most want preserved.
+            try:
+                await self.publish_provenance()
+            except Exception:  # noqa: BLE001 — publishing is best-effort
+                pass
+
+    async def record_run(
+        self,
+        artifact: Any,
+        result: ExecutionResult,
+        inputs: dict | None = None,
+    ) -> dict:
+        """Post-run bookkeeping shared by every execution path.
+
+        Saves the result to the session ResultsStore, appends
+        ``run_history``, fires the memory hooks, and publishes via the
+        backend (persist + record). Audit dispatch and provenance stay
+        with the caller — each path has its own phase granularity.
+
+        ``inputs`` defaults to ``result.inputs`` (set by the adapters), so
+        sweep points recorded from a ``run_sweep`` list carry their own
+        parameter combination.
+        """
+        run_inputs = dict(inputs if inputs is not None else (result.inputs or {}))
+        result_path = self.results.save(result)
+        self._context.memory.setdefault("run_history", []).append({
+            "run_id": result.run_id,
+            "inputs": run_inputs,
+            "outputs": result.outputs,
+            "metrics": result.metrics,
+        })
+        self.memory_hooks.on_result_saved(artifact, result, run_inputs)
+        backend_persist = await safe_backend_action(
+            self.backend, "persist_result", artifact, result, run_inputs,
+        )
+        backend_record = await safe_backend_action(
+            self.backend, "record_execution", artifact, result, run_inputs, result.outputs,
+        )
+        return {
+            "result_path": result_path,
+            "backend_persist": backend_persist,
+            "backend_record": backend_record,
+        }
+
+    async def execute_recorded(
+        self,
+        artifact: Any,
+        inputs: dict,
+        *,
+        action: str = "run",
+        agent_label: str | None = None,
+    ) -> ExecutionResult:
+        """Run an artifact with the same bookkeeping the chat/YAML paths get.
+
+        For callers outside the research loop (the HTTP API, the browser
+        UI): fires the ``execution.before`` / ``execution.after`` audit
+        phases (a *blocking* audit raises
+        :class:`~arc.runtime.audit.AuditBlockedError` and prevents the
+        run — the gate must not be bypassable over HTTP), runs the
+        adapter, records the run (:meth:`record_run`), writes a
+        provenance entry, and flushes provenance to the backend.
+        """
+        prepared = await self.adapter.prepare_inputs(artifact, inputs)
+        artifact_id = self._get_field(artifact, "artifact_id")
+        if self.audit.has_actions():
+            await self.audit.dispatch(
+                "execution.before",
+                iteration=self._context.iteration,
+                artifact_id=artifact_id,
+                input_summary=prepared,
+            )
+        result = await self.adapter.run(artifact, prepared)
+        await self.record_run(artifact, result, prepared)
+        self.provenance.record(
+            self.session_id,
+            action,
+            agent_label or type(self.adapter).__name__,
+            artifact_id=artifact_id,
+            run_id=result.run_id,
+            inputs=prepared,
+            outputs=result.outputs,
+        )
+        if self.audit.has_actions():
+            await self.audit.dispatch(
+                "execution.after",
+                iteration=self._context.iteration,
+                artifact_id=artifact_id,
+                run_id=result.run_id,
+                output_summary={"status": result.status, "outputs": result.outputs},
+            )
+        await self.publish_provenance()
+        return result
+
+    async def publish_provenance(self) -> dict:
+        """Push locally-recorded provenance entries to the active backend.
+
+        Drains the provenance log's unpublished buffer and hands it to
+        ``backend.publish_provenance``. A backend that doesn't publish
+        provenance (``skipped``) drops the batch (the local JSONL still has
+        it); a real failure requeues the entries for the next attempt.
+        """
+        entries = self.provenance.drain_unpublished()
+        if not entries:
+            return {"published": True, "count": 0}
+        result = await safe_backend_action(
+            self.backend, "publish_provenance", self.session_id, entries,
+        )
+        if not result.get("published") and not result.get("skipped"):
+            self.provenance.requeue_unpublished(entries)
+        return result
 
     def assemble_report(self, **extra_sections) -> dict:
         """Assemble a structured research report from accumulated state.

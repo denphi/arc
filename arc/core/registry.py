@@ -62,6 +62,7 @@ class ComponentRegistry:
         self._packages = _Slot[dict[str, Any]]("package")
         self._skills = _Slot[Any]("skill")
         self._adapters = _Slot[Any]("adapter")
+        self._backends = _Slot[Any]("backend")
         self._extensions = _Slot[Any]("extension")
         self._providers = _Slot[Any]("provider")
         self._workflows = _Slot[dict]("workflow")
@@ -274,6 +275,29 @@ class ComponentRegistry:
 
     def list_adapters(self) -> list[str]:
         return self._adapters.list_names()
+
+    # --- backends (publish actions) ---
+
+    def register_backend(self, name: str, backend: Any, package_name: str | None = None) -> None:
+        """Register a :class:`~arc.contracts.backend.BackendActions` class.
+
+        Backends are the publish-side seam (register / persist / record /
+        provenance). Built-ins (noop / sim2l / github) are resolved directly
+        by ``resolve_backend``; this slot lets a *package* ship one selectable
+        via ``ARC_BACKEND=<name>`` or ``arc.toml [backend] kind``.
+        """
+        self._backends.register(name, backend)
+        self.record_source("backend", name, package_name)
+
+    def get_backend(self, name: str, disabled_packages: set[str] | None = None) -> Any:
+        if self.is_disabled("backend", name, disabled_packages):
+            raise KeyError(
+                f"Backend '{name}' belongs to a package disabled for this session"
+            )
+        return self._backends.get(name)
+
+    def list_backends(self, disabled_packages: set[str] | None = None) -> list[str]:
+        return self.filter_disabled("backend", self._backends.list_names(), disabled_packages)
 
     # --- asset loaders ---
 
@@ -522,7 +546,7 @@ class PackageScopedRegistry:
     }
     # register methods that accept a package_name keyword directly.
     _PACKAGE_AWARE = {
-        "register_agent", "register_skill", "register_adapter",
+        "register_agent", "register_skill", "register_adapter", "register_backend",
         "register_provider", "register_loader", "register_workflow", "register_audit_action",
         "register_report_section", "register_script",
     }

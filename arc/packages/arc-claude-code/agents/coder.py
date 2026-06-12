@@ -306,6 +306,13 @@ class ClaudeCodeCoderAgent(AgentContract):
                 "claude_code_command": command,
                 "claude_code_args": args,
                 "claude_code_workspace": str(workspace),
+                # The instruction given to the external coding agent is the
+                # Build step's audit artifact — the workspace copy
+                # (PROMPT.md / claude-code.stdout.txt) is transient, so
+                # persist a hash + excerpts with the artifact itself.
+                "claude_code_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "claude_code_prompt_excerpt": prompt[:2000],
+                "claude_code_output_tail": (stdout or "")[-2000:],
                 "hypothesis": plan.proposal.hypothesis[:200],
                 "methodology": plan.proposal.methodology[:500],
                 "success_criteria": plan.success_criteria,
