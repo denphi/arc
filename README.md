@@ -267,7 +267,7 @@ research workflow.
 
 1. Create `arc/packages/your-package/package.yaml`
 2. Implement agents in `arc/packages/your-package/agents/`
-3. Define skills in `arc/packages/your-package/skills/*.md`
+3. Define portable skills in `arc/packages/your-package/skills/<name>/SKILL.md`
 4. Add workflows in `arc/packages/your-package/workflows/*.yaml`
 5. Register in `arc.toml` under `[packages] paths`
 

@@ -119,7 +119,7 @@ def init_package(
           prompts:
             - prompts/{role_name}.md
           skills:
-            - skills/{strategy_name}.md
+            - skills/{strategy_name.replace("_", "-")}/SKILL.md
         """
     )
     agent = dedent(
@@ -154,6 +154,12 @@ def init_package(
     )
     skill = dedent(
         f"""\
+        ---
+        name: {strategy_name.replace("_", "-")}
+        description: Starter reusable procedure for {pkg_name}.
+        compatibility: ARC package skill
+        ---
+
         # {strategy_name}
 
         ## Description
@@ -188,7 +194,7 @@ def init_package(
     _write_new(target / "package.yaml", manifest, force=force)
     _write_new(target / "agents" / f"{role_name}.py", agent, force=force)
     _write_new(target / "prompts" / f"{role_name}.md", prompt, force=force)
-    _write_new(target / "skills" / f"{strategy_name}.md", skill, force=force)
+    _write_new(target / "skills" / strategy_name.replace("_", "-") / "SKILL.md", skill, force=force)
     _write_new(target / "README.md", readme, force=force)
 
     typer.echo(f"Created ARC package {pkg_name} at {target}")
@@ -203,6 +209,7 @@ def validate_package(
     """Validate that a local package manifest and declared Python objects load."""
     from arc.core.loader import _import_declared, _skill_name, _skill_path, load_package
     from arc.core.registry import ComponentRegistry
+    from arc.core.skill_bundle import validate_skill_bundle
 
     manifest_path = path / "package.yaml"
     if not manifest_path.exists():
@@ -288,6 +295,22 @@ def validate_package(
         if not skill_file.exists():
             errors.append(f"declared skill path does not exist: {skill_file.relative_to(path)}")
             continue
+        if skill_file.name == "SKILL.md":
+            errors.extend(
+                f"{skill_file.relative_to(path)}: {error}"
+                for error in validate_skill_bundle(skill_file)
+            )
+            if isinstance(skill, dict) and skill.get("name"):
+                from arc.core.skill_bundle import load_skill_bundle
+                try:
+                    bundle_name = load_skill_bundle(skill_file).name
+                except Exception:  # noqa: BLE001 - bundle errors are reported above
+                    bundle_name = ""
+                if bundle_name and str(skill["name"]) != bundle_name:
+                    errors.append(
+                        f"{skill_file.relative_to(path)}: manifest skill name "
+                        f"{skill['name']!r} must match bundle name {bundle_name!r}"
+                    )
         name = _skill_name(skill, skill_file)
         if name in resolved_skill_names:
             errors.append(

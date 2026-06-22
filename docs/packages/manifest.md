@@ -37,7 +37,7 @@ provides:
 |---|---|---|
 | `agents` | `{name, entrypoint}` or `{name, path, class}` | a named agent (direct lookup) |
 | `strategies` | `{role, name, entrypoint\|path+class, default?, description?, aliases?}` | a role strategy (resolver-aware) |
-| `skills` | a `.md` path string | a `MarkdownSkill` (named by file stem) |
+| `skills` | a legacy `.md` path or canonical `*/SKILL.md` bundle | a lazily activated `MarkdownSkill` |
 | `workflows` | `{name, path}` (YAML) | a registered workflow |
 | `scripts` | `{name, path, runtime}` | a package-declared script runnable through the script runner |
 | `runtime_adapters` | `{name, entrypoint\|path+class, aliases?}` | a runtime adapter |
@@ -69,7 +69,39 @@ provides:
 When the path ends in `SKILL.md`, ARC treats the parent folder as the skill
 bundle root. The registered `MarkdownSkill` can safely list/read files under
 that root, such as `references/`, `scripts/`, and `agents/`; `..` traversal is
-rejected and size caps apply.
+rejected and size caps apply. Bundle instructions are retained as metadata only
+until execution activates the skill.
+
+Canonical bundles require YAML frontmatter with a lowercase hyphenated `name`
+that matches the directory and a non-empty `description`:
+
+```markdown
+---
+name: pde-problem-extractor
+description: Extract a structured PDE problem from a paper.
+compatibility: ARC research workflows
+allowed-tools: [read-file]
+metadata:
+  domain: simulation
+---
+
+# PDE problem extractor
+```
+
+Validate a bundle directly with `arc skill validate <bundle-dir>`; `arc package
+validate` applies the same checks to every declared `SKILL.md`. Flat Markdown
+skills remain supported for existing packages but are not the canonical
+portable format.
+
+## Learned-skill promotion
+
+The `skill_extracting` reflector does not make failed-run advice immediately
+invocable. Actionable failures are stored under the session's
+`skills/candidates/` directory. A later approved run for the same goal promotes
+the candidate into a validated `skills/learned/<name>/SKILL.md` bundle and
+records the failure and success iterations in frontmatter metadata. An approved
+run without a matching candidate can still produce a learned bundle, with the
+approved run itself as its evidence.
 
 ## File loaders
 

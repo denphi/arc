@@ -129,7 +129,10 @@ class KeywordSearcherAgent(_BaseSearcher):
         results_url = os.environ.get("SIM2L_RESULTS_URL", "http://localhost:8003")
 
         keywords = goal_keywords(goal.goal)
-        query = " ".join(keywords[:4])
+        # The catalog now tokenizes + OR-matches across name/description/tags
+        # and ranks by keyword-match count, so sending more keywords improves
+        # recall (each extra term can only add a hit, never narrow the set).
+        query = " ".join(keywords[:8])
         catalog_hits = fetch_catalog(catalog_url, query)
 
         prior_results: list[dict] = []
@@ -278,7 +281,7 @@ class EmbeddingSearcherAgent(_BaseSearcher):
 
         # 1. recall — wider candidate set, then re-rank.
         keywords = goal_keywords(goal.goal)
-        query = " ".join(keywords[:4])
+        query = " ".join(keywords[:8])
         candidates = fetch_catalog(catalog_url, query, limit=20)
         if not candidates:
             return SearchResult(catalog_hits=[], prior_results=[])

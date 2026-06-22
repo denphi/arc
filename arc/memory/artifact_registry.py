@@ -134,6 +134,17 @@ class ArtifactRegistry:
             records.append(record)
         return records
 
+    def save(self, record: ArtifactRecord) -> ArtifactRecord:
+        """Persist mutations made to a record in memory back to disk.
+
+        Used after the curator rewrites ``description`` / ``metadata``
+        (e.g. the capability summary) so ``arc_record.json`` on disk — and
+        thus the GitHub backend's published copy — carries the same fields
+        the live catalog push already received.
+        """
+        self._write_record(record)
+        return record
+
     def _write_record(self, record: ArtifactRecord) -> None:
         record_path = self.root / record.artifact_id / record.version / "arc_record.json"
         meta_path = self.root / record.artifact_id / record.version / "arc_metadata.json"

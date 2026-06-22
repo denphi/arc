@@ -31,6 +31,34 @@ from arc.contracts.agent import AgentContract
 # We import lazily to avoid a hard circular dependency at module load time.
 
 
+_CAPABILITY_PROMPT = """\
+You are documenting a computational simulation tool so other researchers (and
+an automated agent) can decide whether to reuse it. Write a concise, factual
+capability description from the code and schema below — describe what the tool
+*does*, not how it is implemented.
+
+Tool name : {name}
+Inputs    : {inputs}
+Outputs   : {outputs}
+Workflow source (may be truncated):
+{source}
+
+Return a JSON object with exactly:
+{{
+  "summary": "<1-2 sentence plain-language description of what this tool computes>",
+  "capabilities": ["<short capability phrase>", "..."],
+  "when_to_use": "<one sentence: the kind of research goal this tool fits>",
+  "domain_tags": ["<lowercase domain/keyword>", "..."]
+}}
+
+Rules:
+- summary must be self-contained and mention the key physical quantities.
+- capabilities: 2-5 short phrases (e.g. "band gap prediction", "DFT relaxation").
+- domain_tags: 3-8 lowercase single words useful for keyword search.
+- No extra keys, no prose outside the JSON.
+"""
+
+
 _CLASSIFY_PROMPT = """\
 You are a physics schema curator. Classify the following simulation output key.
 
@@ -95,6 +123,49 @@ def _patch_workflow_key(code: str, old_key: str, new_key: str) -> str:
         code,
     )
     return patched
+
+
+def _fallback_capability(name: str, inputs: list[str], outputs: list[str]) -> dict:
+    """Deterministic capability summary used when no provider is available.
+
+    Keeps the *shape* identical to the LLM output so downstream consumers
+    (catalog ``description`` + ``metadata['capability']``, the reuse scorer)
+    don't have to special-case the no-provider path. Tags are derived from
+    the name + schema keys so keyword recall still has something to match.
+    """
+    pretty = name.replace("_", " ").replace("-", " ").strip() or "simulation"
+    out_str = ", ".join(outputs) if outputs else "results"
+    in_str = ", ".join(inputs) if inputs else "no declared inputs"
+    summary = f"Computes {out_str} from {in_str}."
+    tag_source = " ".join([pretty] + inputs + outputs).lower()
+    seen: list[str] = []
+    for tok in re.sub(r"[^a-z0-9 ]", " ", tag_source).split():
+        if len(tok) > 2 and tok not in seen:
+            seen.append(tok)
+    return {
+        "summary": f"{pretty}: {summary}",
+        "capabilities": [f"computes {o}" for o in outputs[:5]] or [pretty],
+        "when_to_use": f"Use when a goal needs {out_str}.",
+        "domain_tags": seen[:8],
+    }
+
+
+def _coerce_capability(raw: Any, name: str, inputs: list[str], outputs: list[str]) -> dict:
+    """Validate/normalise an LLM capability dict, filling gaps from the fallback."""
+    base = _fallback_capability(name, inputs, outputs)
+    if not isinstance(raw, dict):
+        return base
+    summary = str(raw.get("summary") or "").strip() or base["summary"]
+    caps = raw.get("capabilities")
+    caps = [str(c).strip() for c in caps if str(c).strip()] if isinstance(caps, list) else []
+    tags = raw.get("domain_tags")
+    tags = [str(t).strip().lower() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    return {
+        "summary": summary,
+        "capabilities": caps or base["capabilities"],
+        "when_to_use": str(raw.get("when_to_use") or "").strip() or base["when_to_use"],
+        "domain_tags": tags or base["domain_tags"],
+    }
 
 
 def _heuristic_classify(key: str, target: dict) -> dict | None:
@@ -238,7 +309,47 @@ class CuratorAgent(AgentContract):
                 artifact.metadata["sim2l_outputs"] = new_outputs
 
         self.context.memory["schema_registry"] = _dump_registry(registry)
+
+        # ── Capability description (LLM-authored, for catalog search/reuse) ──
+        # Stored in artifact.description (becomes the catalog `description`
+        # column, which the new keyword recall searches) plus structured
+        # facets in metadata['capability'] for arc's reuse scorer.
+        await self._generate_capability(artifact, input_keys, list(new_outputs.keys()) or output_keys, code)
+
         return artifact
+
+    async def _generate_capability(
+        self, artifact: Any, input_keys: list[str], output_keys: list[str], source: str,
+    ) -> None:
+        provider = self.context.memory.get("provider")
+        cap: dict | None = None
+        if provider:
+            try:
+                import json as _json
+                prompt = _CAPABILITY_PROMPT.format(
+                    name=artifact.name,
+                    inputs=input_keys,
+                    outputs=output_keys,
+                    source=source[:4000],
+                )
+                raw = (await provider.complete(prompt)).strip()
+                m = re.search(r"\{.*\}", raw, re.DOTALL)
+                if m:
+                    cap = _coerce_capability(_json.loads(m.group()), artifact.name, input_keys, output_keys)
+            except Exception:  # noqa: BLE001 — capability gen is best-effort
+                cap = None
+        if cap is None:
+            cap = _fallback_capability(artifact.name, input_keys, output_keys)
+
+        # Prose → description (searchable). Keep an existing richer description
+        # only if the generated summary would be strictly less informative.
+        summary = cap["summary"]
+        if hasattr(artifact, "description"):
+            if not artifact.description or len(artifact.description) < len(summary):
+                artifact.description = summary
+        if isinstance(getattr(artifact, "metadata", None), dict):
+            artifact.metadata["description"] = summary
+            artifact.metadata["capability"] = cap
 
 
 def _build_yaml_section(fields: dict) -> str:

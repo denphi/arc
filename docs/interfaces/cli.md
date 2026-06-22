@@ -20,6 +20,7 @@ arc --help
 | `arc file add/list/show/load` | Attach, inspect, and load session FileAssets. |
 | `arc package init <name> <dir>` | Scaffold a new local package. |
 | `arc package validate <dir>` | Validate a package manifest + that its declarations register. |
+| `arc skill validate <dir-or-SKILL.md>` | Validate a portable canonical skill bundle. |
 
 ## `arc run`
 
@@ -69,6 +70,15 @@ arc package validate ./arc-my-lab         # exits non-zero if a declaration didn
 ```
 
 See {doc}`../packages/local-packages`.
+
+## `arc skill`
+
+```bash
+arc skill validate ./skills/my-skill
+```
+
+Canonical bundles use `skills/<name>/SKILL.md`. ARC discovers metadata first
+and loads the full instruction body only when the skill executes.
 
 ## `arc file`
 

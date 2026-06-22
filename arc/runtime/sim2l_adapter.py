@@ -373,7 +373,8 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
 
     def _push_to_catalog(self, sim_def, sim_name: str, sim_version: str,
                          workflow_source: str | None = None,
-                         artifact_path: str | None = None) -> bool:
+                         artifact_path: str | None = None,
+                         extra_metadata: dict | None = None) -> bool:
         """Register or update the simulation in the catalog service.
 
         On 409 (already registered), fetches the existing record and PATCHes
@@ -391,6 +392,11 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             metadata = {}
             if workflow_source:
                 metadata["workflow_source"] = workflow_source
+            # Capability facets (summary / capabilities / when_to_use /
+            # domain_tags) written by the curator. These make the catalog
+            # entry searchable and drive arc's reuse scorer.
+            if extra_metadata:
+                metadata.update(extra_metadata)
 
             ok = client.register_simulation(
                 name=sim_name,
@@ -770,6 +776,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         sim_version: str,
         workflow_source: str | None,
         artifact_path: str | None = None,
+        extra_metadata: dict | None = None,
     ) -> bool:
         repo = self._get_repo()
         try:
@@ -779,6 +786,7 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             repo.deploy(sim_def)
         return self._push_to_catalog(
             sim_def, sim_name, sim_version, workflow_source, artifact_path,
+            extra_metadata=extra_metadata,
         )
 
     def _ensure_deployed(
@@ -820,9 +828,12 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
         sim_def, sim_name, sim_version, in_schema, out_schema = (
             self._simulation_definition_for_artifact(artifact, inputs)
         )
+        capability = (artifact.metadata or {}).get("capability")
+        extra_metadata = {"capability": capability} if isinstance(capability, dict) else None
         try:
             catalog_persisted = self._deploy_simulation_definition(
                 sim_def, sim_name, sim_version, source or None, artifact.path,
+                extra_metadata=extra_metadata,
             )
         except Exception as exc:
             logger.debug(f"deploy failed (non-fatal): {exc}")

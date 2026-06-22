@@ -26,11 +26,17 @@ class PackageResource:
 
 
 class MarkdownSkill:
-    """Simple registry wrapper for markdown-defined package skills."""
+    """Registry wrapper that activates Markdown instructions lazily."""
 
-    def __init__(self, name: str, path: Path, content: str):
+    def __init__(self, name: str, path: Path, content: str | None = None):
         self.name = name
+        if content is None:
+            content = path.read_text(encoding="utf-8")
         frontmatter = _markdown_frontmatter(content)
+        self.bundle = None
+        if path.name == "SKILL.md":
+            from arc.core.skill_bundle import load_skill_bundle
+            self.bundle = load_skill_bundle(path)
         self.frontmatter = frontmatter
         self.description = (
             frontmatter.get("description")
@@ -38,14 +44,22 @@ class MarkdownSkill:
             or name
         )
         self.path = str(path)
-        self.content = content
         self.bundle_root = str(path.parent) if path.name == "SKILL.md" else None
+        self._content: str | None = None
         self.metadata = {
             **frontmatter,
             "path": str(path),
             "bundle_root": self.bundle_root,
             "resources": self.list_resources() if self.bundle_root else [],
+            "allowed_tools": list(self.bundle.allowed_tools) if self.bundle else [],
         }
+
+    @property
+    def content(self) -> str:
+        """Load and cache instructions only when the skill is activated."""
+        if self._content is None:
+            self._content = Path(self.path).read_text(encoding="utf-8")
+        return self._content
 
     def resolve_resource(self, relative_path: str) -> Path:
         """Resolve a skill-bundle resource under the bundle root."""
@@ -193,7 +207,11 @@ class MarkdownSkill:
         store = context.files
         if store is None:
             return ""
-        ids = sorted({value for value in inputs.values() if isinstance(value, str) and value.startswith("file_")})
+        ids = sorted({
+            value
+            for value in inputs.values()
+            if isinstance(value, str) and value.startswith("file_")
+        })
         rows = []
         for file_id in ids:
             try:
@@ -246,13 +264,19 @@ def _skill_path(package_dir: Path, value: str | dict) -> Path:
 
 
 def _skill_name(value: str | dict, path: Path, content: str | None = None) -> str:
-    if isinstance(value, dict) and value.get("name"):
-        return str(value["name"])
     if content is None and path.exists():
         try:
             content = path.read_text(encoding="utf-8")
         except OSError:
             content = None
+    # A canonical bundle carries its portable identity in SKILL.md. Flat
+    # legacy files may still use an explicit package-manifest alias.
+    if content and path.name == "SKILL.md":
+        frontmatter = _markdown_frontmatter(content)
+        if frontmatter.get("name"):
+            return str(frontmatter["name"])
+    if isinstance(value, dict) and value.get("name"):
+        return str(value["name"])
     if content:
         frontmatter = _markdown_frontmatter(content)
         if frontmatter.get("name"):
@@ -574,7 +598,8 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_script(definition["name"], definition, package_name=pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load script '%s': %s", script_def, exc)
-            record_error("script", script_def.get("name") if isinstance(script_def, dict) else script_def, exc)
+            name = script_def.get("name") if isinstance(script_def, dict) else script_def
+            record_error("script", name, exc)
 
     for extension_def in manifest.get("provides", {}).get("extensions", []):
         try:
@@ -675,7 +700,8 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.record_source("constraint", resource.name, pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load constraint '%s': %s", constraint_def, exc)
-            record_error("constraint", _resource_name(constraint_def) if constraint_def else "", exc)
+            name = _resource_name(constraint_def) if constraint_def else ""
+            record_error("constraint", name, exc)
 
     for vocabulary_def in manifest.get("provides", {}).get("vocabularies", []):
         try:
@@ -684,7 +710,8 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.record_source("vocabulary", resource.name, pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load vocabulary '%s': %s", vocabulary_def, exc)
-            record_error("vocabulary", _resource_name(vocabulary_def) if vocabulary_def else "", exc)
+            name = _resource_name(vocabulary_def) if vocabulary_def else ""
+            record_error("vocabulary", name, exc)
 
     for detector_def in manifest.get("provides", {}).get("detectors", []):
         try:

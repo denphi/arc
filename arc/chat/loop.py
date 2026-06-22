@@ -696,6 +696,32 @@ def _label_for_class(cls, session_key: str | None) -> str:
     return "builder"
 
 
+def _catalog_schema_to_sim2l(schema: dict, *, with_default: bool) -> dict:
+    """Convert a catalog input/output schema into ARC's sim2l_* metadata shape.
+
+    Preserves the *real* field types, units, bounds, and descriptions the
+    catalog stored, instead of flattening everything to ``Number`` (the old
+    reuse path discarded that information). A field entry may be a dict
+    (``{"type": "Number", "units": "eV", ...}``) or a bare default value.
+    """
+    out: dict[str, dict] = {}
+    for key, spec in (schema or {}).items():
+        if isinstance(spec, dict):
+            field = dict(spec)
+            field.setdefault("type", "Number")
+            field.setdefault("description", key)
+            if not with_default:
+                field.pop("default", None)
+            elif "default" not in field:
+                field["default"] = 1.0
+        else:
+            field = {"type": "Number", "description": key}
+            if with_default:
+                field["default"] = spec if spec is not None else 1.0
+        out[key] = field
+    return out
+
+
 async def _register_artifact_with_sim2l(workflow: ResearchWorkflow, artifact) -> dict | None:
     """Publish a built artifact via the workflow's backend.
 
@@ -1037,90 +1063,146 @@ async def run_research(
         await _maybe_suggest_recipe(workflow, goal, ctx)
 
         # ── Catalog reuse check ───────────────────────────────────────────
+        # Score catalog hits for fit against the goal, then only offer reuse
+        # when at least one clears the threshold. The user picks among the
+        # qualifying top-N: reuse as-is, adapt the closest (its source seeds
+        # the builder), or build new.
         catalog_hits = ctx.memory.pop("catalog_hits", [])
         prior_results = ctx.memory.pop("catalog_prior_results", [])
         catalog_artifact = None
 
         if catalog_hits and not rebuild_for_refinement:
-            best = catalog_hits[0]
-            best_name = best.get("name", "")
-            best_desc = (best.get("description") or "")[:80]
-            step("Catalog hit", f"{c(best_name, CYAN)}  {c(best_desc, DIM)}")
-            if prior_results:
-                step("Prior runs", f"{len(prior_results)} result(s) found")
-                for r in prior_results[:2]:
-                    print(f"    {c('inputs', DIM)}={r.get('input_params', {})}  "
-                          f"{c('outputs', DIM)}={r.get('output_params', {})}")
+            from arc.packages.arc_sim2l_agents.reuse import (
+                reuse_threshold,
+                score_fit,
+            )
+            provider = ctx.memory.get("provider")
+            scored = await score_fit(goal, catalog_hits, provider)
+            threshold = reuse_threshold(ctx)
+            qualifying = [h for h in scored if h.get("fit", 0.0) >= threshold][:5]
 
-            # Ask user whether to reuse the catalog artifact.
-            raw = (await chat_input_async(
-                c(f"  Reuse catalog artifact '{best_name}'? [Y / n] > ", BOLD)
-            )).strip().lower()
-            if raw not in ("n", "no"):
-                # Wrap the catalog hit as a local artifact so the rest of the
-                # pipeline (validate → execute → review) works unchanged.
-                from arc.schemas.artifact import ArtifactDraft
-                input_schema  = best.get("input_schema") or {}
-                output_schema = best.get("output_schema") or {}
-                catalog_draft = ArtifactDraft(
-                    name=best_name,
-                    description=best_desc,
-                    files={},          # no local files — will be fetched via sim2l repo
-                    metadata={
-                        "created_by": "catalog",
-                        "strategy": "reuse_catalog",
-                        "hypothesis": proposal.hypothesis,
-                        "success_criteria": "",
-                        "sim2l_inputs": {
-                            k: {"type": "Number",
-                                "default": v.get("default", 1.0) if isinstance(v, dict) else 1.0,
-                                "description": k}
-                            for k, v in input_schema.items()
-                        },
-                        "sim2l_outputs": {
-                            k: {"type": "Number", "description": k}
-                            for k in output_schema
-                        },
-                        "catalog_id": best.get("id"),
-                        "workflow_source": best.get("metadata", {}).get("workflow_source", ""),
-                    },
-                )
-                catalog_artifact = workflow.artifacts.register(catalog_draft)
-                workflow.memory_hooks.on_artifact_registered(catalog_artifact)
-                ok(f"Reusing catalog artifact  {c(best_name, CYAN)}")
-                if prior_results:
-                    ok(f"Prior results available: "
-                       f"{c(str(len(prior_results)) + ' runs', DIM)}")
-
-                # Seed next_parameters from prior results if we have a target.
-                if target and prior_results:
-                    best_prior = min(
-                        prior_results,
-                        key=lambda r: sum(
-                            abs(r.get("output_params", {}).get(ok_k, float("inf")) - tv)
-                            for ok_k, tv in target.items()
-                            if ok_k in r.get("output_params", {})
-                        ),
+            if qualifying:
+                header("Catalog reuse")
+                for i, h in enumerate(qualifying, start=1):
+                    fit = h.get("fit", 0.0)
+                    cap = (h.get("metadata") or {}).get("capability") or {}
+                    blurb = (cap.get("summary") if isinstance(cap, dict) else None) \
+                        or (h.get("description") or "")
+                    print(
+                        f"    {c(str(i), BOLD)}. {c(h.get('name', '?'), CYAN)}  "
+                        f"{c(f'fit={fit:.2f}', GREEN if fit >= 0.7 else YELLOW)}"
                     )
-                    seed_params = {
-                        k: v for k, v in best_prior.get("input_params", {}).items()
-                        if k in input_schema
-                    }
-                    if seed_params:
-                        ctx.memory["next_parameters"] = seed_params
-                        step("Seed params", c(str(seed_params), YELLOW))
+                    if blurb:
+                        print(f"       {c(textwrap.fill(blurb[:120], 64, subsequent_indent=' ' * 7), DIM)}")
+                if prior_results:
+                    step("Prior runs", f"{len(prior_results)} result(s) for top hit")
 
-                ctx.memory["current_artifact"] = catalog_artifact
-                ctx.memory["current_plan"] = None
-                artifact = catalog_artifact
-                # Skip build AND validation — jump straight to execution.
-                # A catalog artifact was already validated when it was
-                # published, and it has no local files to re-validate
-                # (files={}, fetched via the sim2l repo at run time). Setting
-                # is_new_artifact=False makes ValidationPhase.should_run()
-                # return False so we don't re-validate something we can't
-                # see locally; ExecutionPhase still runs (review finding D).
-                is_new_artifact = False
+                # Choice: <n> = reuse #n, a<n> = adapt #n, b/empty = build new.
+                raw = (await chat_input_async(c(
+                    "  Reuse #, 'a#' to adapt one, or 'b' to build new "
+                    f"[default: reuse 1] > ", BOLD,
+                ))).strip().lower()
+
+                adapt_idx = reuse_idx = None
+                if raw in ("b", "build", "n", "no", "new"):
+                    pass  # fall through to build
+                elif raw.startswith("a") and raw[1:].strip().isdigit():
+                    adapt_idx = int(raw[1:].strip()) - 1
+                elif raw.isdigit():
+                    reuse_idx = int(raw) - 1
+                elif raw == "":
+                    reuse_idx = 0  # default: reuse the top hit
+
+                if adapt_idx is not None and 0 <= adapt_idx < len(qualifying):
+                    # Seed the builder with the chosen artifact's source so it
+                    # adapts an existing implementation instead of starting
+                    # from a blank file. Falls through to the build branch.
+                    chosen = qualifying[adapt_idx]
+                    src = (chosen.get("metadata") or {}).get("workflow_source", "")
+                    ctx.memory["adapt_from_artifact"] = {
+                        "name": chosen.get("name", ""),
+                        "description": chosen.get("description", ""),
+                        "workflow_source": src,
+                        "input_schema": chosen.get("input_schema") or {},
+                        "output_schema": chosen.get("output_schema") or {},
+                        "capability": (chosen.get("metadata") or {}).get("capability"),
+                    }
+                    ok(f"Adapting catalog artifact  {c(chosen.get('name', ''), CYAN)} "
+                       f"{c('(builder will start from its source)', DIM)}")
+                elif reuse_idx is not None and 0 <= reuse_idx < len(qualifying):
+                    best = qualifying[reuse_idx]
+                    best_name = best.get("name", "")
+                    best_desc = (best.get("description") or "")[:80]
+                    # Wrap the catalog hit as a local artifact so the rest of
+                    # the pipeline (validate → execute → review) works
+                    # unchanged. Preserve the *real* typed schema the catalog
+                    # stored instead of flattening everything to Number.
+                    from arc.schemas.artifact import ArtifactDraft
+                    input_schema  = best.get("input_schema") or {}
+                    output_schema = best.get("output_schema") or {}
+                    catalog_draft = ArtifactDraft(
+                        name=best_name,
+                        description=best_desc,
+                        files={},      # no local files — fetched via sim2l repo
+                        metadata={
+                            "created_by": "catalog",
+                            "strategy": "reuse_catalog",
+                            "hypothesis": proposal.hypothesis,
+                            "success_criteria": "",
+                            "fit_score": best.get("fit"),
+                            "sim2l_inputs": _catalog_schema_to_sim2l(input_schema, with_default=True),
+                            "sim2l_outputs": _catalog_schema_to_sim2l(output_schema, with_default=False),
+                            "capability": (best.get("metadata") or {}).get("capability"),
+                            "catalog_id": best.get("id"),
+                            "workflow_source": best.get("metadata", {}).get("workflow_source", ""),
+                        },
+                    )
+                    catalog_artifact = workflow.artifacts.register(catalog_draft)
+                    workflow.memory_hooks.on_artifact_registered(catalog_artifact)
+                    _fit_val = best.get("fit", 0) or 0
+                    ok(f"Reusing catalog artifact  {c(best_name, CYAN)} "
+                       f"{c('(fit=%.2f)' % _fit_val, DIM)}")
+                    if prior_results:
+                        ok(f"Prior results available: "
+                           f"{c(str(len(prior_results)) + ' runs', DIM)}")
+
+                    # Seed next_parameters from prior results if we have a target.
+                    if target and prior_results:
+                        best_prior = min(
+                            prior_results,
+                            key=lambda r: sum(
+                                abs(r.get("output_params", {}).get(ok_k, float("inf")) - tv)
+                                for ok_k, tv in target.items()
+                                if ok_k in r.get("output_params", {})
+                            ),
+                        )
+                        seed_params = {
+                            k: v for k, v in best_prior.get("input_params", {}).items()
+                            if k in input_schema
+                        }
+                        if seed_params:
+                            ctx.memory["next_parameters"] = seed_params
+                            step("Seed params", c(str(seed_params), YELLOW))
+
+                    ctx.memory["current_artifact"] = catalog_artifact
+                    ctx.memory["current_plan"] = None
+                    artifact = catalog_artifact
+                    # Skip build AND validation — jump straight to execution.
+                    # A catalog artifact was already validated when published,
+                    # and has no local files to re-validate (files={}, fetched
+                    # via the sim2l repo at run time). is_new_artifact=False
+                    # makes ValidationPhase.should_run() return False so we
+                    # don't re-validate something we can't see locally;
+                    # ExecutionPhase still runs (review finding D).
+                    is_new_artifact = False
+            else:
+                # Nothing cleared the threshold — don't nag the user, just
+                # build. The top hit's score is logged for diagnostics.
+                if scored:
+                    top = scored[0]
+                    print(f"  {c('ℹ', CYAN)} No close catalog match "
+                          f"(best: {top.get('name', '?')} fit={top.get('fit', 0):.2f} "
+                          f"< {threshold:.2f}) — building new.")
 
         if catalog_artifact is None:
             # ── Planning ──────────────────────────────────────────────────
@@ -1202,6 +1284,16 @@ async def run_research(
             print(f"  {c('curating schema...', DIM)}", end="\r")
             artifact = await agent(CuratorAgent).run(artifact)
             print(" " * 40, end="\r")
+            # The curator may rewrite description + metadata['capability'];
+            # persist so arc_record.json (and the GitHub publish) carry them.
+            try:
+                workflow.artifacts.save(artifact)
+            except Exception:  # noqa: BLE001 — persistence is best-effort
+                pass
+            cap = (artifact.metadata or {}).get("capability")
+            if isinstance(cap, dict) and cap.get("summary"):
+                step("Capability", textwrap.fill(
+                    cap["summary"], 60, subsequent_indent=" " * 16))
             registry = ctx.memory.get("schema_registry", {})
             if registry:
                 ok(f"Schema registry: {c(list(registry.keys()), DIM)}")
@@ -1240,6 +1332,8 @@ async def run_research(
             # Save for later iterations
             ctx.memory["current_artifact"] = artifact
             ctx.memory["current_plan"] = plan
+            # One-shot: don't let an adaptation seed leak into the next build.
+            ctx.memory.pop("adapt_from_artifact", None)
             _stamp_planner_provenance(workflow, plan)
     else:
         # ── Reuse existing artifact, optionally re-plan for a refinement ───

@@ -25,9 +25,28 @@ def test_markdown_skill_bundle_lists_and_reads_resources(tmp_path):
     skill = MarkdownSkill("demo", skill_path, skill_path.read_text(encoding="utf-8"))
 
     assert skill.bundle_root == str(skill_dir)
+    assert skill._content is None
     assert skill.list_resources("references") == ["references/schema.md"]
     assert "scripts/export.py" in skill.metadata["resources"]
     assert skill.read_resource("references/schema.md") == "schema"
+
+
+def test_markdown_skill_loads_instructions_only_on_activation(tmp_path):
+    skill_dir = tmp_path / "lazy"
+    skill_dir.mkdir()
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(
+        "---\nname: lazy\ndescription: Lazy skill.\n---\n# Initial\n",
+        encoding="utf-8",
+    )
+    skill = MarkdownSkill("lazy", skill_path)
+    skill_path.write_text(
+        "---\nname: lazy\ndescription: Lazy skill.\n---\n# Updated\n",
+        encoding="utf-8",
+    )
+
+    assert skill._content is None
+    assert "# Updated" in skill.content
 
 
 def test_markdown_skill_bundle_rejects_resource_escape(tmp_path):

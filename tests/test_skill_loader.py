@@ -15,12 +15,10 @@ import pytest
 from arc.chat.skill_loader import (
     MAX_SKILL_BYTES,
     SkillFrontmatter,
-    SkillRecord,
     _discover_one,
     discover_skills,
     parse_frontmatter,
 )
-
 
 pytestmark = pytest.mark.chat
 
@@ -211,6 +209,23 @@ def test_discover_builds_full_map(tmp_path, monkeypatch):
     assert "project-skill" in skills
     assert skills["user-skill"].source == "user"
     assert skills["project-skill"].source == "project"
+
+
+def test_discover_finds_project_skill_bundle(tmp_path, monkeypatch):
+    project_dir = tmp_path / "project"
+    bundle = project_dir / ".arc" / "skills" / "bundle-skill"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "---\nname: bundle-skill\ndescription: Portable bundle.\n---\n# Bundle\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv("ARC_TRUST_PROJECT_SKILLS", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "no-config"))
+
+    skills = discover_skills()
+
+    assert skills["bundle-skill"].path == bundle / "SKILL.md"
 
 
 def test_project_skills_default_off(tmp_path, monkeypatch, caplog):

@@ -335,7 +335,15 @@ class Sim2lBackend(BackendActions):
             "input_schema": in_schema,
             "output_schema": out_schema,
             "auto_approve": True,
-            "metadata": {"workflow_source": source, "source": "arc.backend"},
+            "metadata": {
+                "workflow_source": source,
+                "source": "arc.backend",
+                **(
+                    {"capability": (artifact.metadata or {}).get("capability")}
+                    if isinstance((artifact.metadata or {}).get("capability"), dict)
+                    else {}
+                ),
+            },
         }
         resp = requests.post(
             f"{self._catalog_url}/simulations",

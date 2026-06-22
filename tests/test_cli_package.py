@@ -145,14 +145,17 @@ def test_package_loads_skill_bundle_names_from_frontmatter(tmp_path):
 
 def test_package_validate_accepts_explicit_skill_manifest_name(tmp_path):
     target = tmp_path / "arc-explicit-skill"
-    (target / "skills" / "bundle").mkdir(parents=True)
-    (target / "skills" / "bundle" / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
+    (target / "skills" / "explicit-skill").mkdir(parents=True)
+    (target / "skills" / "explicit-skill" / "SKILL.md").write_text(
+        "---\nname: explicit-skill\ndescription: Explicit skill.\n---\n# Skill\n",
+        encoding="utf-8",
+    )
     (target / "package.yaml").write_text(
         "name: arc-explicit-skill\n"
         "provides:\n"
-        "  skills:\n"
-        "    - name: explicit-skill\n"
-        "      path: skills/bundle/SKILL.md\n",
+    "  skills:\n"
+    "    - name: explicit-skill\n"
+    "      path: skills/explicit-skill/SKILL.md\n",
         encoding="utf-8",
     )
 
@@ -167,13 +170,34 @@ def test_package_validate_accepts_explicit_skill_manifest_name(tmp_path):
     assert "OK: arc-explicit-skill" in result.stdout
 
 
+def test_package_validate_rejects_bundle_manifest_alias(tmp_path):
+    target = tmp_path / "arc-bundle-alias"
+    bundle = target / "skills" / "canonical-name"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "---\nname: canonical-name\ndescription: Canonical identity.\n---\n# Skill\n",
+        encoding="utf-8",
+    )
+    (target / "package.yaml").write_text(
+        "name: arc-bundle-alias\nprovides:\n  skills:\n"
+        "    - name: different-name\n"
+        "      path: skills/canonical-name/SKILL.md\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 1
+    assert "must match bundle name 'canonical-name'" in _all_output(result)
+
+
 def test_package_validate_rejects_duplicate_resolved_skill_names(tmp_path):
     target = tmp_path / "arc-duplicate-skills"
     for path in ("skills/a", "skills/b"):
         bundle = target / path
         bundle.mkdir(parents=True)
         (bundle / "SKILL.md").write_text(
-            "---\nname: duplicate-skill\n---\n\n# Duplicate\n",
+            "---\nname: duplicate-skill\ndescription: Duplicate.\n---\n\n# Duplicate\n",
             encoding="utf-8",
         )
     (target / "package.yaml").write_text(
@@ -189,6 +213,28 @@ def test_package_validate_rejects_duplicate_resolved_skill_names(tmp_path):
 
     assert result.exit_code == 1
     assert "duplicate skill name after resolution: duplicate-skill" in _all_output(result)
+
+
+def test_package_validate_rejects_invalid_canonical_skill_bundle(tmp_path):
+    target = tmp_path / "arc-invalid-bundle"
+    bundle = target / "skills" / "wrong-directory"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "---\nname: valid-name\n---\n# Missing description\n",
+        encoding="utf-8",
+    )
+    (target / "package.yaml").write_text(
+        "name: arc-invalid-bundle\nprovides:\n  skills:\n"
+        "    - skills/wrong-directory/SKILL.md\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(app, ["package", "validate", str(target)])
+
+    assert result.exit_code == 1
+    output = _all_output(result)
+    assert "must match skill name" in output
+    assert "must declare description" in output
 
 
 def test_package_validate_rejects_missing_declared_path(tmp_path):

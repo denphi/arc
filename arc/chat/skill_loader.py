@@ -35,7 +35,6 @@ from typing import Optional
 
 import yaml
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -245,6 +244,14 @@ def _discover_one(path: Path, source: str) -> SkillRecord | None:
     )
 
 
+def _skill_paths(root: Path) -> list[Path]:
+    """Discover legacy flat skills and canonical bundle entry files."""
+    return sorted(
+        [*root.glob("*.md"), *root.glob("*/SKILL.md")],
+        key=lambda path: (path.parent.name if path.name == "SKILL.md" else path.stem),
+    )
+
+
 def _extract_description_fallback(body: str) -> str:
     """For skills without frontmatter: look for a ``## Description`` block."""
     marker = "## Description"
@@ -284,7 +291,7 @@ def discover_skills(
         # Soft warning if a .arc/skills/ is sitting in CWD but disabled,
         # so the user knows it exists and can opt in.
         proj = _project_skills_dir()
-        if proj.exists() and any(proj.glob("*.md")):
+        if proj.exists() and _skill_paths(proj):
             logger.warning(
                 "project-local skills in %s are disabled by default; set "
                 "ARC_TRUST_PROJECT_SKILLS=1 to load them",
@@ -294,7 +301,7 @@ def discover_skills(
     for source, root in sources:
         if not root.exists():
             continue
-        for path in sorted(root.glob("*.md")):
+        for path in _skill_paths(root):
             rec = _discover_one(path, source)
             if rec is not None:
                 by_source[source].append(rec)
@@ -302,7 +309,7 @@ def discover_skills(
     for extra_root in (extra_dirs or []):
         if not extra_root.exists():
             continue
-        for path in sorted(extra_root.glob("*.md")):
+        for path in _skill_paths(extra_root):
             rec = _discover_one(path, "extra")
             if rec is not None:
                 by_source.setdefault("extra", []).append(rec)

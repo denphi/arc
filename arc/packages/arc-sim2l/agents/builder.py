@@ -386,6 +386,25 @@ class Sim2LBuilderAgent(AgentContract):
                 + "\nDo not rename them, do not add extra keys not in this list.\n"
             )
 
+        # When the user chose to *adapt* a catalog artifact, give the model
+        # that artifact's source as a starting point so it improves an
+        # existing implementation rather than writing one from scratch.
+        adapt_hint = ""
+        adapt = self.context.memory.get("adapt_from_artifact")
+        if isinstance(adapt, dict) and (adapt.get("workflow_source") or "").strip():
+            cap = adapt.get("capability") or {}
+            cap_line = (cap.get("summary") if isinstance(cap, dict) else "") or adapt.get("description", "")
+            adapt_hint = (
+                "\nADAPT AN EXISTING ARTIFACT — start from the reference "
+                f"implementation below (catalog artifact '{adapt.get('name', '')}'"
+                + (f": {cap_line}" if cap_line else "")
+                + "). Reuse its structure and correct logic; modify only what the "
+                "objective and required outputs demand. Do not regress working code.\n"
+                "```python\n"
+                + adapt["workflow_source"][:6000]
+                + "\n```\n"
+            )
+
         if provider:
             prompt = _WORKFLOW_PROMPT.format(
                 objective=plan.proposal.objective[:300],
@@ -393,7 +412,7 @@ class Sim2LBuilderAgent(AgentContract):
                 parameters=plan.parameters,
                 target=target or "none specified",
                 build_context=render_build_contexts(getattr(plan, "build_contexts", [])),
-            ) + required_hint + canonical_hint
+            ) + required_hint + canonical_hint + adapt_hint
             try:
                 code = await provider.complete(prompt)
                 code = _strip_fences(code)

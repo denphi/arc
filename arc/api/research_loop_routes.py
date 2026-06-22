@@ -20,17 +20,15 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from arc.api.security import require_api_token
 from arc.api.session_state import load_state, save_state
 from arc.session import session_paths, validate_session_id
-
 
 logger = logging.getLogger(__name__)
 
@@ -435,19 +433,21 @@ def show_cluster_endpoint(signature: str, session_id: str) -> dict[str, Any]:
 
 
 def _read_skill_files(target: Path) -> list[dict[str, Any]]:
-    """Helper: enumerate every ``*.md`` in ``target`` with its H1."""
+    """Helper: enumerate legacy files and canonical bundles with their H1."""
     import re
+
+    from arc.core.skill_library import list_skill_entries, skill_entry_name
     h1 = re.compile(r"^#\s+([^\n]+)", re.MULTILINE)
     items: list[dict[str, Any]] = []
-    for path in sorted(target.glob("*.md")):
+    for path in list_skill_entries(target):
         try:
             body = path.read_text(encoding="utf-8")
         except OSError:
             continue
         match = h1.search(body)
         items.append({
-            "name": path.stem,
-            "filename": path.name,
+            "name": skill_entry_name(path),
+            "filename": str(path.relative_to(target)),
             "h1": match.group(1).strip() if match else "",
         })
     return items
@@ -472,22 +472,27 @@ def show_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
     target = _session_skills_dir(session_id)
     if target is None:
         raise HTTPException(status_code=404, detail="no skills dir for session")
-    candidates = sorted(target.glob("*.md"))
-    exact = next((p for p in candidates if p.stem == name), None)
+    from arc.core.skill_library import list_skill_entries, skill_entry_name
+    candidates = list_skill_entries(target)
+    exact = next((p for p in candidates if skill_entry_name(p) == name), None)
     if exact is None:
-        prefix = [p for p in candidates if p.stem.startswith(name)]
+        prefix = [p for p in candidates if skill_entry_name(p).startswith(name)]
         if len(prefix) == 1:
             exact = prefix[0]
         elif len(prefix) > 1:
             raise HTTPException(
                 status_code=409,
                 detail=f"{name!r} matches multiple skills: "
-                       f"{[p.stem for p in prefix]}",
+                       f"{[skill_entry_name(p) for p in prefix]}",
             )
         else:
             raise HTTPException(status_code=404, detail=f"no skill: {name}")
     body = exact.read_text(encoding="utf-8")
-    return {"name": exact.stem, "filename": exact.name, "body": body}
+    return {
+        "name": skill_entry_name(exact),
+        "filename": str(exact.relative_to(target)),
+        "body": body,
+    }
 
 
 @router.delete("/skills/{name}")
@@ -496,27 +501,28 @@ def delete_skill_endpoint(name: str, session_id: str) -> dict[str, Any]:
     target = _session_skills_dir(session_id)
     if target is None:
         raise HTTPException(status_code=404, detail="no skills dir for session")
-    candidates = sorted(target.glob("*.md"))
-    match = next((p for p in candidates if p.stem == name), None)
+    from arc.core.skill_library import delete_skill_entry, list_skill_entries, skill_entry_name
+    candidates = list_skill_entries(target)
+    match = next((p for p in candidates if skill_entry_name(p) == name), None)
     if match is None:
-        prefix = [p for p in candidates if p.stem.startswith(name)]
+        prefix = [p for p in candidates if skill_entry_name(p).startswith(name)]
         if len(prefix) == 1:
             match = prefix[0]
         elif len(prefix) > 1:
             raise HTTPException(
                 status_code=409,
                 detail=f"{name!r} matches multiple skills: "
-                       f"{[p.stem for p in prefix]}",
+                       f"{[skill_entry_name(p) for p in prefix]}",
             )
         else:
             raise HTTPException(status_code=404, detail=f"no skill: {name}")
     try:
-        match.unlink()
+        delete_skill_entry(match)
     except OSError as exc:
         # Don't leak the filesystem path / OS detail to the client.
         logger.warning("Failed to delete skill %r: %s", name, exc)
         raise HTTPException(status_code=500, detail="Failed to delete skill")
-    return {"deleted": match.stem, "filename": match.name}
+    return {"deleted": skill_entry_name(match), "filename": match.name}
 
 
 class SkillTransferRequest(BaseModel):
@@ -536,30 +542,15 @@ def _transfer_skills(
     skipped_same: list[str] = []
     skipped_conflict: list[str] = []
     overwritten: list[str] = []
-    for src_path in sorted(src.glob("*.md")):
+    from arc.core.skill_library import copy_skill_entry, list_skill_entries, skill_entry_name
+    for src_path in list_skill_entries(src):
+        name = skill_entry_name(src_path)
         try:
-            body = src_path.read_text(encoding="utf-8")
+            status = copy_skill_entry(src_path, dst, force=force)
         except OSError:
             continue
-        dst_path = dst / src_path.name
-        if dst_path.exists():
-            try:
-                existing = dst_path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            if existing == body:
-                skipped_same.append(src_path.stem)
-                continue
-            if not force:
-                skipped_conflict.append(src_path.stem)
-                continue
-            overwritten.append(src_path.stem)
-        try:
-            dst_path.write_text(body, encoding="utf-8")
-        except OSError:
-            continue
-        if src_path.stem not in overwritten:
-            copied.append(src_path.stem)
+        {"copied": copied, "same": skipped_same, "conflict": skipped_conflict,
+         "overwritten": overwritten}[status].append(name)
     return {
         "copied": copied,
         "overwritten": overwritten,
@@ -577,7 +568,8 @@ def export_skills_endpoint(
     src = _session_skills_dir(session_id)
     if src is None:
         raise HTTPException(status_code=404, detail="no skills dir for session")
-    if not list(src.glob("*.md")):
+    from arc.core.skill_library import list_skill_entries
+    if not list_skill_entries(src):
         return {"src": str(src), "dst": None, "copied": [],
                 "overwritten": [], "skipped_same": [], "skipped_conflict": []}
     dst = _resolve_skill_transfer_dir(body.target)
@@ -596,7 +588,8 @@ def import_skills_endpoint(
         raise HTTPException(
             status_code=404, detail=f"source does not exist: {src}",
         )
-    if not list(src.glob("*.md")):
+    from arc.core.skill_library import list_skill_entries
+    if not list_skill_entries(src):
         return {"src": str(src), "dst": None, "copied": [],
                 "overwritten": [], "skipped_same": [], "skipped_conflict": []}
     dst = _session_skills_dir(session_id, create=True)

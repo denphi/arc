@@ -13,7 +13,7 @@ dict reachable via ``context.memory["failure_clusters"]``.
 from __future__ import annotations
 
 import asyncio
-import math
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +22,6 @@ import pytest
 
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
-
 
 pytestmark = pytest.mark.chat
 
@@ -151,10 +150,10 @@ def test_skill_extracting_writes_file_on_approval(tmp_session_root):
     lessons = asyncio.run(cls(context=ctx).run(review, execution=_exec()))
 
     learned = _learned_dir(tmp_session_root, "test-session-write")
-    files = list(learned.glob("*.md"))
+    files = list(learned.glob("*/SKILL.md"))
     assert len(files) == 1
     body = files[0].read_text()
-    assert "learned_skill" in body
+    assert "validated: true" in body
     assert "design silicon nanowire" in body
     assert "approved" in body
     assert "execution completed" in body
@@ -163,7 +162,7 @@ def test_skill_extracting_writes_file_on_approval(tmp_session_root):
 
 
 def test_skill_extracting_writes_file_on_actionable_failure(tmp_session_root):
-    """Not approved + weaknesses + recommendations → still worth a skill."""
+    """Failures become candidates, not reusable skills."""
     cls = _resolve("skill_extracting")
     ctx = _ctx({"primary_goal": "study x"}, session_id="test-actionable")
     review = _review(
@@ -171,13 +170,17 @@ def test_skill_extracting_writes_file_on_actionable_failure(tmp_session_root):
         weaknesses=["bandgap missed by 30%"],
         recommendations=["lower temperature"],
     )
-    asyncio.run(cls(context=ctx).run(review, execution=_exec()))
+    lessons = asyncio.run(cls(context=ctx).run(review, execution=_exec()))
 
-    files = list(_learned_dir(tmp_session_root, "test-actionable").glob("*.md"))
+    learned = _learned_dir(tmp_session_root, "test-actionable")
+    assert not learned.exists() or list(learned.glob("*/SKILL.md")) == []
+    candidates = tmp_session_root / "test-actionable" / "skills" / "candidates"
+    files = list(candidates.glob("*.json"))
     assert len(files) == 1
     body = files[0].read_text()
     assert "bandgap missed by 30%" in body
     assert "lower temperature" in body
+    assert lessons.get("skill_candidate_file") == str(files[0])
 
 
 def test_skill_extracting_skips_empty_review(tmp_session_root):
@@ -188,7 +191,7 @@ def test_skill_extracting_skips_empty_review(tmp_session_root):
     asyncio.run(cls(context=ctx).run(_review(), execution=_exec()))
     learned = _learned_dir(tmp_session_root, "test-empty")
     if learned.exists():
-        assert list(learned.glob("*.md")) == []
+        assert list(learned.glob("*/SKILL.md")) == []
 
 
 def test_skill_extracting_filename_is_stable_across_runs(tmp_session_root):
@@ -203,8 +206,35 @@ def test_skill_extracting_filename_is_stable_across_runs(tmp_session_root):
     asyncio.run(cls(context=ctx).run(review, execution=_exec()))
     asyncio.run(cls(context=ctx).run(review, execution=_exec()))
 
-    files = list(_learned_dir(tmp_session_root, "test-stable").glob("*.md"))
+    files = list(_learned_dir(tmp_session_root, "test-stable").glob("*/SKILL.md"))
     assert len(files) == 1
+
+
+def test_skill_extracting_promotes_matching_candidate_with_evidence(tmp_session_root):
+    cls = _resolve("skill_extracting")
+    ctx = _ctx({"primary_goal": "study x"}, session_id="test-promotion")
+    failure = _review(
+        approved=False,
+        weaknesses=["temperature was too high"],
+        recommendations=["lower temperature"],
+    )
+    asyncio.run(cls(context=ctx).run(failure, execution=_exec()))
+
+    success = _review(approved=True, summary="target reached", strengths=["stable result"])
+    lessons = asyncio.run(cls(context=ctx).run(success, execution=_exec()))
+
+    skill_path = Path(lessons["skill_file"])
+    body = skill_path.read_text(encoding="utf-8")
+    from arc.core.skill_bundle import validate_skill_bundle
+    assert validate_skill_bundle(skill_path) == []
+    assert "lower temperature" in body
+    assert "temperature was too high" in body
+    assert lessons["skill_evidence"] != "approved_run"
+    candidate_file = next(
+        (tmp_session_root / "test-promotion" / "skills" / "candidates").glob("*.json")
+    )
+    candidate = json.loads(candidate_file.read_text(encoding="utf-8"))
+    assert candidate["promoted_to"] == skill_path.parent.name
 
 
 def test_skill_extracting_swallows_disk_errors(monkeypatch):

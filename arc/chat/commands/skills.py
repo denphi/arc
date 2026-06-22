@@ -24,7 +24,6 @@ from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
 from arc.chat.ui import BOLD, CYAN, DIM, GREEN, RED, c, err, header, ok, step, warn
 
-
 _H1_RE = re.compile(r"^#\s+([^\n]+)", re.MULTILINE)
 
 
@@ -67,7 +66,13 @@ def _ensure_skills_dir(state: ChatState) -> Path | None:
 
 
 def _list_files(target: Path) -> list[Path]:
-    return sorted(target.glob("*.md"))
+    from arc.core.skill_library import list_skill_entries
+    return list_skill_entries(target)
+
+
+def _entry_name(path: Path) -> str:
+    from arc.core.skill_library import skill_entry_name
+    return skill_entry_name(path)
 
 
 def _first_h1(text: str) -> str:
@@ -79,10 +84,10 @@ def _match(files: list[Path], name: str) -> Path | list[Path]:
     """Resolve ``name`` to a single file. Returns the file on a unique
     match, or the list of candidates on an ambiguous prefix."""
     stem_name = name.removesuffix(".md")
-    exact = [p for p in files if p.stem == stem_name]
+    exact = [p for p in files if _entry_name(p) == stem_name]
     if exact:
         return exact[0]
-    prefix = [p for p in files if p.stem.startswith(stem_name)]
+    prefix = [p for p in files if _entry_name(p).startswith(stem_name)]
     if len(prefix) == 1:
         return prefix[0]
     return prefix
@@ -110,7 +115,7 @@ def _list(state: ChatState) -> None:
         except OSError:
             head = "(unreadable)"
         # Indent + colour. Use file stem (no .md) as the user-facing handle.
-        print(f"  {c(path.stem, CYAN, BOLD)}")
+        print(f"  {c(_entry_name(path), CYAN, BOLD)}")
         if head:
             print(f"    {c(head, DIM)}")
     print()
@@ -139,7 +144,7 @@ def _show(state: ChatState, name: str) -> None:
         err(f"Could not read {match.name}: {exc}")
         return
 
-    header(f"Skill: {match.stem}")
+    header(f"Skill: {_entry_name(match)}")
     print(c(f"  {match}", DIM))
     print()
     for line in body.splitlines():
@@ -188,33 +193,16 @@ def _export(state: ChatState, target_arg: str | None, *, force: bool) -> None:
     skipped_conflict: list[str] = []
     overwritten: list[str] = []
 
+    from arc.core.skill_library import copy_skill_entry
     for src in files:
+        name = _entry_name(src)
         try:
-            body = src.read_text(encoding="utf-8")
+            status = copy_skill_entry(src, target, force=force)
         except OSError as exc:
-            err(f"Could not read {src.name}: {exc}")
+            err(f"Could not export {name}: {exc}")
             continue
-        dst = target / src.name
-        if dst.exists():
-            try:
-                existing = dst.read_text(encoding="utf-8")
-            except OSError as exc:
-                err(f"Could not read existing {dst.name}: {exc}")
-                continue
-            if existing == body:
-                skipped_same.append(src.stem)
-                continue
-            if not force:
-                skipped_conflict.append(src.stem)
-                continue
-            overwritten.append(src.stem)
-        try:
-            dst.write_text(body, encoding="utf-8")
-        except OSError as exc:
-            err(f"Could not write {dst.name}: {exc}")
-            continue
-        if src.stem not in overwritten:
-            copied.append(src.stem)
+        {"copied": copied, "same": skipped_same, "conflict": skipped_conflict,
+         "overwritten": overwritten}[status].append(name)
 
     ok(f"Exported to {c(str(target), CYAN)}")
     if copied:
@@ -277,33 +265,16 @@ def _import(state: ChatState, source_arg: str | None, *, force: bool) -> None:
     skipped_conflict: list[str] = []
     overwritten: list[str] = []
 
+    from arc.core.skill_library import copy_skill_entry
     for src in incoming:
+        name = _entry_name(src)
         try:
-            body = src.read_text(encoding="utf-8")
+            status = copy_skill_entry(src, target, force=force)
         except OSError as exc:
-            err(f"Could not read {src.name}: {exc}")
+            err(f"Could not import {name}: {exc}")
             continue
-        dst = target / src.name
-        if dst.exists():
-            try:
-                existing = dst.read_text(encoding="utf-8")
-            except OSError as exc:
-                err(f"Could not read existing {dst.name}: {exc}")
-                continue
-            if existing == body:
-                skipped_same.append(src.stem)
-                continue
-            if not force:
-                skipped_conflict.append(src.stem)
-                continue
-            overwritten.append(src.stem)
-        try:
-            dst.write_text(body, encoding="utf-8")
-        except OSError as exc:
-            err(f"Could not write {dst.name}: {exc}")
-            continue
-        if src.stem not in overwritten:
-            copied.append(src.stem)
+        {"copied": copied, "same": skipped_same, "conflict": skipped_conflict,
+         "overwritten": overwritten}[status].append(name)
 
     ok(f"Imported into {c(str(target), CYAN)}")
     step("From", str(source))
@@ -346,7 +317,7 @@ async def _delete(state: ChatState, name: str) -> None:
     # Destructive — confirm. The y/N prompt mirrors the rest of the chat UX.
     try:
         confirm = (await chat_input_async(
-            c(f"  Delete {match.stem}? [y / N] > ", BOLD)
+            c(f"  Delete {_entry_name(match)}? [y / N] > ", BOLD)
         )).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
@@ -356,11 +327,12 @@ async def _delete(state: ChatState, name: str) -> None:
         return
 
     try:
-        match.unlink()
+        from arc.core.skill_library import delete_skill_entry
+        delete_skill_entry(match)
     except OSError as exc:
         err(f"Could not delete {match.name}: {exc}")
         return
-    ok(f"Removed {c(match.stem, CYAN)}")
+    ok(f"Removed {c(_entry_name(match), CYAN)}")
 
 
 async def run(state: ChatState, argv: list[str]) -> None:
