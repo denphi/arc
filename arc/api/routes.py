@@ -433,11 +433,11 @@ async def list_models(llm: LLMConfig) -> list[str]:
     # before constructing, then resolve through the package-aware factory
     # and ask the provider itself for its models — no per-provider ladder.
     safe_url = validate_provider_base_url(llm.base_url) if llm.base_url else None
-    from arc.orchestrator.workflow import _default_registry
+    from arc.orchestrator.workflow import default_registry
     from arc.providers import build_provider
     provider = build_provider(
         llm.provider, token=llm.token, model=llm.model, base_url=safe_url,
-        registry=_default_registry(),
+        registry=default_registry(),
     )
     lister = getattr(provider, "list_models", None) if provider else None
     if callable(lister):

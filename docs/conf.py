@@ -122,8 +122,8 @@ html_theme_options = {
 }
 
 # Keep the build resilient while content is in progress: warn but don't fail
-# on missing cross-refs. Tighten via nitpicky once the tree is complete
-# (doc_todo.md B1).
+# on missing cross-refs. The tree is complete and builds clean under -W, so
+# nitpicky = True is now a reasonable next tightening step.
 nitpicky = False
 # The docs use proper ``{doc}`` targets, so the missing-xref suppression is no
 # longer needed. We keep only:

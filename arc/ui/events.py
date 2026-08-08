@@ -1,7 +1,7 @@
 """UI event model + a tiny in-process pub/sub for Server-Sent Events.
 
 The terminal chat has its own structured events in ``arc.chat.events``, but
-the UI must not depend on chat (see ``ui_todo.md``). This is a deliberately
+the UI must not depend on chat — a deliberate boundary. This is a
 small, chat-independent event surface: a workflow/job records phase starts,
 phase ends, warnings, generated artifacts, execution results, and review
 summaries; the SSE route drains them to the browser, which renders

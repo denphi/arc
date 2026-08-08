@@ -76,6 +76,15 @@ entrypoint = "arc.packages.arc-mcp.extension:McpExtension"
 
 
 def test_registry_resolves_agent_by_package_source():
+    """A contested bare name goes to the first registrant and stays there.
+
+    ``coder`` is provided by both arc-codex and arc-claude-code, and ``ideator``
+    by both arc-sim2l and arc-coscientist. Under last-wins, which one a bare
+    ``get_agent("coder")`` returned was decided by the order of
+    ``[packages].paths`` in arc.toml — reordering that list, an edit that reads
+    as cosmetic, silently swapped the agent. Every provider stays reachable
+    through the explicit ``package:name`` form.
+    """
     class FirstAgent:
         pass
 
@@ -86,7 +95,65 @@ def test_registry_resolves_agent_by_package_source():
     registry.register_agent("coder", FirstAgent, package_name="arc-codex")
     registry.register_agent("coder", SecondAgent, package_name="arc-claude-code")
 
-    assert registry.get_agent("coder") is SecondAgent
+    assert registry.get_agent("coder") is FirstAgent
     assert registry.get_agent("coder", package_name="arc-codex") is FirstAgent
+    assert registry.get_agent("coder", package_name="arc-claude-code") is SecondAgent
     assert registry.get_agent("arc-codex:coder") is FirstAgent
+    assert registry.get_agent("arc-claude-code:coder") is SecondAgent
     assert registry.list_agent_sources("coder") == ["arc-codex", "arc-claude-code"]
+
+
+def test_registry_bare_agent_name_is_independent_of_registration_order():
+    """Loading the same two packages in either order yields the same bare name."""
+    class Codex:
+        pass
+
+    class ClaudeCode:
+        pass
+
+    forward = ComponentRegistry()
+    forward.register_agent("coder", Codex, package_name="arc-codex")
+    forward.register_agent("coder", ClaudeCode, package_name="arc-claude-code")
+
+    reverse = ComponentRegistry()
+    reverse.register_agent("coder", ClaudeCode, package_name="arc-claude-code")
+    reverse.register_agent("coder", Codex, package_name="arc-codex")
+
+    # Each registry keeps whichever package it saw first — the point is that a
+    # bare lookup is a stable function of the load set, not of a later
+    # registration silently overwriting an earlier one.
+    assert forward.get_agent("coder") is Codex
+    assert reverse.get_agent("coder") is ClaudeCode
+    # …and both providers stay addressable in both registries.
+    for registry in (forward, reverse):
+        assert registry.get_agent("arc-codex:coder") is Codex
+        assert registry.get_agent("arc-claude-code:coder") is ClaudeCode
+
+
+def test_disabled_agent_falls_back_to_another_providing_package():
+    """Disabling one provider must not hide a name another package supplies.
+
+    ``_agent_sources`` already held the alternative; the lookup just didn't
+    consult it, so ``/package disable arc-coscientist`` made ``ideator``
+    unresolvable even though arc-sim2l provides one.
+    """
+    class Sim2lIdeator:
+        pass
+
+    class CoScientistIdeator:
+        pass
+
+    registry = ComponentRegistry()
+    registry.register_agent("ideator", Sim2lIdeator, package_name="arc-sim2l")
+    registry.register_agent("ideator", CoScientistIdeator, package_name="arc-coscientist")
+
+    assert registry.get_agent("ideator") is Sim2lIdeator
+    # Disabling the bare-name owner falls through to the other provider.
+    assert registry.get_agent(
+        "ideator", disabled_packages={"arc-sim2l"},
+    ) is CoScientistIdeator
+    # Disabling every provider is still a KeyError.
+    with pytest.raises(KeyError):
+        registry.get_agent(
+            "ideator", disabled_packages={"arc-sim2l", "arc-coscientist"},
+        )

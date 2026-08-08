@@ -142,8 +142,8 @@ def _instantiate_adapter(adapter_class, db_path: str | None = None, session_id: 
 logger = logging.getLogger(__name__)
 
 
-def _default_registry() -> ComponentRegistry:
-    """Build the registry used when a caller doesn't inject one.
+def _build_default_registry() -> ComponentRegistry:
+    """Load every enabled package into a fresh registry.
 
     Loads the same ``arc.toml`` the kernel uses (cached via
     ``arc.core.config.load_arc_toml``), resolves its package paths, applies
@@ -161,6 +161,55 @@ def _default_registry() -> ComponentRegistry:
     package_config = config.get("packages", {}) if config else {}
     load_packages(filter_package_paths(package_paths, package_config), registry)
     return registry
+
+
+# (config path, config mtime) → a prototype registry loaded from it. Building
+# one costs ~45 ms (fourteen manifests plus every skill and workflow file), and
+# ResearchWorkflow builds a registry per construction — which the browser UI
+# does once per request, in eight places. The mtime tag matches the key
+# `arc.core.config._cached_load_toml` uses, so editing arc.toml still takes
+# effect without a restart. Callers get a `clone()`, never the prototype, so
+# per-workflow registrations stay isolated.
+_REGISTRY_CACHE: dict[tuple[str, int], ComponentRegistry] = {}
+
+
+def _default_registry(*, refresh: bool = False) -> ComponentRegistry:
+    """A registry for callers that don't inject one.
+
+    Loaded once per ``arc.toml`` (path + mtime) and handed out as an isolated
+    clone. Pass ``refresh=True`` to force a reload — for tests that change
+    package state on disk mid-process.
+    """
+    try:
+        config_path, _ = load_arc_toml()
+        key = (str(config_path.resolve()), config_path.stat().st_mtime_ns)
+    except OSError:  # pragma: no cover — no readable arc.toml; don't cache
+        return _build_default_registry()
+
+    if refresh:
+        _REGISTRY_CACHE.pop(key, None)
+    prototype = _REGISTRY_CACHE.get(key)
+    if prototype is None:
+        prototype = _build_default_registry()
+        # Keep only the current config's entry — this is a process-wide
+        # default, not a multi-tenant cache.
+        _REGISTRY_CACHE.clear()
+        _REGISTRY_CACHE[key] = prototype
+    return prototype.clone()
+
+
+def default_registry(*, refresh: bool = False) -> ComponentRegistry:
+    """Public accessor for the default package registry.
+
+    Callers outside the orchestrator (``arc.api.routes``) were importing the
+    private ``_default_registry``; this is the supported name.
+    """
+    return _default_registry(refresh=refresh)
+
+
+def reset_default_registry() -> None:
+    """Drop the cached prototype registry (test teardown / package reinstall)."""
+    _REGISTRY_CACHE.clear()
 
 
 def _resolve_package_config(registry: ComponentRegistry) -> dict[str, Any]:

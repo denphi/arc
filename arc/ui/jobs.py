@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable
 
 from arc.ui.events import EventStream
 
-# Job lifecycle states (mirrors ui_todo.md).
+# Job lifecycle states.
 QUEUED = "queued"
 RUNNING = "running"
 COMPLETED = "completed"

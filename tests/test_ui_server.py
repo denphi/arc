@@ -1,6 +1,7 @@
 """Smoke tests for the standalone ARC browser UI."""
 
 import ast
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,7 +65,9 @@ def test_ui_config_round_trip_preserves_env_file(monkeypatch, tmp_path):
     assert initial.status_code == 200
     assert initial.json()["path"] == str(env_path)
     assert initial.json()["values"]["ARC_PROVIDER"] == "stub"
-    assert initial.json()["extra"] == {"UNCHANGED": "value"}
+    # `extra` reports the *names* of unrecognised keys, never their values —
+    # an unknown key is as likely to hold a credential as a known one.
+    assert initial.json()["extra"] == ["UNCHANGED"]
 
     try:
         updated = client.put(
@@ -88,6 +91,84 @@ def test_ui_config_round_trip_preserves_env_file(monkeypatch, tmp_path):
     finally:
         for key in ("ARC_PROVIDER", "ARC_MODEL", "OPENWEBUI_URL"):
             monkeypatch.delenv(key, raising=False)
+        _reload_security()
+
+
+def test_ui_config_never_discloses_secret_values(monkeypatch, tmp_path):
+    """GET /api/config must not return credentials.
+
+    The endpoint is reachable with no bearer token when ARC_API_TOKEN is unset
+    (the documented default-open posture) and the UI can be bound beyond
+    loopback, so returning values verbatim published the whole .env.
+    """
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ARC_PROVIDER=openai\n"
+        "OPENAI_API_KEY=sk-secret-value-9999\n"
+        "ANTHROPIC_API_KEY=sk-ant-hidden-1234\n"
+        "SOME_OTHER_TOKEN=also-secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARC_UI_ENV_PATH", str(env_path))
+    monkeypatch.delenv("ARC_API_TOKEN", raising=False)
+    _reload_security()
+
+    try:
+        body = TestClient(ui_server.create_app()).get("/api/config")
+        assert body.status_code == 200
+        raw = body.text
+        for secret in ("sk-secret-value-9999", "sk-ant-hidden-1234", "also-secret"):
+            assert secret not in raw
+
+        values = body.json()["values"]
+        assert values["ARC_PROVIDER"] == "openai"        # non-secret: plain
+        assert values["OPENAI_API_KEY"] == {
+            "secret": True, "set": True, "hint": "…9999",
+        }
+        assert values["ANTHROPIC_API_KEY"]["set"] is True
+        assert values["OPENWEBUI_KEY"]["set"] is False   # absent from the file
+        assert body.json()["extra"] == ["SOME_OTHER_TOKEN"]
+    finally:
+        _reload_security()
+
+
+def test_ui_config_write_rejects_keys_outside_the_allowlist(monkeypatch, tmp_path):
+    """PUT /api/config validated key *shape*, not identity.
+
+    ARC_UI_ENV_PATH redirects the writer to an arbitrary file, and the
+    allowlist/private-host pair governs the SSRF policy in arc.api.security.
+    All three must be refused.
+    """
+    env_path = tmp_path / ".env"
+    env_path.write_text("ARC_PROVIDER=stub\n", encoding="utf-8")
+    monkeypatch.setenv("ARC_UI_ENV_PATH", str(env_path))
+    monkeypatch.delenv("ARC_API_TOKEN", raising=False)
+    _reload_security()
+    client = TestClient(ui_server.create_app())
+
+    escape = tmp_path / "escaped" / "written.env"
+    try:
+        for key, value in (
+            ("ARC_UI_ENV_PATH", str(escape)),
+            ("ARC_ALLOW_PRIVATE_PROVIDER_HOSTS", "1"),
+            ("ARC_PROVIDER_ALLOWLIST", "http://169.254.169.254"),
+            ("ARC_API_TOKEN", "attacker-chosen"),
+            ("PATH", "/tmp/evil"),
+        ):
+            response = client.put("/api/config", json={"values": {key: value}})
+            assert response.status_code == 403, f"{key} was accepted"
+            assert key in response.json()["detail"]
+
+        assert not escape.exists()
+        assert "ARC_UI_ENV_PATH" not in env_path.read_text(encoding="utf-8")
+        assert os.environ.get("ARC_ALLOW_PRIVATE_PROVIDER_HOSTS") != "1"
+
+        # The provider settings the form actually offers still write through.
+        ok = client.put("/api/config", json={"values": {"ARC_MODEL": "gpt-test"}})
+        assert ok.status_code == 200
+        assert "ARC_MODEL=gpt-test" in env_path.read_text(encoding="utf-8")
+    finally:
+        monkeypatch.delenv("ARC_MODEL", raising=False)
         _reload_security()
 
 

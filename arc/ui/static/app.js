@@ -12,6 +12,8 @@ const state = {
   activeJobId: null,
   eventSource: null,
   servicesDismissed: false,
+  // Config keys the server masks; filled in by syncConfig from /api/config.
+  secretKeys: new Set(),
 };
 
 const el = {
@@ -299,10 +301,21 @@ async function loadConfig({ silent = false } = {}) {
 function syncConfig(config) {
   el.envPath.textContent = config.path || ".env";
   const values = config.values || {};
+  // The server reports secrets as {secret, set, hint} rather than the value, so
+  // the input stays empty and shows a hint. An empty secret field means "leave
+  // it alone" on save — see saveConfig.
+  state.secretKeys = new Set(config.secret_keys || []);
   for (const field of configFields()) {
     const key = field.dataset.envKey;
-    if (Object.prototype.hasOwnProperty.call(values, key)) {
-      field.value = values[key] || "";
+    if (!Object.prototype.hasOwnProperty.call(values, key)) {
+      continue;
+    }
+    const entry = values[key];
+    if (entry && typeof entry === "object" && entry.secret) {
+      field.value = "";
+      field.placeholder = entry.set ? `saved ${entry.hint}` : "not set";
+    } else {
+      field.value = entry || "";
     }
   }
   const storedToken = window.sessionStorage.getItem("arc.ui.apiToken") || "";
@@ -314,8 +327,17 @@ function syncConfig(config) {
 async function saveConfig(event) {
   event.preventDefault();
   const values = {};
+  const secrets = state.secretKeys || new Set();
   for (const field of configFields()) {
-    values[field.dataset.envKey] = field.value.trim();
+    const key = field.dataset.envKey;
+    const value = field.value.trim();
+    // A secret input renders empty because the server never sends the value
+    // back, so an empty one means "unchanged" — submitting it would clear a
+    // key the user never touched. Non-secret fields keep clear-on-empty.
+    if (!value && secrets.has(key)) {
+      continue;
+    }
+    values[key] = value;
   }
   setBusy(true, "saving");
   try {
@@ -323,7 +345,9 @@ async function saveConfig(event) {
       method: "PUT",
       body: JSON.stringify({ values }),
     });
-    state.authToken = values.ARC_API_TOKEN || "";
+    // The bearer token is this browser's credential for reaching the server;
+    // it lives in sessionStorage and is never part of the .env write.
+    state.authToken = el.apiTokenInput.value.trim();
     if (state.authToken) {
       window.sessionStorage.setItem("arc.ui.apiToken", state.authToken);
     } else {

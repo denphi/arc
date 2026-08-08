@@ -97,6 +97,22 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return (data if isinstance(data, dict) else {}), rest[end + 4:].lstrip("\n")
 
 
+def _parse_allowed_tools(value: Any) -> list[str]:
+    """Normalize the ``allowed-tools`` frontmatter field to a list of names.
+
+    Accepts a YAML list or a string. The string form is split on commas *and*
+    whitespace: splitting on whitespace alone turned the natural
+    ``allowed-tools: Read, Write, Edit`` into ``["Read,", "Write,", "Edit"]``,
+    and a tool name with a trailing comma matches nothing — the skill silently
+    lost the permissions it declared.
+    """
+    if isinstance(value, str):
+        return [item for item in re.split(r"[,\s]+", value.strip()) if item]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
 def load_skill_bundle(path: Path) -> SkillBundle:
     """Load bundle metadata without retaining its instruction body."""
     skill_path = path / "SKILL.md" if path.is_dir() else path
@@ -107,11 +123,7 @@ def load_skill_bundle(path: Path) -> SkillBundle:
     if skill_path.stat().st_size > _MAX_SKILL_BYTES:
         raise ValueError(f"skill instructions exceed {_MAX_SKILL_BYTES} bytes: {skill_path}")
     frontmatter, _ = split_frontmatter(skill_path.read_text(encoding="utf-8"))
-    allowed = frontmatter.get("allowed-tools") or []
-    if isinstance(allowed, str):
-        allowed = [item for item in allowed.split() if item]
-    elif not isinstance(allowed, list):
-        allowed = []
+    allowed = _parse_allowed_tools(frontmatter.get("allowed-tools"))
     metadata = frontmatter.get("metadata") or {}
     extra = {key: value for key, value in frontmatter.items() if key not in _KNOWN_FIELDS}
     return SkillBundle(
@@ -123,7 +135,7 @@ def load_skill_bundle(path: Path) -> SkillBundle:
         compatibility=(
             str(frontmatter["compatibility"]) if frontmatter.get("compatibility") else None
         ),
-        allowed_tools=tuple(str(item) for item in allowed),
+        allowed_tools=tuple(allowed),
         metadata=metadata if isinstance(metadata, dict) else {},
         extra=extra,
     )

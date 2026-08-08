@@ -666,6 +666,10 @@ def _coder_agent_class(workflow: ResearchWorkflow):
     try:
         cls = _core_resolve(
             "builder", overrides=overrides, config=config,
+            # Honour /package disable here too. Without it a disabled coding
+            # package stayed selectable on the one path where that matters
+            # most: these agents shell out to an external CLI.
+            disabled_packages=workflow._disabled_packages(),
             loaded_packages=set(workflow.registry.list_packages()),
         )
     except Exception:  # noqa: BLE001 — never let coder resolution break the build

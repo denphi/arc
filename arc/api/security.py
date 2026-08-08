@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import secrets
 import socket
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -96,6 +97,18 @@ def load_security_config() -> SecurityConfig:
     )
 
 
+def tokens_match(supplied: str | None, expected: str | None) -> bool:
+    """Constant-time bearer-token comparison.
+
+    ``==`` on a token short-circuits at the first differing byte, so response
+    timing leaks a prefix-match oracle to anyone who can send requests. Shared
+    with the UI's SSE dependency so both gates compare the same way.
+    """
+    if not supplied or not expected:
+        return False
+    return secrets.compare_digest(supplied, expected)
+
+
 def require_api_token(authorization: str | None = Header(default=None)) -> None:
     """FastAPI dependency: enforce the bearer token when one is configured.
 
@@ -109,7 +122,7 @@ def require_api_token(authorization: str | None = Header(default=None)) -> None:
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization required")
     parts = authorization.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer" or parts[1] != cfg.token:
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not tokens_match(parts[1], cfg.token):
         # 401 even on bad scheme; clients shouldn't be probing the difference.
         raise HTTPException(status_code=401, detail="Invalid credentials")
 

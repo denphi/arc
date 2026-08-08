@@ -320,19 +320,8 @@
             </label>
             <label>
               API Token
-              <input id="apiTokenInput" data-env-key="ARC_API_TOKEN" type="password" autocomplete="off" />
-            </label>
-            <label>
-              Provider Allowlist
-              <input data-env-key="ARC_PROVIDER_ALLOWLIST" type="text" placeholder="https://genai.rcac.purdue.edu" />
-            </label>
-            <label>
-              Allow Private Hosts
-              <select data-env-key="ARC_ALLOW_PRIVATE_PROVIDER_HOSTS">
-                <option value="">false/default</option>
-                <option value="true">true</option>
-                <option value="1">1</option>
-              </select>
+              <input id="apiTokenInput" type="password" autocomplete="off" />
+              <small class="field-note">Sent with your requests. Kept in this browser only — never written to .env.</small>
             </label>
             <label>
               OpenWebUI URL
@@ -363,6 +352,11 @@
               <input data-env-key="ANTHROPIC_MODEL" type="text" />
             </label>
           </div>
+          <p class="field-note">
+            Security settings (<code>ARC_API_TOKEN</code>, <code>ARC_PROVIDER_ALLOWLIST</code>,
+            <code>ARC_ALLOW_PRIVATE_PROVIDER_HOSTS</code>) are read from the environment or
+            <code>.env</code> and cannot be changed from the browser.
+          </p>
           <div class="modal-actions">
             <button id="cancelConfig" class="secondary-button" type="button">Cancel</button>
             <button id="saveConfig" class="primary-button icon-text-button" type="submit">

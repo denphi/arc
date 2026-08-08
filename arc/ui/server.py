@@ -28,6 +28,7 @@ from arc.api.session_state import load_state, save_state
 from arc.api.security import (
     load_security_config,
     require_api_token,
+    tokens_match,
     validate_provider_base_url,
 )
 from arc.memory.artifact_registry import ArtifactRegistry
@@ -64,6 +65,41 @@ CONFIG_KEYS: tuple[str, ...] = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
 )
+# Keys whose *value* is a credential. The UI reports whether they are set and a
+# short masked tail so an operator can tell which key is loaded — never the
+# value itself. `GET /api/config` is reachable with no bearer token when
+# ARC_API_TOKEN is unset (the documented default-open posture), and the UI can
+# be bound beyond loopback, so returning these verbatim published the whole
+# .env to anyone who could reach the port.
+SECRET_KEYS: frozenset = frozenset({
+    "ARC_API_TOKEN",
+    "OPENWEBUI_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "SIM2L_PASSWORD",
+    "SIM2L_ADMIN_PASSWORD",
+    "GITHUB_TOKEN",
+    "MP_API_KEY",
+})
+
+# Keys the browser may write via `PUT /api/config`. `_clean_env_values` only
+# validated the *shape* of a key name, so any `^[A-Z][A-Z0-9_]*$` string was
+# accepted — including ARC_UI_ENV_PATH (which redirects the writer to an
+# arbitrary file) and the ARC_PROVIDER_ALLOWLIST / ARC_ALLOW_PRIVATE_PROVIDER_HOSTS
+# pair that arc.api.security relies on to block SSRF. Those belong to the
+# operator's environment, not to a form in the browser.
+WRITABLE_CONFIG_KEYS: frozenset = frozenset({
+    "ARC_PROVIDER",
+    "ARC_MODEL",
+    "OPENWEBUI_URL",
+    "OPENWEBUI_KEY",
+    "OPENWEBUI_MODEL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
+})
+
 STATE_KEYS = (
     "strategy_overrides",
     "active_recipe",
@@ -616,8 +652,7 @@ def create_app() -> FastAPI:
     @app.post("/api/workflow/validate", dependencies=auth)
     def validate_workflow(body: WorkflowValidateRequest) -> dict[str, Any]:
         """Dry-run the workflow safety check on draft source — no file write."""
-        from arc.runtime.workflow_safety import check_workflow_source_safe
-        ok, message = check_workflow_source_safe(body.source)
+        ok, message = _check_authored_workflow(body.source)
         return {"valid": ok, "message": message}
 
     @app.post("/api/sessions/{session_id}/artifacts", dependencies=auth)
@@ -626,8 +661,7 @@ def create_app() -> FastAPI:
         # Safety-check any workflow.py before registering it.
         source = body.files.get("workflow.py")
         if source:
-            from arc.runtime.workflow_safety import check_workflow_source_safe
-            ok, message = check_workflow_source_safe(source)
+            ok, message = _check_authored_workflow(source)
             if not ok:
                 raise HTTPException(status_code=400, detail=f"Unsafe workflow: {message}")
         registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
@@ -759,7 +793,11 @@ def _require_token_header_or_query(
     header, so this dependency accepts the bearer token from either the
     header *or* a ``?token=`` query param, validated against the same
     configured ``ARC_API_TOKEN``. Default-open when no token is configured
-    (mirrors ``require_api_token``)."""
+    (mirrors ``require_api_token``).
+
+    Note that a query-param token lands in access logs and referrer headers in
+    a way a header never does. It is accepted only on this streaming route,
+    where ``EventSource`` leaves no alternative."""
     cfg = load_security_config()
     if not cfg.token:
         return
@@ -769,8 +807,22 @@ def _require_token_header_or_query(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             supplied = parts[1]
     supplied = supplied or token
-    if supplied != cfg.token:
+    if not tokens_match(supplied, cfg.token):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+def _check_authored_workflow(source: str) -> tuple[bool, str]:
+    """Safety-check workflow source the user is authoring in the UI.
+
+    Gates on the *executor's* allow-list, not the builder agent's. The builder
+    is narrower because its safe-eval probe can only expose three modules; the
+    UI's create/validate routes aren't running that probe, so applying it here
+    rejected artifacts that would execute fine — ``import statistics`` came
+    back as "Unsafe workflow" despite being in ``STRICT_ALLOWED_IMPORTS``.
+    """
+    from arc.runtime.workflow_safety import STRICT_ALLOWED_IMPORTS, check_workflow_source_safe
+
+    return check_workflow_source_safe(source, allowed_imports=STRICT_ALLOWED_IMPORTS)
 
 
 def _safe_session_id(session_id: str | None) -> str:
@@ -791,24 +843,43 @@ def _config_env_path() -> Path:
     return cwd / ".env"
 
 
+def _mask_secret(value: str) -> str:
+    """Render a credential as a non-recoverable hint.
+
+    Long enough to tell two keys apart in the UI, short enough to be useless
+    to anyone who obtains it: at most the last four characters.
+    """
+    if not value:
+        return ""
+    return f"…{value[-4:]}" if len(value) > 8 else "…"
+
+
 def _config_snapshot() -> dict[str, Any]:
+    """Describe the resolved config without disclosing any credential.
+
+    Secret-valued keys report ``set`` plus a masked tail; everything else
+    reports its literal value. ``extra`` lists only the *names* of other keys
+    found in the file — an unrecognised key is as likely to be a credential as
+    a recognised one, and the UI has no reason to read their values.
+    """
     path = _config_env_path()
     file_values = _read_env_values(path)
-    values = {
-        key: file_values.get(key, os.environ.get(key, ""))
-        for key in CONFIG_KEYS
-    }
-    extra = {
-        key: value
-        for key, value in file_values.items()
-        if key not in CONFIG_KEYS
-    }
+    values: dict[str, Any] = {}
+    for key in CONFIG_KEYS:
+        raw = file_values.get(key, os.environ.get(key, ""))
+        if key in SECRET_KEYS:
+            values[key] = {"secret": True, "set": bool(raw), "hint": _mask_secret(raw)}
+        else:
+            values[key] = raw
     return {
         "path": str(path),
         "exists": path.exists(),
         "keys": list(CONFIG_KEYS),
+        "secret_keys": sorted(SECRET_KEYS & set(CONFIG_KEYS)),
+        "writable_keys": sorted(WRITABLE_CONFIG_KEYS),
         "values": values,
-        "extra": extra,
+        # Names only — never values. See SECRET_KEYS.
+        "extra": sorted(key for key in file_values if key not in CONFIG_KEYS),
     }
 
 
@@ -852,11 +923,28 @@ def _decode_env_value(value: str) -> str:
 
 
 def _clean_env_values(values: dict[str, str | None]) -> dict[str, str]:
+    """Validate a config write against the writable allowlist.
+
+    Shape validation alone is not enough: ``ENV_KEY_RE`` accepts every
+    SCREAMING_SNAKE name, which included the keys that steer where this
+    function's output gets written (``ARC_UI_ENV_PATH``) and the ones that
+    govern the SSRF policy in :mod:`arc.api.security`. Only the provider
+    settings the UI actually offers are writable.
+    """
     cleaned: dict[str, str] = {}
     for raw_key, raw_value in values.items():
         key = str(raw_key).strip()
         if not ENV_KEY_RE.fullmatch(key):
             raise HTTPException(status_code=400, detail=f"Invalid environment key: {raw_key}")
+        if key not in WRITABLE_CONFIG_KEYS:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"{key} is not writable from the UI. Writable keys: "
+                    f"{', '.join(sorted(WRITABLE_CONFIG_KEYS))}. "
+                    "Set anything else in the environment or .env directly."
+                ),
+            )
         value = "" if raw_value is None else str(raw_value).strip()
         if "\n" in value or "\r" in value:
             raise HTTPException(status_code=400, detail=f"Invalid multiline value for {key}")
@@ -1162,11 +1250,16 @@ async def _execute_artifact(
     _hydrate_workflow_state(workflow)
     artifact = _resolve_artifact(workflow.artifacts, artifact_ref, version or "0.1.0")
     await safe_backend_action(workflow.backend, "register_artifact", artifact)
+    # Reconcile the caller's inputs against the artifact's declared schema up
+    # front so the response can report what actually ran, not what was asked
+    # for. ``execute_recorded`` prepares internally too, but ``reconcile_inputs``
+    # is idempotent, so handing it the prepared dict changes nothing downstream.
+    prepared = await workflow.adapter.prepare_inputs(artifact, inputs)
     # Full bookkeeping (audit phases + provenance + save/publish); a
     # blocking execution.before audit gates UI runs like chat/YAML runs.
     from arc.runtime.audit import AuditBlockedError
     try:
-        result = await workflow.execute_recorded(artifact, inputs, action="ui_run")
+        result = await workflow.execute_recorded(artifact, prepared, action="ui_run")
     except AuditBlockedError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     return {
@@ -2049,7 +2142,7 @@ def _save_thread(session_id: str, messages: list[dict[str, Any]]) -> None:
     # (atomic on POSIX + Windows). A concurrent reader (e.g. a second browser
     # tab polling the session) never observes a half-written/truncated file.
     # NB: this prevents *corruption*, not a last-writer-wins race on the whole
-    # list — acceptable for the single-user dev UI; see ui_todo.md.
+    # list — acceptable for the single-user dev UI.
     payload = json.dumps(messages[-200:], indent=2, default=str)
     tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     try:

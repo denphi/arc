@@ -25,11 +25,9 @@ strategy should not break the chat loop.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -693,29 +691,27 @@ def _find_spec(role: str, name: str) -> StrategySpec | None:
 
 
 def _load_spec(spec: StrategySpec) -> Any:
-    """Import the strategy class from its on-disk module path."""
+    """Import the strategy class from its on-disk module path.
+
+    Goes through :mod:`arc.core.module_loader` so a file the package loader has
+    already imported (via a ``package.yaml`` entrypoint) yields the *same*
+    module — and therefore the same class object — rather than a second copy
+    under an ``arc_strategies.*`` name.
+    """
     pkg_root = Path(__file__).resolve().parent.parent / "packages"
-    full_path = Path(spec.file_path) if spec.file_path else pkg_root / spec.package_dir / spec.module_path
+    full_path = (
+        Path(spec.file_path) if spec.file_path
+        else pkg_root / spec.package_dir / spec.module_path
+    )
     if not full_path.exists():
         raise FileNotFoundError(f"Strategy module not found: {full_path}")
-    # Use a stable module name so repeated loads hit sys.modules cache.
+    from arc.core.module_loader import load_module_from_path
+
+    # Historical name, used only when this call is the first to load the file.
     pkg_token = spec.package_dir.replace("-", "_")
-    mod_name = f"arc_strategies.{pkg_token}.{spec.module_path.replace('/', '.').removesuffix('.py')}"
-    if mod_name in sys.modules:
-        module = sys.modules[mod_name]
-    else:
-        loader_spec = importlib.util.spec_from_file_location(mod_name, full_path)
-        module = importlib.util.module_from_spec(loader_spec)
-        sys.modules[mod_name] = module
-        try:
-            loader_spec.loader.exec_module(module)
-        except BaseException:
-            # Don't leave a half-initialised module cached — a later load of
-            # the same strategy would return the broken object instead of
-            # retrying. Drop it so the next call re-execs from scratch.
-            sys.modules.pop(mod_name, None)
-            raise
-    return getattr(module, spec.attr)
+    module_token = spec.module_path.replace("/", ".").removesuffix(".py")
+    mod_name = f"arc_strategies.{pkg_token}.{module_token}"
+    return getattr(load_module_from_path(full_path, preferred_name=mod_name), spec.attr)
 
 
 def _ensure_package_strategies_loaded() -> None:

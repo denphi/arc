@@ -45,6 +45,9 @@ class MarkdownSkill:
         )
         self.path = str(path)
         self.bundle_root = str(path.parent) if path.name == "SKILL.md" else None
+        # Deliberately *not* seeded from `content`: the constructor's copy is
+        # only used for frontmatter. Deferring the body read means an edited
+        # SKILL.md takes effect on next activation without reloading packages.
         self._content: str | None = None
         self.metadata = {
             **frontmatter,
@@ -56,9 +59,19 @@ class MarkdownSkill:
 
     @property
     def content(self) -> str:
-        """Load and cache instructions only when the skill is activated."""
+        """Load and cache instructions only when the skill is activated.
+
+        For a canonical bundle this is the instruction *body*: the frontmatter
+        is metadata the loader has already consumed, and passing it on would
+        put ``output_format: json`` and the tool allow-list into the model's
+        prompt as if they were instructions to follow.
+        """
         if self._content is None:
-            self._content = Path(self.path).read_text(encoding="utf-8")
+            raw = Path(self.path).read_text(encoding="utf-8")
+            if self.bundle is not None:
+                from arc.core.skill_bundle import split_frontmatter
+                _, raw = split_frontmatter(raw)
+            self._content = raw
         return self._content
 
     def resolve_resource(self, relative_path: str) -> Path:
@@ -341,19 +354,16 @@ def _import_class(entrypoint: str):
     registers the module under an underscored alias (``arc_sim2l.agents.…``)
     when the dotted path contains hyphens.
     """
-    import sys
-    from importlib.util import module_from_spec, spec_from_file_location
+    from arc.core.module_loader import load_module_from_path, register_module_path
 
     module_path, class_name = entrypoint.rsplit(":", 1)
 
     if "-" not in module_path:
         module = importlib.import_module(module_path)
+        # Claim the file for this (real, importable) module name so a strategy
+        # load of the same path reuses it instead of making a second copy.
+        register_module_path(module)
         return getattr(module, class_name)
-
-    # Hyphenated path: resolve via the filesystem.
-    underscored = module_path.replace("-", "_")
-    if underscored in sys.modules:
-        return getattr(sys.modules[underscored], class_name)
 
     # Walk the path components to find the .py file.
     parts = module_path.split(".")
@@ -362,20 +372,12 @@ def _import_class(entrypoint: str):
     if not candidate.exists():
         # Last resort — try CPython's behaviour for compatibility.
         module = importlib.import_module(module_path)
+        register_module_path(module)
         return getattr(module, class_name)
 
-    spec = spec_from_file_location(underscored, candidate)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module from {candidate}")
-    module = module_from_spec(spec)
-    sys.modules[underscored] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        # Don't leave a half-initialised module cached on failure — a later
-        # import of the same path would return the broken object.
-        sys.modules.pop(underscored, None)
-        raise
+    # Hyphenated path: resolve via the filesystem, keeping the historical
+    # underscored alias as the module name when this is the first load.
+    module = load_module_from_path(candidate, preferred_name=module_path.replace("-", "_"))
     return getattr(module, class_name)
 
 
@@ -386,8 +388,7 @@ def _import_from_file(module_file: Path, attr: str, module_name: str | None = No
     not have a dotted import path. Their manifests use ``path`` + ``class`` or
     ``path`` + ``function`` declarations instead.
     """
-    import sys
-    from importlib.util import module_from_spec, spec_from_file_location
+    from arc.core.module_loader import load_module_from_path
 
     if not module_file.exists():
         raise ImportError(f"Cannot load {attr!r}; file does not exist: {module_file}")
@@ -395,17 +396,7 @@ def _import_from_file(module_file: Path, attr: str, module_name: str | None = No
         token = "_".join(module_file.with_suffix("").parts[-4:]).replace("-", "_")
         digest = hashlib.sha256(str(module_file.resolve()).encode("utf-8")).hexdigest()[:12]
         module_name = f"arc_local_package_{token}_{digest}"
-    spec = spec_from_file_location(module_name, module_file)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module from {module_file}")
-    module = module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(module_name, None)
-        raise
-    return getattr(module, attr)
+    return getattr(load_module_from_path(module_file, preferred_name=module_name), attr)
 
 
 def _declared_attr_name(definition: dict[str, Any], *keys: str) -> str | None:

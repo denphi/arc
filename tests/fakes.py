@@ -119,8 +119,16 @@ def make_workflow(
     async def _publish_provenance():
         return {"published": False, "skipped": True}
 
+    # Mirrors ResearchWorkflow._disabled_packages. Production code reads the
+    # session's /package disable set through this method (both
+    # _resolve_agent_class and _coder_agent_class), so the double needs it or
+    # those paths silently take their exception fallback.
+    def _disabled_packages() -> set:
+        return set((ctx.memory.get("packages", {}) or {}).get("disabled", []) or [])
+
     wf.record_run = _record_run
     wf.publish_provenance = _publish_provenance
+    wf._disabled_packages = _disabled_packages
     return wf
 
 

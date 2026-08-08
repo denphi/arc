@@ -2,7 +2,7 @@
 
 These drive a real browser against a live ``python -m arc.ui`` server to
 verify the page loads, assets render, and a session can be created from the
-UI — the browser-level checks called for in ``ui_todo.md`` Phase 5.
+UI — the browser-level coverage the unit tests can't provide.
 
 They are **opt-in**: skipped unless Playwright *and* a browser binary are
 installed (``pip install playwright && playwright install chromium``). This

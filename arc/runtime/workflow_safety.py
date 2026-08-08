@@ -22,12 +22,12 @@ Both reject the same set of unsafe constructs.
 from __future__ import annotations
 
 import ast
-import cmath
-import itertools
 import logging
-import math
 import multiprocessing as mp
+import time
 import types
+from dataclasses import dataclass
+from queue import Empty
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -294,10 +294,23 @@ def check_workflow_source(
             _check_name(node)
 
 
-def check_workflow_source_safe(source: str) -> tuple[bool, str]:
-    """Boolean wrapper used by the builder agent. Returns (ok, reason)."""
+def check_workflow_source_safe(
+    source: str,
+    *,
+    allowed_imports: frozenset[str] = BUILDER_ALLOWED_IMPORTS,
+) -> tuple[bool, str]:
+    """Boolean wrapper around :func:`check_workflow_source`. Returns (ok, reason).
+
+    The default allow-list is the builder's narrow one, because the builder's
+    safe-eval probe genuinely can only offer ``math``/``cmath``/``itertools``.
+    Callers gating *authoring* (the UI's artifact-create and validate routes)
+    must pass ``STRICT_ALLOWED_IMPORTS`` instead — that's what the executor
+    enforces at run time, and gating creation more tightly than execution
+    rejected workflows that would have run perfectly well
+    (``import statistics`` was refused as "Unsafe workflow").
+    """
     try:
-        check_workflow_source(source, allowed_imports=BUILDER_ALLOWED_IMPORTS)
+        check_workflow_source(source, allowed_imports=allowed_imports)
     except WorkflowSafetyError as exc:
         return False, str(exc)
     return True, "ok"
@@ -387,11 +400,6 @@ def build_safe_globals(allowed_modules: frozenset[str] = BUILDER_ALLOWED_IMPORTS
     return safe_globals
 
 
-# Convenience: callers in the parent process that only need read access (eg.
-# tests) can use this directly. Workers should call `build_safe_globals` again
-# inside the spawned child instead of receiving this object across the pickle.
-BUILDER_SAFE_GLOBALS: dict = build_safe_globals(BUILDER_ALLOWED_IMPORTS)
-
 
 # ── Subprocess-sandboxed validators ──────────────────────────────────────────
 #
@@ -403,6 +411,82 @@ BUILDER_SAFE_GLOBALS: dict = build_safe_globals(BUILDER_ALLOWED_IMPORTS)
 
 WORKFLOW_IMPORT_TIMEOUT_SECONDS = 2.0
 SIMULATE_TIMEOUT_SECONDS = 2.0
+
+# How long to wait for a child that has already reported a result to exit on
+# its own before escalating to terminate/kill.
+_EXIT_GRACE_SECONDS = 5.0
+
+
+@dataclass
+class _WorkerOutcome:
+    """What a spawned validator worker reported (or failed to)."""
+
+    result: Any = None
+    exitcode: int | None = None
+    timed_out: bool = False
+
+
+def _run_spawn_worker(target, args: tuple, timeout: float) -> _WorkerOutcome:
+    """Run ``target(*args, queue)`` in a spawned child and collect one result.
+
+    Both validators previously drove their own ``Process``/``Queue`` pair, and
+    each got a different detail wrong:
+
+    * they called ``proc.join(timeout)`` *before* reading the queue. A child
+      writing more than a pipe buffer (a workflow whose import dumps a long
+      traceback to stderr) blocks in the queue feeder thread until someone
+      reads, so ``join`` hit its timeout, the child was terminated, and a
+      perfectly diagnosable failure was reported as "import timed out" — with
+      the stderr that explained it discarded.
+    * ``run_simulate_with_timeout`` then used ``queue.empty()`` before
+      ``get()``. ``empty()`` is advisory on a ``multiprocessing.Queue``: the
+      child may still be flushing the instant ``join`` returns, so a
+      ``simulate()`` that succeeded was intermittently reported as producing no
+      result. ``run_in_subprocess`` in ``arc.runtime.executor`` already carried
+      a comment explaining exactly this; the fix never made it back here.
+
+    Reading first fixes both. The child is drained (unblocking it), then joined,
+    then escalated through terminate → kill only if it is still alive.
+    """
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=target, args=(*args, queue))
+    proc.start()
+
+    outcome = _WorkerOutcome()
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            outcome.result = queue.get(timeout=0.05)
+            break
+        except Empty:
+            if not proc.is_alive():
+                # The child is gone. Give the feeder thread a final moment to
+                # hand over anything already written, then stop waiting.
+                try:
+                    outcome.result = queue.get(timeout=0.2)
+                except Empty:
+                    outcome.result = None
+                break
+            if time.monotonic() >= deadline:
+                outcome.timed_out = True
+                break
+
+    proc.join(0 if outcome.timed_out else _EXIT_GRACE_SECONDS)
+    if proc.is_alive():
+        # Escalate: SIGTERM, then SIGKILL if the child traps it.
+        proc.terminate()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+    outcome.exitcode = proc.exitcode
+    try:
+        queue.close()
+        queue.join_thread()
+    except Exception:  # noqa: BLE001 — teardown must not mask the result
+        pass
+    return outcome
 
 
 def workflow_import_worker(source: str, module_name: str, filename: str, queue) -> None:
@@ -446,29 +530,23 @@ def validate_workflow_import_timeout(source: str, module_name: str, filename: st
     ``WORKFLOW_IMPORT_TIMEOUT_SECONDS``, or ``ValueError`` on import failure.
     The error message includes captured stderr / a traceback when present.
     """
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=workflow_import_worker, args=(source, module_name, filename, queue))
-    proc.start()
-    proc.join(WORKFLOW_IMPORT_TIMEOUT_SECONDS)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
+    outcome = _run_spawn_worker(
+        workflow_import_worker,
+        (source, module_name, filename),
+        WORKFLOW_IMPORT_TIMEOUT_SECONDS,
+    )
+    if outcome.timed_out:
         raise TimeoutError("workflow.py import timed out")
 
-    try:
-        result = queue.get(timeout=5.0)
-    except Exception:  # noqa: BLE001 — genuinely empty / closed queue
+    result = outcome.result
+    if not isinstance(result, dict):
         # Worker died before reporting back (e.g. segfault, hard crash) —
         # surface the exit code so users have something to investigate.
         result = {
             "ok": False,
             "error": (
                 f"workflow.py validator subprocess exited "
-                f"with code {proc.exitcode} before reporting status. "
+                f"with code {outcome.exitcode} before reporting status. "
                 "This usually indicates a crash (segfault, OOM, or a "
                 "fatal Python interpreter error)."
             ),
@@ -532,22 +610,14 @@ def run_simulate_with_timeout(
     Returns ``{"ok": True, "result": ...}`` on success or
     ``{"ok": False, "reason": ...}`` on any failure mode.
     """
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(
-        target=simulate_worker, args=(code, calls, allowed_modules, queue)
-    )
-    proc.start()
-    proc.join(timeout)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
+    outcome = _run_spawn_worker(simulate_worker, (code, calls, allowed_modules), timeout)
+    if outcome.timed_out:
         return {"ok": False, "reason": "simulate() timed out during validation"}
-    if not queue.empty():
-        return queue.get()
-    if proc.exitcode:
-        return {"ok": False, "reason": f"simulate() validation process exited {proc.exitcode}"}
+    if isinstance(outcome.result, dict):
+        return outcome.result
+    if outcome.exitcode:
+        return {
+            "ok": False,
+            "reason": f"simulate() validation process exited {outcome.exitcode}",
+        }
     return {"ok": False, "reason": "simulate() validation returned no result"}

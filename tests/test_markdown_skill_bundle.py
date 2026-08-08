@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from arc.contracts.agent import AgentContext
@@ -165,3 +167,80 @@ async def test_markdown_skill_json_parse_failure_is_flagged(tmp_path):
     assert out["result"] == "this is not json at all"
     assert out["format"] == "text"
     assert out["parse_error"] is True
+
+
+def test_allowed_tools_accepts_commas_and_lists():
+    """`allowed-tools: Read, Write, Edit` is the natural spelling.
+
+    Splitting on whitespace alone produced ["Read,", "Write,", "Edit"] — names
+    with trailing commas that match no tool, so a skill silently lost the
+    permissions it declared.
+    """
+    from arc.core.skill_bundle import _parse_allowed_tools
+
+    assert _parse_allowed_tools("Read, Write, Edit") == ["Read", "Write", "Edit"]
+    assert _parse_allowed_tools("Read,Write") == ["Read", "Write"]
+    assert _parse_allowed_tools("Read Write Edit") == ["Read", "Write", "Edit"]
+    assert _parse_allowed_tools(["Read", " Write "]) == ["Read", "Write"]
+    assert _parse_allowed_tools(None) == []
+    assert _parse_allowed_tools(7) == []
+
+
+def test_bundle_skill_content_excludes_frontmatter(tmp_path):
+    """A bundle's instructions go to the model; its metadata should not.
+
+    `content` feeds straight into the execution prompt, so leaving the YAML in
+    handed the model `output_format: json` and the tool allow-list as though
+    they were instructions.
+    """
+    skill_dir = tmp_path / "demo"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo skill.\noutput_format: json\n---\n"
+        "# Demo\n\nDo the thing.\n",
+        encoding="utf-8",
+    )
+    skill = MarkdownSkill("demo", skill_dir / "SKILL.md")
+
+    assert "output_format" not in skill.content
+    assert "description: Demo skill." not in skill.content
+    assert "Do the thing." in skill.content
+    # Metadata is still parsed — it just doesn't reach the prompt.
+    assert skill.description == "Demo skill."
+    assert skill._wants_json_output() is True
+
+
+def test_flat_legacy_skill_content_is_unchanged(tmp_path):
+    """Non-bundle skills have no frontmatter to strip; keep them byte-identical."""
+    path = tmp_path / "legacy.md"
+    body = "# legacy\n\n## Description\nA flat skill.\n"
+    path.write_text(body, encoding="utf-8")
+
+    assert MarkdownSkill("legacy", path).content == body
+
+
+def test_create_sim2l_ships_as_a_canonical_bundle():
+    """arc-sim2l's flagship skill is a real bundle, not a flat .md file."""
+    from arc.core.skill_bundle import validate_skill_bundle
+
+    root = Path(__file__).resolve().parent.parent
+    bundle_dir = root / "arc/packages/arc-sim2l/skills/create-sim2l"
+
+    assert validate_skill_bundle(bundle_dir) == []
+
+    skill = MarkdownSkill("create-sim2l", bundle_dir / "SKILL.md")
+    assert skill.bundle is not None
+    assert skill.frontmatter["name"] == "create-sim2l"
+    # Declares a structured contract, so callers get a dict rather than prose.
+    assert skill._wants_json_output() is True
+    assert skill.metadata["allowed_tools"] == ["Read", "Write", "Edit"]
+    assert sorted(skill.list_resources()) == [
+        "references/artifact-contract.md",
+        "references/worked-example.md",
+    ]
+    # The instructions must state the constraints the executor actually
+    # enforces — a skill that omits them produces artifacts that fail the
+    # static safety check after a full model round-trip.
+    body = skill.content
+    for required in ("simulate(**inputs)", "sim2l.yaml", "snake_case", "allow-list"):
+        assert required in body, f"SKILL.md no longer documents {required!r}"

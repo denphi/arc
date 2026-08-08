@@ -161,15 +161,18 @@ def test_workflow_direct_agent_step_honours_disable():
         def __init__(self, context=None):
             self.context = context
 
+    # A name no bundled package claims, so this exercises disable alone — a
+    # contested name would instead exercise the fall-back-to-another-provider
+    # path (see test_kernel_loader.py).
     workflow.registry.register_agent(
-        "experiment_decomposer", _PkgAgent, package_name="arc-demo",
+        "demo_only_decomposer", _PkgAgent, package_name="arc-demo",
     )
     # Enabled → resolves.
-    assert workflow._resolve_agent_class("experiment_decomposer") is _PkgAgent
+    assert workflow._resolve_agent_class("demo_only_decomposer") is _PkgAgent
     # Disable arc-demo for the session → direct lookup raises.
     workflow._context.memory["packages"] = {"disabled": ["arc-demo"]}
     with pytest.raises(KeyError):
-        workflow._resolve_agent_class("experiment_decomposer")
+        workflow._resolve_agent_class("demo_only_decomposer")
 
 
 # ── Finding P2-2: extension-created components keep package ownership ─────

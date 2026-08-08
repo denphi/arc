@@ -223,17 +223,21 @@ OPENAI_API_KEY=your-key-here
 
 ## Documentation
 
-Full documentation (core framework + packages) is built with Sphinx and
-publishes to ReadTheDocs. Build it locally:
+Full documentation (core framework + packages) is built with Sphinx + MyST.
+Build it locally with the same strictness ReadTheDocs uses — warnings are
+errors, and the build is currently clean:
 
 ```bash
 pip install -r docs/requirements.txt
-sphinx-build -b html docs docs/_build/html   # → docs/_build/html/index.html
+sphinx-build -b html -W --keep-going docs docs/_build/html   # → docs/_build/html/index.html
 ```
 
-The plan and page outline live in [doc_todo.md](doc_todo.md); the
-authoring source for the longer design topics is [design/](design/), which the
-docs site includes.
+There is no CI in this repo, so that command is the docs gate; run it before
+pushing a change that touches `docs/` or any docstring.
+
+`.readthedocs.yaml` is ready for ReadTheDocs (`fail_on_warning: true`).
+Publishing still needs the project imported once on readthedocs.org — until
+then the docs are local-build only.
 
 ---
 

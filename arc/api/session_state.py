@@ -18,9 +18,11 @@ Schema::
       "build_context_workflows": [workflow_name, …],
     }
 
-Missing file → empty state. Writes are atomic-ish: we write the whole
-file each time because it's tiny (<1 KB). A future refactor can move
-the chat layer to also read/write this file so the two surfaces share
+Missing file → empty state. The whole file is rewritten each time (it's
+tiny, <1 KB) via :func:`arc.utils.io.atomic_write_text`, so a reader can
+never observe a half-written file — the UI writes this from request
+handlers while background jobs read it. A future refactor can move the
+chat layer to also read/write this file so the two surfaces share
 configuration; this module is the on-ramp for that.
 """
 
@@ -31,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from arc.session import _session_dir  # type: ignore[attr-defined]
-
+from arc.utils.io import atomic_write_text
 
 _FILE_NAME = "session_state.json"
 
@@ -100,7 +102,7 @@ def save_state(session_id: str, state: dict[str, Any]) -> Path:
             except OSError:
                 pass
         return path
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2))
     return path
 
 

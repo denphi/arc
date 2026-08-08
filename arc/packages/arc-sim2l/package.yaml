@@ -128,7 +128,11 @@ provides:
       entrypoint: arc.packages.arc-sim2l.agents.reflector:ReflectorAgent
 
   skills:
-    - skills/create-sim2l.md
+    # Canonical Agent Skills-style bundle: frontmatter, a JSON output contract,
+    # and references/ the loader exposes through MarkdownSkill.read_resource.
+    # The name comes from the SKILL.md frontmatter, so it stays "create-sim2l".
+    - skills/create-sim2l/SKILL.md
+    # Flat legacy skills — no frontmatter, no bundle, free-text output.
     - skills/validate-sim2l.md
     - skills/improve-artifact.md
     - skills/review-results.md

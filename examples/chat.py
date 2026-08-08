@@ -48,6 +48,12 @@ Commands inside the chat:
     (anything else is treated as a new research goal)
 """
 
+# Required on Python 3.9 — the legacy-FEniCS/DOLFIN conda floor arc supports.
+# Without it the `X | None` annotations below are evaluated at def time and
+# raise TypeError, so this documented entry point (`python3 examples/chat.py
+# --stub`) would not start at all there.
+from __future__ import annotations
+
 import argparse
 import asyncio
 import builtins
@@ -57,6 +63,7 @@ import sys
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -69,6 +76,9 @@ except Exception:
 
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.schemas.research import ResearchGoal
+
+if TYPE_CHECKING:  # annotation-only; keeps the runtime import cost off startup
+    from arc.schemas.artifact import ArtifactRecord
 from arc.session import (
     new_session_id, list_sessions,
     save_session_meta, load_session_meta,
@@ -925,11 +935,9 @@ async def run_research(
     workflow: ResearchWorkflow,
     goal_text: str,
     domain: str = None,
-    artifact: "ArtifactRecord | None" = None,
+    artifact: ArtifactRecord | None = None,
     refinement: str | None = None,
 ):
-    from arc.schemas.artifact import ArtifactRecord as _AR  # noqa: F401
-
     from arc.packages import (
         load_ideator, load_planner, load_reviewer, load_reflector, load_curator
     )

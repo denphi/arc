@@ -39,6 +39,12 @@ class _Slot(Generic[T]):
     def list_names(self) -> list[str]:
         return list(self._items.keys())
 
+    def copy(self) -> "_Slot[T]":
+        """A slot with its own mapping but the same registered objects."""
+        clone: _Slot[T] = _Slot(self.kind)
+        clone._items = dict(self._items)
+        return clone
+
     def __contains__(self, name: str) -> bool:
         return name in self._items
 
@@ -187,12 +193,46 @@ class ComponentRegistry:
     # --- agents (special-cased: per-package source tracking) ---
 
     def register_agent(self, name: str, agent_class: Any, package_name: str | None = None) -> None:
-        self._agents[name] = agent_class
+        """Register an agent class under ``name`` (and ``package:name``).
+
+        More than one *package* may provide the same agent name — ``ideator``
+        comes from both ``arc-sim2l`` and ``arc-coscientist``, ``coder`` from
+        both ``arc-codex`` and ``arc-claude-code``. Between packages the bare
+        name goes to the **first** registrant and stays there, so which
+        implementation a bare ``get_agent("ideator")`` returns doesn't depend on
+        the order of ``[packages].paths`` in ``arc.toml`` — reordering that
+        list, an edit that reads as cosmetic, used to silently swap the agent.
+        Every provider stays reachable through the unambiguous ``package:name``
+        form and through :meth:`list_agent_sources`.
+
+        A registration with **no** ``package_name`` is a deliberate local
+        override (an extension, an embedding application, a test scaffold)
+        rather than a package-load side effect, so it always takes the bare
+        name.
+        """
         if package_name:
             self._agent_sources[name][package_name] = agent_class
-            self._agent_source_for_name[name] = package_name
             self._agents[f"{package_name}:{name}"] = agent_class
+
+        claimed = self._agent_source_for_name.get(name)
+        contested = name in self._agents and self._agents[name] is not agent_class
+        if contested and package_name and claimed and claimed != package_name:
+            logger.warning(
+                "Agent name %r is provided by more than one package (%r keeps the bare "
+                "name, %r also provides it). Use %r to address the second one.",
+                name, claimed, package_name, f"{package_name}:{name}",
+            )
+            return
+
+        self._agents[name] = agent_class
+        if package_name:
+            self._agent_source_for_name[name] = package_name
             self.record_source("agent", name, package_name)
+        else:
+            # An explicit override detaches the bare name from any package, so
+            # /package disable no longer applies to it.
+            self._agent_source_for_name.pop(name, None)
+            self._component_source.pop(("agent", name), None)
         logger.info("Agent registered: %s%s", name, f" ({package_name})" if package_name else "")
 
     def get_agent(
@@ -207,8 +247,14 @@ class ComponentRegistry:
         ``disabled_packages`` makes the lookup honour ``/package disable``
         even for agents fetched directly by name — e.g. a workflow step that
         names ``coscientist_supervisor`` outright, bypassing role resolution
-        (review finding P2-1). A bare name resolved to a disabled package, or
-        an explicit ``package_name`` that's disabled, raises ``KeyError``.
+        (review finding P2-1). An explicit ``package_name`` that's disabled
+        raises ``KeyError``.
+
+        A *bare* name whose owning package is disabled falls back to another
+        package that provides the same name, if one is enabled. Disabling
+        ``arc-coscientist`` should leave ``get_agent("ideator")`` resolving to
+        ``arc-sim2l``'s ideator, not raise — the alternative was already in
+        ``_agent_sources``, the lookup just didn't consult it.
         """
         if package_name:
             package_agents = self._agent_sources.get(name, {})
@@ -230,6 +276,13 @@ class ComponentRegistry:
                 owner = self._agent_source_for_name.get(name) \
                     or self._component_source.get(("agent", name))
             if owner in disabled_packages:
+                for source, agent_class in self._agent_sources.get(name, {}).items():
+                    if source not in disabled_packages:
+                        logger.info(
+                            "Agent %r from disabled package %r — falling back to %r.",
+                            name, owner, source,
+                        )
+                        return agent_class
                 raise KeyError(
                     f"Agent '{name}' belongs to a package disabled for this session"
                 )
@@ -351,7 +404,9 @@ class ComponentRegistry:
 
     # --- workflows ---
 
-    def register_workflow(self, name: str, definition: dict, package_name: str | None = None) -> None:
+    def register_workflow(
+        self, name: str, definition: dict, package_name: str | None = None,
+    ) -> None:
         self._workflows.register(name, definition)
         self.record_source("workflow", name, package_name)
 
@@ -512,6 +567,43 @@ class ComponentRegistry:
             c for c in (self._report_sections.get(n) for n in self._report_sections.list_names())
             if getattr(c, "_arc_package", None) not in disabled
         ]
+
+    def clone(self) -> "ComponentRegistry":
+        """A registry with its own containers but the same registered objects.
+
+        Loading the package set costs ~45 ms (fourteen manifests, plus every
+        skill and workflow file), and ``ResearchWorkflow`` builds a registry per
+        construction — which the browser UI does once per request. Caching a
+        single shared registry would be faster still, but it would also let one
+        request's registrations leak into the next; ``_register_default_loaders``
+        and a good deal of test scaffolding write into ``workflow.registry``.
+
+        Cloning keeps that isolation: the *mappings* are per-instance, while the
+        values (agent classes, manifests, skills) stay shared — so class
+        identity is preserved across clones, which matters after
+        :mod:`arc.core.module_loader` went to the trouble of guaranteeing one
+        class object per source file.
+        """
+        clone = ComponentRegistry()
+        clone._agents = dict(self._agents)
+        clone._agent_sources = defaultdict(
+            dict, {name: dict(sources) for name, sources in self._agent_sources.items()}
+        )
+        clone._agent_source_for_name = dict(self._agent_source_for_name)
+        for attr in (
+            "_packages", "_skills", "_adapters", "_backends", "_extensions",
+            "_providers", "_workflows", "_scripts", "_extension_defs", "_detectors",
+            "_evaluators", "_loaders", "_prompts", "_templates", "_constraints",
+            "_vocabularies", "_report_sections",
+        ):
+            setattr(clone, attr, getattr(self, attr).copy())
+        clone._audit_actions = defaultdict(
+            list, {phase: list(entries) for phase, entries in self._audit_actions.items()}
+        )
+        clone._audit_action_names = set(self._audit_action_names)
+        clone._component_source = dict(self._component_source)
+        clone._load_errors = list(self._load_errors)
+        return clone
 
     def scoped(self, package_name: str | None) -> "PackageScopedRegistry":
         """Return a proxy that attributes every registration to ``package_name``.

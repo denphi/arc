@@ -52,4 +52,8 @@ arc.local.toml
 
 # Design documents
 design/
-docs/_build/
+
+# Sphinx build output. No leading slash, so this matches at any depth —
+# docs/_build/ (the documented output path) and a stray ./_build/ from running
+# sphinx-build with the wrong working directory.
+_build/

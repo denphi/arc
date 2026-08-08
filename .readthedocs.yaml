@@ -10,7 +10,9 @@ build:
 sphinx:
   configuration: docs/conf.py
   # The build is clean (0 warnings); keep it that way — a new warning fails the
-  # RTD build, matching the GitHub Actions docs job (sphinx-build -W).
+  # RTD build. This is the only automated docs gate: there is no CI in this
+  # repo, so to check before pushing, run it locally:
+  #   sphinx-build -b html -W --keep-going docs docs/_build/html
   fail_on_warning: true
 
 python:

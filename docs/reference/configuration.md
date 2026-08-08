@@ -121,6 +121,5 @@ There is no `[extensions.web-ui]` block — the browser UI is a standalone app
 ```
 ```{note}
 This table is maintained by hand from the codebase (`grep os.environ`, the
-`.env.example`, and `arc.toml`). When you add a new knob, add it here too
-(`doc_todo.md` D3.3/D3.7).
+`.env.example`, and `arc.toml`). When you add a new knob, add it here too.
 ```
