@@ -8,7 +8,6 @@ import pytest
 from arc import chat
 from tests.fakes import FakeProvider
 
-
 pytestmark = pytest.mark.chat
 
 

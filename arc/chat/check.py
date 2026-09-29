@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-
 Verdict = Literal["ok", "warning", "blocked"]
 
 
@@ -58,10 +57,11 @@ class CheckReport:
 # ── individual checks ─────────────────────────────────────────────────────
 
 def _check_python_version() -> CheckItem:
-    if sys.version_info < (3, 10):
+    # Keep in sync with ``requires-python`` in pyproject.toml.
+    if sys.version_info < (3, 9):
         return CheckItem(
             "Python", "blocked",
-            f"requires Python >= 3.10, got {sys.version.split()[0]}",
+            f"requires Python >= 3.9, got {sys.version.split()[0]}",
         )
     return CheckItem("Python", "ok", sys.version.split()[0])
 
@@ -165,6 +165,7 @@ async def _sim2l_services_report() -> list[CheckItem]:
     them off the event loop so ``run_check`` stays responsive.
     """
     import asyncio
+
     from arc.chat.io_utils import check_sim2l_services
     status = await asyncio.to_thread(check_sim2l_services)
     items: list[CheckItem] = []
@@ -197,8 +198,12 @@ def _check_packages() -> CheckItem:
     """Are the package manifests loadable? Catches a common bad-install state."""
     try:
         from arc.packages import (
-            load_ideator, load_planner, load_reviewer, load_reflector,
-            load_curator, load_builder,
+            load_builder,
+            load_curator,
+            load_ideator,
+            load_planner,
+            load_reflector,
+            load_reviewer,
         )
         # Don't actually run them — just import the loaders.
         loaders = [load_ideator, load_planner, load_reviewer,
@@ -248,6 +253,7 @@ async def _check_provider_auth(
     try:
         if provider == "openwebui":
             import asyncio
+
             from arc.providers.openwebui.provider import OpenWebUIProvider
             base = base_url or os.environ.get("OPENWEBUI_URL")
             p = OpenWebUIProvider(base_url=base, token=token_resolved)
@@ -264,7 +270,7 @@ async def _check_provider_auth(
             return CheckItem(f"provider {provider}", "ok",
                              "token present")
         return CheckItem(f"provider {provider}", "warning",
-                         f"unknown provider — skipping probe")
+                         "unknown provider — skipping probe")
     except Exception as exc:
         return CheckItem(f"provider {provider}", "warning",
                          f"probe failed: {type(exc).__name__}")

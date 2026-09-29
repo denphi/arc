@@ -24,7 +24,7 @@ class AssetLoader(Protocol):
     name: str
     supported_media_types: tuple[str, ...]
     supported_extensions: tuple[str, ...]
-    supported_roles: tuple[str, ...]
+    supported_roles: tuple[str | None, ...]
 
     def can_load(self, asset: FileAsset) -> bool: ...
 
@@ -35,7 +35,8 @@ class BaseAssetLoader:
     name = "base_loader"
     supported_media_types: tuple[str, ...] = ()
     supported_extensions: tuple[str, ...] = ()
-    supported_roles: tuple[str, ...] = ()
+    # ``None`` in the roles tuple means "also match assets with no role".
+    supported_roles: tuple[str | None, ...] = ()
 
     def can_load(self, asset: FileAsset) -> bool:
         suffix = Path(asset.name).suffix.lower()

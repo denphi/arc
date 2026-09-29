@@ -325,6 +325,7 @@ def test_disabled_package_blocking_audit_cannot_abort_run():
 
 def test_disabled_package_report_section_excluded():
     from types import SimpleNamespace
+
     from tests._audit_fixture import DemoReportSection
 
     reg = ComponentRegistry()

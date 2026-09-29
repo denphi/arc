@@ -255,13 +255,13 @@ class LLMGuidedOptimizerAgent(AgentContract):
             for k, v in schema.items()
         }
         bounds = _bounds_from_schema(schema)
-        param_names = list(bounds.keys())
 
         # Reuse the in-process simulate() shortcut when available — same
         # trick the GA / BO / CMA-ES use to skip per-eval subprocess cost.
         _simulate_func = None
         try:
             from pathlib import Path
+
             from arc.runtime.sim2l_adapter import _import_workflow_func
             workflow_path = Path(artifact.path) / "workflow.py"
             if workflow_path.exists():

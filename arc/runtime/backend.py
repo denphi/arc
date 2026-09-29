@@ -35,8 +35,8 @@ independently.
 from __future__ import annotations
 
 import asyncio
-import logging
 import inspect
+import logging
 from typing import Any
 
 from arc.contracts.backend import BackendActions
@@ -624,11 +624,18 @@ class GitHubBackend(BackendActions):
     def is_active(self) -> bool:
         return self._config is not None
 
+    @property
+    def _cfg(self) -> dict[str, str]:
+        """Active config; every caller checks :meth:`is_active` first."""
+        if self._config is None:
+            raise RuntimeError("GitHub backend is not configured")
+        return self._config
+
     # --- internals ---
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self._config['token']}",
+            "Authorization": f"Bearer {self._cfg['token']}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
@@ -640,19 +647,20 @@ class GitHubBackend(BackendActions):
         binary). Returns ``{"ok": bool, ...}``; never raises.
         """
         import base64
+
         import requests
 
         raw = content.encode() if isinstance(content, str) else content
-        url = f"{self._API}/repos/{self._config['repo']}/contents/{repo_path}"
+        url = f"{self._API}/repos/{self._cfg['repo']}/contents/{repo_path}"
         payload: dict[str, Any] = {
             "message": message,
             "content": base64.b64encode(raw).decode(),
         }
-        if self._config.get("branch"):
-            payload["branch"] = self._config["branch"]
+        if self._cfg.get("branch"):
+            payload["branch"] = self._cfg["branch"]
         try:
             # If the file already exists we must pass its blob sha to update it.
-            get_params = {"ref": self._config["branch"]} if self._config.get("branch") else {}
+            get_params = {"ref": self._cfg["branch"]} if self._cfg.get("branch") else {}
             existing = requests.get(url, headers=self._headers(), params=get_params, timeout=10)
             if existing.status_code == 200:
                 payload["sha"] = existing.json().get("sha")
@@ -668,7 +676,7 @@ class GitHubBackend(BackendActions):
     def _artifact_base(self, artifact: ArtifactRecord) -> str:
         name = _safe_segment(artifact.name)
         version = _safe_segment(artifact.version)
-        return f"{self._config['prefix']}/{name}/{version}"
+        return f"{self._cfg['prefix']}/{name}/{version}"
 
     # --- actions ---
 
@@ -729,7 +737,7 @@ class GitHubBackend(BackendActions):
         return {
             "registered": bool(committed) and not errors,
             "backend": "github",
-            "repo": self._config["repo"],
+            "repo": self._cfg["repo"],
             "path": base,
             "files": committed,
             **({"error": "; ".join(errors)} if errors else {}),
@@ -809,7 +817,7 @@ class GitHubBackend(BackendActions):
         try:
             from datetime import datetime, timezone
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            path = (f"{self._config['prefix']}/provenance/"
+            path = (f"{self._cfg['prefix']}/provenance/"
                     f"{_safe_segment(session_id)}/{stamp}.jsonl")
             content = "\n".join(json.dumps(e, default=str) for e in entries) + "\n"
             result = await asyncio.to_thread(

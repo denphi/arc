@@ -66,8 +66,9 @@ def test_idle_before_init():
 
 
 def test_kernel_loads_knowledge_graph(tmp_path):
-    from arc.core.kernel import Kernel
     from pathlib import Path
+
+    from arc.core.kernel import Kernel
     config = tmp_path / "arc.toml"
     pkg = Path(__file__).resolve().parents[1] / "arc" / "packages" / "arc-knowledge-graph"
     config.write_text(

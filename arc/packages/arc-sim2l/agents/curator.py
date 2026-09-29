@@ -20,7 +20,6 @@ When a new artifact is built, the curator:
 """
 from __future__ import annotations
 
-
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -91,7 +90,9 @@ class SchemaEntry:
 
     @classmethod
     def from_dict(cls, d: dict) -> "SchemaEntry":
-        return cls(quantity=d.get("quantity", ""), unit=d.get("unit", ""), aliases=d.get("aliases", []))
+        return cls(
+            quantity=d.get("quantity", ""), unit=d.get("unit", ""), aliases=d.get("aliases", [])
+        )
 
 
 def _load_registry(raw: dict) -> dict[str, SchemaEntry]:
@@ -119,7 +120,7 @@ def _patch_workflow_key(code: str, old_key: str, new_key: str) -> str:
     # Replace quoted key in return dict: "old_key": → "new_key":
     patched = re.sub(
         rf'(["\']){re.escape(old_key)}(["\'])\s*:',
-        lambda m: f'{m.group(1)}{new_key}{m.group(2)}:',
+        lambda m: f"{m.group(1)}{new_key}{m.group(2)}:",
         code,
     )
     return patched
@@ -159,7 +160,9 @@ def _coerce_capability(raw: Any, name: str, inputs: list[str], outputs: list[str
     caps = raw.get("capabilities")
     caps = [str(c).strip() for c in caps if str(c).strip()] if isinstance(caps, list) else []
     tags = raw.get("domain_tags")
-    tags = [str(t).strip().lower() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    tags = (
+        [str(t).strip().lower() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    )
     return {
         "summary": summary,
         "capabilities": caps or base["capabilities"],
@@ -213,7 +216,7 @@ class CuratorAgent(AgentContract):
 
         # Find all output keys in the return dict.
         output_keys: list[str] = []
-        for m in re.finditer(r'return\s*\{([^}]+)\}', code, re.DOTALL):
+        for m in re.finditer(r"return\s*\{([^}]+)\}", code, re.DOTALL):
             body = m.group(1)
             for km in re.finditer(r'["\'](\w+)["\']\s*:', body):
                 output_keys.append(km.group(1))
@@ -227,7 +230,6 @@ class CuratorAgent(AgentContract):
         other_outputs: list[str] = list(output_keys)
 
         patched_code = code
-        artifact_outputs = dict(artifact.metadata.get("sim2l_outputs", {}))
         new_outputs: dict[str, Any] = {}
 
         for key in output_keys:
@@ -239,6 +241,7 @@ class CuratorAgent(AgentContract):
                 if classified is None and provider:
                     try:
                         import json as _json
+
                         prompt = _CLASSIFY_PROMPT.format(
                             key=key,
                             inputs=input_keys,
@@ -297,15 +300,15 @@ class CuratorAgent(AgentContract):
                 # Rebuild outputs section.
                 outputs_block = _build_yaml_section(new_outputs)
                 yaml_text = re.sub(
-                    r'(^outputs:\n)((?:  .*\n?)*)',
-                    f'outputs:\n{outputs_block}\n',
+                    r"(^outputs:\n)((?:  .*\n?)*)",
+                    f"outputs:\n{outputs_block}\n",
                     yaml_text,
                     flags=re.MULTILINE,
                 )
                 yaml_path.write_text(yaml_text)
 
             # Update artifact metadata in memory.
-            if hasattr(artifact, 'metadata') and isinstance(artifact.metadata, dict):
+            if hasattr(artifact, "metadata") and isinstance(artifact.metadata, dict):
                 artifact.metadata["sim2l_outputs"] = new_outputs
 
         self.context.memory["schema_registry"] = _dump_registry(registry)
@@ -314,18 +317,25 @@ class CuratorAgent(AgentContract):
         # Stored in artifact.description (becomes the catalog `description`
         # column, which the new keyword recall searches) plus structured
         # facets in metadata['capability'] for arc's reuse scorer.
-        await self._generate_capability(artifact, input_keys, list(new_outputs.keys()) or output_keys, code)
+        await self._generate_capability(
+            artifact, input_keys, list(new_outputs.keys()) or output_keys, code
+        )
 
         return artifact
 
     async def _generate_capability(
-        self, artifact: Any, input_keys: list[str], output_keys: list[str], source: str,
+        self,
+        artifact: Any,
+        input_keys: list[str],
+        output_keys: list[str],
+        source: str,
     ) -> None:
         provider = self.context.memory.get("provider")
         cap: dict | None = None
         if provider:
             try:
                 import json as _json
+
                 prompt = _CAPABILITY_PROMPT.format(
                     name=artifact.name,
                     inputs=input_keys,
@@ -335,7 +345,9 @@ class CuratorAgent(AgentContract):
                 raw = (await provider.complete(prompt)).strip()
                 m = re.search(r"\{.*\}", raw, re.DOTALL)
                 if m:
-                    cap = _coerce_capability(_json.loads(m.group()), artifact.name, input_keys, output_keys)
+                    cap = _coerce_capability(
+                        _json.loads(m.group()), artifact.name, input_keys, output_keys
+                    )
             except Exception:  # noqa: BLE001 — capability gen is best-effort
                 cap = None
         if cap is None:

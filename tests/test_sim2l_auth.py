@@ -21,7 +21,6 @@ from arc.chat.sim2l_auth import (
     resolve_credentials,
 )
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -266,9 +265,11 @@ def test_results_push_falls_back_to_legacy_session_when_no_login(monkeypatch):
 
 def test_catalog_push_includes_workflow_bundle(monkeypatch, tmp_path):
     """ARC catalog registration must include executable workflow files."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
-    from sim2l.schema import InputSchema, OutputSchema
+    pytest.importorskip("sim2l")
     import sim2l
+    from sim2l.schema import InputSchema, OutputSchema
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     captured = {}
 
@@ -308,8 +309,9 @@ def test_catalog_push_includes_workflow_bundle(monkeypatch, tmp_path):
 
 def test_results_push_records_failure_in_last_push_errors(monkeypatch):
     """A 401 push doesn't raise — it gets recorded for the chat to surface."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
     import requests
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     class _Resp401:
         status_code = 401
@@ -331,6 +333,7 @@ def test_results_push_records_failure_in_last_push_errors(monkeypatch):
 def test_push_classifier_logs_401_as_warning(caplog, monkeypatch):
     """401 → logger.warning, not logger.debug."""
     import requests
+
     from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     class _Resp:
@@ -346,10 +349,14 @@ def test_push_classifier_logs_401_as_warning(caplog, monkeypatch):
 def test_push_classifier_logs_connection_refused_as_debug(caplog, monkeypatch):
     """Connection-refused → debug (the chat already warned at startup)."""
     import requests
+
     from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     err = requests.exceptions.ConnectionError("nope")
     adapter = Sim2LRuntimeAdapter(db_path="/tmp/x.db")
+    # Only records from the classification itself count (constructing the
+    # adapter without sim2l installed logs its own warning).
+    caplog.clear()
     with caplog.at_level("WARNING", logger="arc.runtime.sim2l_adapter"):
         adapter._classify_push_error(err, "catalog")
     # No warning was emitted for the connection-refused case

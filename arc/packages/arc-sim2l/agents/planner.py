@@ -3,7 +3,6 @@ from __future__ import annotations
 from arc.contracts.agent import AgentContract
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 
-
 _REFINE_PROMPT = """\
 You are a scientific experiment planner. Revise the experiment plan below based on the user's feedback.
 
@@ -79,12 +78,14 @@ def _fallback_parameter_names(proposal: ResearchProposal) -> list[str]:
     generic = {"x", "y", "z", "input", "input_parameter", "output", "result"}
     names = [name for name in names if name not in generic]
 
-    text = " ".join([
-        proposal.objective,
-        proposal.methodology,
-        proposal.expected_outcomes,
-        " ".join(proposal.evaluation_metrics),
-    ]).lower()
+    text = " ".join(
+        [
+            proposal.objective,
+            proposal.methodology,
+            proposal.expected_outcomes,
+            " ".join(proposal.evaluation_metrics),
+        ]
+    ).lower()
 
     candidates: list[str] = []
     if any(term in text for term in ("bandgap", "band gap", "semiconductor", "effective mass")):
@@ -124,23 +125,77 @@ def _default_value_for(name: str) -> float:
 
 def _constraints_for(name: str, default: float) -> dict:
     if name == "effective_mass":
-        return {"min": 0.05, "max": 2.0, "units": "electron_mass", "role": "material response", "rationale": "Covers light to heavy carrier effective masses."}
+        return {
+            "min": 0.05,
+            "max": 2.0,
+            "units": "electron_mass",
+            "role": "material response",
+            "rationale": "Covers light to heavy carrier effective masses.",
+        }
     if name == "temperature":
-        return {"min": 50.0, "max": 800.0, "units": "K", "role": "environment", "rationale": "Spans cryogenic through elevated operating temperatures."}
+        return {
+            "min": 50.0,
+            "max": 800.0,
+            "units": "K",
+            "role": "environment",
+            "rationale": "Spans cryogenic through elevated operating temperatures.",
+        }
     if name == "strain":
-        return {"min": -0.05, "max": 0.05, "units": "fraction", "role": "structural perturbation", "rationale": "Keeps elastic strain within a small-deformation regime."}
+        return {
+            "min": -0.05,
+            "max": 0.05,
+            "units": "fraction",
+            "role": "structural perturbation",
+            "rationale": "Keeps elastic strain within a small-deformation regime.",
+        }
     if name == "doping_concentration":
-        return {"min": 1e14, "max": 1e19, "units": "cm^-3", "role": "composition/control", "rationale": "Covers dilute to heavily doped semiconductor regimes."}
+        return {
+            "min": 1e14,
+            "max": 1e19,
+            "units": "cm^-3",
+            "role": "composition/control",
+            "rationale": "Covers dilute to heavily doped semiconductor regimes.",
+        }
     if name == "pressure":
-        return {"min": 0.0, "max": 20.0, "units": "GPa", "role": "environment", "rationale": "Explores ambient to high-pressure response."}
+        return {
+            "min": 0.0,
+            "max": 20.0,
+            "units": "GPa",
+            "role": "environment",
+            "rationale": "Explores ambient to high-pressure response.",
+        }
     if name == "frequency":
-        return {"min": 0.1, "max": 10.0, "units": "THz", "role": "excitation", "rationale": "Samples low to high excitation frequencies."}
+        return {
+            "min": 0.1,
+            "max": 10.0,
+            "units": "THz",
+            "role": "excitation",
+            "rationale": "Samples low to high excitation frequencies.",
+        }
     if name == "amplitude":
-        return {"min": 0.0, "max": 5.0, "units": "arb.", "role": "excitation strength", "rationale": "Avoids negative amplitudes and includes strong forcing."}
+        return {
+            "min": 0.0,
+            "max": 5.0,
+            "units": "arb.",
+            "role": "excitation strength",
+            "rationale": "Avoids negative amplitudes and includes strong forcing.",
+        }
     if name == "damping":
-        return {"min": 0.0, "max": 1.0, "units": "dimensionless", "role": "loss parameter", "rationale": "Covers no damping through strong damping."}
+        return {
+            "min": 0.0,
+            "max": 1.0,
+            "units": "dimensionless",
+            "role": "loss parameter",
+            "rationale": "Covers no damping through strong damping.",
+        }
     if name == "activation_energy":
-        return {"min": 0.01, "max": 5.0, "units": "eV", "role": "energy scale", "rationale": "Covers small barriers through strongly activated processes."}
+        return {
+            "min": 0.01,
+            "max": 5.0,
+            "units": "eV",
+            "role": "energy scale",
+            "rationale": "Covers small barriers through strongly activated processes.",
+        }
     # Lattice parameters from Materials Project: bound around the
     # reference value so the sweep stays inside a physically plausible
     # neighbourhood. ±10% on lengths is the standard "small-strain"
@@ -148,49 +203,82 @@ def _constraints_for(name: str, default: float) -> dict:
     # forcing collinearity.
     if name in ("lattice_a", "lattice_b", "lattice_c"):
         span = max(abs(default) * 0.1, 1e-3)
-        return {"min": default - span, "max": default + span,
-                "units": "angstrom", "role": "lattice length",
-                "rationale": "±10% around the Materials Project reference length."}
+        return {
+            "min": default - span,
+            "max": default + span,
+            "units": "angstrom",
+            "role": "lattice length",
+            "rationale": "±10% around the Materials Project reference length.",
+        }
     if name in ("lattice_alpha", "lattice_beta", "lattice_gamma"):
-        return {"min": max(default - 5.0, 1.0), "max": min(default + 5.0, 179.0),
-                "units": "degrees", "role": "lattice angle",
-                "rationale": "±5° around the Materials Project reference angle."}
+        return {
+            "min": max(default - 5.0, 1.0),
+            "max": min(default + 5.0, 179.0),
+            "units": "degrees",
+            "role": "lattice angle",
+            "rationale": "±5° around the Materials Project reference angle.",
+        }
     if name == "lattice_volume":
         span = max(abs(default) * 0.2, 1e-3)
-        return {"min": default - span, "max": default + span,
-                "units": "angstrom^3", "role": "cell volume",
-                "rationale": "±20% around the Materials Project reference volume."}
+        return {
+            "min": default - span,
+            "max": default + span,
+            "units": "angstrom^3",
+            "role": "cell volume",
+            "rationale": "±20% around the Materials Project reference volume.",
+        }
     # ── MP thermodynamics ─────────────────────────────────────────────
     if name == "energy_above_hull":
         # The reference is on-hull (0) or just above; allow a small
         # exploration window into clearly metastable territory.
-        return {"min": max(default - 0.1, 0.0), "max": default + 0.2,
-                "units": "eV/atom", "role": "thermodynamic stability margin",
-                "rationale": "Probes from on-hull through clearly metastable "
-                             "(≈ 0.2 eV/atom above the convex hull)."}
+        return {
+            "min": max(default - 0.1, 0.0),
+            "max": default + 0.2,
+            "units": "eV/atom",
+            "role": "thermodynamic stability margin",
+            "rationale": "Probes from on-hull through clearly metastable "
+            "(≈ 0.2 eV/atom above the convex hull).",
+        }
     if name == "decomposition_enthalpy":
         span = max(abs(default) * 0.5, 0.05)
-        return {"min": default - span, "max": default + span,
-                "units": "eV/atom", "role": "decomposition cost",
-                "rationale": "±50% around the Materials Project reference "
-                             "decomposition enthalpy."}
+        return {
+            "min": default - span,
+            "max": default + span,
+            "units": "eV/atom",
+            "role": "decomposition cost",
+            "rationale": "±50% around the Materials Project reference decomposition enthalpy.",
+        }
     # ── MP elasticity (GPa) ───────────────────────────────────────────
     if name in ("bulk_modulus", "shear_modulus"):
         span = max(abs(default) * 0.3, 1.0)
         # Moduli are non-negative; clamp the lower bound at 0.
-        return {"min": max(default - span, 0.0), "max": default + span,
-                "units": "GPa", "role": "elastic modulus",
-                "rationale": "±30% around the Materials Project Voigt-Reuss-Hill "
-                             "average; lower bound clamped at 0 GPa."}
+        return {
+            "min": max(default - span, 0.0),
+            "max": default + span,
+            "units": "GPa",
+            "role": "elastic modulus",
+            "rationale": "±30% around the Materials Project Voigt-Reuss-Hill "
+            "average; lower bound clamped at 0 GPa.",
+        }
     # ── MP electronic structure (eV) ──────────────────────────────────
     if name in ("efermi", "dos_energy_up", "dos_energy_down"):
         span = max(abs(default) * 0.1, 0.5)
-        return {"min": default - span, "max": default + span,
-                "units": "eV", "role": "electronic-structure energy",
-                "rationale": "±10% (≥ 0.5 eV) around the Materials Project "
-                             "reference Fermi level / DOS edge."}
+        return {
+            "min": default - span,
+            "max": default + span,
+            "units": "eV",
+            "role": "electronic-structure energy",
+            "rationale": "±10% (≥ 0.5 eV) around the Materials Project "
+            "reference Fermi level / DOS edge.",
+        }
     span = abs(default) or 1.0
-    return {"min": default - 2 * span, "max": default + 2 * span, "units": "dimensionless", "role": "model input", "rationale": "Broad local range around the nominal value."}
+    return {
+        "min": default - 2 * span,
+        "max": default + 2 * span,
+        "units": "dimensionless",
+        "role": "model input",
+        "rationale": "Broad local range around the nominal value.",
+    }
 
 
 def _sweep_for(default: float, constraint: dict) -> list[float]:
@@ -228,10 +316,10 @@ def _top_mp_hit(context) -> dict | None:
 # for builder defaults. Adding a new MP axis is one line here plus
 # matching ``_constraints_for`` entries.
 _MP_PROPERTY_BLOCKS: tuple[tuple[str, str], ...] = (
-    ("lattice",    "Lattice"),
-    ("thermo",     "Thermodynamic"),
+    ("lattice", "Lattice"),
+    ("thermo", "Thermodynamic"),
     ("elasticity", "Elastic"),
-    ("dos",        "Electronic-structure"),
+    ("dos", "Electronic-structure"),
 )
 
 
@@ -269,7 +357,8 @@ def _apply_mp_property_defaults(plan: ExperimentPlan, context) -> None:
                 continue
             plan.parameters[name] = float(value)
             plan.parameter_constraints.setdefault(
-                name, _constraints_for(name, float(value)),
+                name,
+                _constraints_for(name, float(value)),
             )
             plan.parameter_sweep.setdefault(
                 name,
@@ -380,7 +469,9 @@ class PlannerAgent(AgentContract):
             if not isinstance(value, (int, float)):
                 continue
             plan.parameter_constraints.setdefault(name, _constraints_for(name, float(value)))
-            plan.parameter_sweep.setdefault(name, _sweep_for(float(value), plan.parameter_constraints[name]))
+            plan.parameter_sweep.setdefault(
+                name, _sweep_for(float(value), plan.parameter_constraints[name])
+            )
         if not plan.experimental_design:
             plan.experimental_design = _fallback_plan(plan.proposal).experimental_design
         if len(plan.success_criteria) < 4:
@@ -400,7 +491,9 @@ class PlannerAgent(AgentContract):
                 feedback=feedback[:500],
             )
             try:
-                revised = await provider.complete_structured(prompt, ExperimentPlan, max_tokens=1024)
+                revised = await provider.complete_structured(
+                    prompt, ExperimentPlan, max_tokens=1024
+                )
                 revised.artifact_strategy = "create_new_sim2l"
                 # Keep original proposal — refinement only touches parameters/sweep/criteria.
                 revised.proposal = plan.proposal

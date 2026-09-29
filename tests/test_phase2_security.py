@@ -6,11 +6,8 @@ the chat-package code; this file covers the new Phase 2 surface.
 """
 
 import json
-import re
-from pathlib import Path
 
 import pytest
-
 
 pytestmark = pytest.mark.chat
 
@@ -47,7 +44,6 @@ async def test_check_makes_no_unmocked_network_call(monkeypatch):
     import requests
     calls: list[str] = []
 
-    real_get = requests.get
     def tracker(url, *args, **kwargs):
         calls.append(url)
         # Don't actually hit the network — return a fake 404.
@@ -106,7 +102,7 @@ def test_jsonl_sink_at_most_one_rotation_file(tmp_path):
 # ── Plan mode actually blocks side effects ────────────────────────────────
 
 def test_plan_mode_blocks_artifact_writes(tmp_path):
-    from arc.chat.plan_mode import plan_mode, PlanModeBlocked
+    from arc.chat.plan_mode import PlanModeBlocked, plan_mode
     from arc.memory.artifact_registry import ArtifactRegistry
     from arc.schemas.artifact import ArtifactDraft
 

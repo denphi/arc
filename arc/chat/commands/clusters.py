@@ -23,7 +23,7 @@ from textwrap import fill
 
 from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
-from arc.chat.ui import BOLD, CYAN, DIM, GREEN, RED, YELLOW, c, header, step, warn
+from arc.chat.ui import BOLD, CYAN, DIM, RED, YELLOW, c, header, step, warn
 
 
 def _clusters(state: ChatState) -> list[dict]:
@@ -68,7 +68,7 @@ def _list_clusters(state: ChatState) -> None:
         )
 
     print()
-    print(c(f"  /clusters <signature> to see sample entries.", DIM))
+    print(c("  /clusters <signature> to see sample entries.", DIM))
 
 
 def _show_cluster(state: ChatState, signature: str) -> None:

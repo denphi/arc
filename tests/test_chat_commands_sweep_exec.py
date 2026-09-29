@@ -13,7 +13,6 @@ from arc.chat.commands import build_registry
 from arc.chat.state import ChatState
 from tests.fakes import make_artifact, make_workflow
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -297,8 +296,8 @@ async def test_sweep_appends_run_history_and_provenance(capsys):
 @pytest.mark.asyncio
 async def test_sweep_blocked_by_audit_aborts(capsys):
     """A blocking execution.before audit aborts the sweep cleanly."""
-    from arc.runtime.audit import AuditBlockedError
     from arc.contracts.audit import AuditResult
+    from arc.runtime.audit import AuditBlockedError
 
     art = make_artifact(artifact_id="blk1234567", name="blk")
     plan = SimpleNamespace(parameter_sweep={"p": [1, 2]})

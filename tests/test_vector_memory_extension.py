@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -80,16 +81,17 @@ def test_unknown_backend_falls_back_to_default(tmp_path):
 def test_kernel_loads_vector_memory_and_registers_extension(tmp_path):
     from arc.core.kernel import Kernel
     config = tmp_path / "arc.toml"
+    pkg = Path(__file__).resolve().parents[1] / "arc" / "packages" / "arc-vector-memory"
     config.write_text(
         f"""
 [packages]
-paths = ["{__import__('pathlib').Path(__file__).resolve().parents[1] / 'arc' / 'packages' / 'arc-vector-memory'}"]
+paths = ["{pkg}"]
 
 [extensions.vector-memory]
 enabled = true
 entrypoint = "arc.packages.arc-vector-memory.extension:VectorMemoryExtension"
 backend = "default"
-persist_path = "{tmp_path / 'v.json'}"
+persist_path = "{tmp_path / "v.json"}"
 """
     )
     kernel = Kernel(config_path=str(config))

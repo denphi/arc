@@ -26,7 +26,6 @@ from arc.chat.research.phases import POST_BUILD_PHASES
 from arc.chat.research.pipeline import Pipeline, PipelineState
 from tests.fakes import make_artifact
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -263,7 +262,7 @@ async def test_pipeline_no_target_skips_diagnostic(monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_pipeline_emits_phase_events_when_hook_attached(monkeypatch):
     """Wire the phase_events hook and confirm phase boundaries are observed."""
-    from arc.chat.events import set_sink, ChatEvent, Sink
+    from arc.chat.events import Sink, set_sink
     from arc.chat.research.hooks import phase_events
 
     class CapSink(Sink):

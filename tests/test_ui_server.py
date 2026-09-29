@@ -513,12 +513,20 @@ def test_ui_artifact_version_diff():
     session_id = client.post("/api/sessions", json={"prefix": "ui"}).json()["session_id"]
     registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
     rec_a = registry.register(
-        ArtifactDraft(name="v", description="", files={"workflow.py": "def simulate():\n    return {'y': 1}\n"}),
+        ArtifactDraft(
+            name="v",
+            description="",
+            files={"workflow.py": "def simulate():\n    return {'y': 1}\n"},
+        ),
         version="0.1.0",
     )
     # Register a second version under the SAME artifact_id by writing to its dir.
     registry.register(
-        ArtifactDraft(name="v", description="", files={"workflow.py": "def simulate():\n    return {'y': 2}\n"}),
+        ArtifactDraft(
+            name="v",
+            description="",
+            files={"workflow.py": "def simulate():\n    return {'y': 2}\n"},
+        ),
         version="0.2.0",
     )
     # The diff route compares two versions of one artifact_id; reuse rec_a's id
@@ -541,7 +549,7 @@ def test_suggestions_for_run_result():
     chips = ui_server._suggestions_for({"status": "completed", "review": {"approved": False}})
     commands = {c["command"] for c in chips}
     assert "/continue" in commands and "/iterate" in commands
-    assert any(c.get("prompt_steps") for c in chips)   # iterate asks for steps
+    assert any(c.get("prompt_steps") for c in chips)  # iterate asks for steps
 
     # next_parameters surfaces a dedicated "run suggested" chip with a note.
     with_params = ui_server._suggestions_for(
@@ -558,7 +566,9 @@ def test_ui_fresh_session_thread_has_no_suggestions():
     """A brand-new session is goal-first: its (empty/derived) thread carries
     no actionable suggestion chips."""
     client = TestClient(ui_server.create_app())
-    session_id = client.post("/api/sessions", json={"prefix": "ui", "goal": "g"}).json()["session_id"]
+    session_id = client.post("/api/sessions", json={"prefix": "ui", "goal": "g"}).json()[
+        "session_id"
+    ]
     thread = client.get(f"/api/sessions/{session_id}").json()["thread"]
     assert all(not msg.get("suggestions") for msg in thread)
 
@@ -569,10 +579,14 @@ def test_ui_services_status_prompts_when_installed_but_down(monkeypatch):
     import arc.services as svc
 
     monkeypatch.setattr(svc, "sim2l_available", lambda: True)
-    monkeypatch.setattr(svc, "status_all", lambda: {
-        "catalog": {"running": False, "pid": None, "port": 8002, "url": "x"},
-        "results": {"running": False, "pid": None, "port": 8003, "url": "y"},
-    })
+    monkeypatch.setattr(
+        svc,
+        "status_all",
+        lambda: {
+            "catalog": {"running": False, "pid": None, "port": 8002, "url": "x"},
+            "results": {"running": False, "pid": None, "port": 8003, "url": "y"},
+        },
+    )
     client = TestClient(ui_server.create_app())
     info = client.get("/api/services").json()
     assert info["available"] is True
@@ -584,9 +598,13 @@ def test_ui_services_no_prompt_when_running(monkeypatch):
     import arc.services as svc
 
     monkeypatch.setattr(svc, "sim2l_available", lambda: True)
-    monkeypatch.setattr(svc, "status_all", lambda: {
-        "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
-    })
+    monkeypatch.setattr(
+        svc,
+        "status_all",
+        lambda: {
+            "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
+        },
+    )
     client = TestClient(ui_server.create_app())
     info = client.get("/api/services").json()
     assert info["prompt_start"] is False
@@ -604,9 +622,13 @@ def test_ui_services_start_invokes_start_all(monkeypatch):
 
     monkeypatch.setattr(svc, "sim2l_available", lambda: True)
     monkeypatch.setattr(svc, "start_all", fake_start_all)
-    monkeypatch.setattr(svc, "status_all", lambda: {
-        "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
-    })
+    monkeypatch.setattr(
+        svc,
+        "status_all",
+        lambda: {
+            "catalog": {"running": True, "pid": 1, "port": 8002, "url": "x"},
+        },
+    )
     client = TestClient(ui_server.create_app())
     result = client.post("/api/services/start").json()
     assert calls["start_all"] == 1
@@ -647,7 +669,9 @@ def test_ui_server_does_not_import_chat():
 def _reload_security():
     """Re-import the security module so it re-reads ARC_API_TOKEN."""
     import importlib
+
     import arc.api.security as sec
+
     importlib.reload(sec)
 
 
@@ -668,12 +692,14 @@ def test_ui_data_routes_require_token_when_configured(monkeypatch):
         assert client.get("/api/health").status_code == 200
         # data routes are gated
         assert client.get("/api/sessions").status_code == 401
-        assert client.get(
-            "/api/sessions", headers={"Authorization": "Bearer wrong"}
-        ).status_code == 401
-        assert client.get(
-            "/api/sessions", headers={"Authorization": "Bearer secret123"}
-        ).status_code == 200
+        assert (
+            client.get("/api/sessions", headers={"Authorization": "Bearer wrong"}).status_code
+            == 401
+        )
+        assert (
+            client.get("/api/sessions", headers={"Authorization": "Bearer secret123"}).status_code
+            == 200
+        )
     finally:
         monkeypatch.delenv("ARC_API_TOKEN", raising=False)
         _reload_security()
@@ -686,11 +712,14 @@ def test_ui_research_run_rejects_private_base_url(monkeypatch):
     monkeypatch.delenv("ARC_PROVIDER_ALLOWLIST", raising=False)
     _reload_security()
     client = TestClient(ui_server.create_app())
-    resp = client.post("/api/research/run", json={
-        "goal": "x",
-        "provider": "openwebui",
-        "base_url": "http://169.254.169.254/latest/meta-data",
-    })
+    resp = client.post(
+        "/api/research/run",
+        json={
+            "goal": "x",
+            "provider": "openwebui",
+            "base_url": "http://169.254.169.254/latest/meta-data",
+        },
+    )
     assert resp.status_code == 400
 
 

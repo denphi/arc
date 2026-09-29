@@ -25,7 +25,6 @@ import pytest
 
 from arc.schemas.research import ResearchProposal
 
-
 pytestmark = pytest.mark.chat
 
 

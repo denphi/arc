@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from arc.packages.arc_sim2l.agents.validator import _BaseValidator
+
 from arc.schemas.research import ValidatorReport
 
 logger = logging.getLogger(__name__)

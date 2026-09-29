@@ -24,7 +24,6 @@ import pytest
 
 from arc.schemas.research import ResearchGoal, ResearchProposal, SearchResult
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -49,6 +48,7 @@ def _context(memory=None):
 def test_mars_planner_cold_start_delegates_to_default():
     """No history → returns the same plan the default planner would."""
     from arc.packages.arc_sim2l.agents.planner import PlannerAgent
+
     from arc.core.strategies import resolve_role
     MARSPlannerAgent = resolve_role("planner", overrides={"planner": "mars_planner"})
 
@@ -292,8 +292,9 @@ def test_searcher_override_picks_embedding_searcher():
 
 def test_composite_searcher_merges_ordered_sources(stub_catalog, monkeypatch):
     """A stack runs each searcher and appends new, deduped evidence."""
-    from arc.core.strategies import resolve_role
     import sys
+
+    from arc.core.strategies import resolve_role
 
     monkeypatch.setenv("MP_API_KEY", "test-key")
     MPCls = resolve_role("searcher", overrides={"searcher": "materials_project"})
@@ -340,6 +341,7 @@ def test_ideator_delegates_catalog_lookup_to_searcher_strategy(stub_catalog):
     objective is no longer the verbatim goal; this test pins the searcher
     delegation, which is what it's actually exercising.)"""
     from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
+
     from arc.schemas.research import ResearchProposal
 
     ctx = _context()

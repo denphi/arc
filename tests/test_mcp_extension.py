@@ -73,7 +73,7 @@ def _install_fake_sdk(monkeypatch, tools_by_app, calls):
         made["i"] += 1
         return _FakeSession(app_tool_lists[idx], calls=calls)
 
-    import mcp
+    mcp = pytest.importorskip("mcp")
     monkeypatch.setattr(mcp, "ClientSession", _session_factory, raising=False)
     import mcp.client.streamable_http as http_mod
     monkeypatch.setattr(http_mod, "streamablehttp_client", _fake_http, raising=False)

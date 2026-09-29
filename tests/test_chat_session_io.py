@@ -9,7 +9,6 @@ import pytest
 
 from arc.chat.session_io import restore_session, save_session
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -209,7 +208,6 @@ def test_save_session_omits_empty_state(monkeypatch):
 def test_save_session_skip_default_does_not_touch_sidecar():
     """The ``"default"`` sentinel still bypasses every write — including
     the new sidecar."""
-    from arc.api.session_state import _state_path
 
     wf = _stub_workflow(
         session_id="default",

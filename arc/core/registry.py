@@ -224,6 +224,7 @@ class ComponentRegistry:
             raise KeyError(f"Agent not found: {name}")
         # Honour disable for both the bare name and the ``package:name`` form.
         if disabled_packages:
+            owner: str | None
             if ":" in name:
                 owner = name.split(":", 1)[0]
             else:
@@ -351,7 +352,9 @@ class ComponentRegistry:
 
     # --- workflows ---
 
-    def register_workflow(self, name: str, definition: dict, package_name: str | None = None) -> None:
+    def register_workflow(
+        self, name: str, definition: dict, package_name: str | None = None,
+    ) -> None:
         self._workflows.register(name, definition)
         self.record_source("workflow", name, package_name)
 
@@ -374,9 +377,7 @@ class ComponentRegistry:
 
     def get_script(self, name: str, disabled_packages: set[str] | None = None) -> dict[str, Any]:
         if self.is_disabled("script", name, disabled_packages):
-            raise KeyError(
-                f"Script '{name}' belongs to a package disabled for this session"
-            )
+            raise KeyError(f"Script '{name}' belongs to a package disabled for this session")
         return self._scripts.get(name)
 
     def list_scripts(self, disabled_packages: set[str] | None = None) -> list[str]:
@@ -469,7 +470,9 @@ class ComponentRegistry:
         logger.info("Audit action registered: %s (phase=%s, priority=%s)", name, phase, priority)
 
     def audit_actions_for_phase(
-        self, phase: str, disabled_packages: set[str] | None = None,
+        self,
+        phase: str,
+        disabled_packages: set[str] | None = None,
     ) -> list[Any]:
         """Return the actions registered for ``phase``, priority order.
 
@@ -478,7 +481,8 @@ class ComponentRegistry:
         """
         disabled = disabled_packages or set()
         return [
-            action for _prio, _name, action in self._audit_actions.get(phase, [])
+            action
+            for _prio, _name, action in self._audit_actions.get(phase, [])
             if getattr(action, "_arc_package", None) not in disabled
         ]
 
@@ -488,7 +492,10 @@ class ComponentRegistry:
     # --- report sections ---
 
     def register_report_section(
-        self, name: str, contributor: Any, package_name: str | None = None,
+        self,
+        name: str,
+        contributor: Any,
+        package_name: str | None = None,
     ) -> None:
         if package_name is not None:
             try:
@@ -501,7 +508,8 @@ class ComponentRegistry:
         return self._report_sections.list_names()
 
     def report_section_contributors(
-        self, disabled_packages: set[str] | None = None,
+        self,
+        disabled_packages: set[str] | None = None,
     ) -> list[Any]:
         """Every registered report-section contributor (item 7).
 
@@ -509,7 +517,8 @@ class ComponentRegistry:
         """
         disabled = disabled_packages or set()
         return [
-            c for c in (self._report_sections.get(n) for n in self._report_sections.list_names())
+            c
+            for c in (self._report_sections.get(n) for n in self._report_sections.list_names())
             if getattr(c, "_arc_package", None) not in disabled
         ]
 
@@ -546,9 +555,16 @@ class PackageScopedRegistry:
     }
     # register methods that accept a package_name keyword directly.
     _PACKAGE_AWARE = {
-        "register_agent", "register_skill", "register_adapter", "register_backend",
-        "register_provider", "register_loader", "register_workflow", "register_audit_action",
-        "register_report_section", "register_script",
+        "register_agent",
+        "register_skill",
+        "register_adapter",
+        "register_backend",
+        "register_provider",
+        "register_loader",
+        "register_workflow",
+        "register_audit_action",
+        "register_report_section",
+        "register_script",
     }
 
     def __init__(self, registry: ComponentRegistry, package_name: str | None):
@@ -561,9 +577,11 @@ class PackageScopedRegistry:
             return target
 
         if attr in self._PACKAGE_AWARE:
+
             def _wrapped(*args: Any, **kwargs: Any) -> Any:
                 kwargs.setdefault("package_name", self._package_name)
                 return target(*args, **kwargs)
+
             return _wrapped
 
         if attr in self._SOURCE_ONLY:
@@ -577,6 +595,7 @@ class PackageScopedRegistry:
                     if name not in before:
                         self._registry.record_source(kind, name, self._package_name)
                 return result
+
             return _wrapped_source
 
         # register_extension / register_extension_definition / register_package

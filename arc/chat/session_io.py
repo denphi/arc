@@ -40,7 +40,6 @@ from typing import Any
 from arc.api.session_state import load_state, save_state
 from arc.session import load_session_meta, save_session_meta
 
-
 # Memory keys that live in ``session_state.json``. The chat reads the
 # whole subset on restore and writes it back on save; the API does the
 # same. Keeping the list in one place avoids drift between the two

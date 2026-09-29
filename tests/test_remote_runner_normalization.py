@@ -26,9 +26,15 @@ from arc.core.loader import _import_class
 
 pytestmark = pytest.mark.chat
 
-_docker_mod = sys.modules[_import_class("arc.packages.arc-docker.adapter:DockerRuntimeAdapter").__module__]
-_slurm_mod = sys.modules[_import_class("arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter").__module__]
-_k8s_mod = sys.modules[_import_class("arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter").__module__]
+_docker_mod = sys.modules[
+    _import_class("arc.packages.arc-docker.adapter:DockerRuntimeAdapter").__module__
+]
+_slurm_mod = sys.modules[
+    _import_class("arc.packages.arc-slurm.adapter:SlurmRuntimeAdapter").__module__
+]
+_k8s_mod = sys.modules[
+    _import_class("arc.packages.arc-k8s.adapter:KubernetesRuntimeAdapter").__module__
+]
 
 # A workflow whose simulate() returns objects that are NOT natively JSON
 # serializable but expose numpy's .item()/.tolist() — the exact shape the
@@ -68,8 +74,12 @@ def _run_slurm_runner(tmp_path: Path) -> dict:
     (job / "inputs.json").write_text(json.dumps({"x": 1.0}))
     script = job / "runner.py"
     script.write_text(_slurm_mod._RUNNER)
-    subprocess.run([sys.executable, str(script)], check=True, timeout=30,
-                   env={"ARC_JOB_DIR": str(job), "PATH": "/usr/bin:/bin"})
+    subprocess.run(
+        [sys.executable, str(script)],
+        check=True,
+        timeout=30,
+        env={"ARC_JOB_DIR": str(job), "PATH": "/usr/bin:/bin"},
+    )
     return json.loads((job / "result.json").read_text())
 
 
@@ -81,10 +91,11 @@ def _run_k8s_runner(tmp_path: Path) -> dict:
     runner = _k8s_mod._RUNNER.replace("/arc/", str(root / "arc") + "/")
     script = root / "runner.py"
     script.write_text(runner)
-    proc = subprocess.run([sys.executable, str(script)], check=True, timeout=30,
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, str(script)], check=True, timeout=30, capture_output=True, text=True
+    )
     line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("ARC_RESULT::"))
-    return json.loads(line[len("ARC_RESULT::"):])
+    return json.loads(line[len("ARC_RESULT::") :])
 
 
 @pytest.mark.parametrize("runner", [_run_docker_runner, _run_slurm_runner, _run_k8s_runner])

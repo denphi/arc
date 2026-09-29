@@ -22,10 +22,7 @@ Both reject the same set of unsafe constructs.
 from __future__ import annotations
 
 import ast
-import cmath
-import itertools
 import logging
-import math
 import types
 from typing import Any
 

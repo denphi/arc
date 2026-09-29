@@ -21,8 +21,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Any, Awaitable, Callable, Iterable, Optional, Union
-
+from typing import Awaitable, Callable, Iterable, Optional, Union
 
 # A handler is either a callable or a "module:attr" string for lazy import.
 # NB: this is a *module-level* alias evaluated at import time, so PEP 604

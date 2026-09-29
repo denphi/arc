@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 
-
 # Words that are stripped from candidate target keys when parsing free
 # text — they're meaningless on their own.
 NOISE_WORDS: frozenset[str] = frozenset({

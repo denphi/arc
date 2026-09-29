@@ -18,7 +18,6 @@ import pytest
 
 from arc.schemas.research import ValidatorReport
 
-
 pytestmark = pytest.mark.chat
 
 

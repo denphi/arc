@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
-from arc.chat.ui import BOLD, CYAN, DIM, GREEN, c, err, header, ok, step
+from arc.chat.ui import CYAN, DIM, GREEN, c, err, header, ok, step
 
 
 async def run(state: ChatState, argv: list[str]) -> None:
@@ -21,12 +21,21 @@ async def run(state: ChatState, argv: list[str]) -> None:
         if runtime is not None:
             step("Active", c(", ".join(runtime) or "none", CYAN) + c("  [session override]", GREEN))
         elif configured:
-            step("Active", c(", ".join(spec["name"] for spec in configured), CYAN) + c("  [arc.toml]", DIM))
+            step(
+                "Active",
+                c(", ".join(spec["name"] for spec in configured), CYAN) + c("  [arc.toml]", DIM),
+            )
         else:
             step("Active", c("none", DIM))
         available = state.workflow.registry.list_workflows()
         step("Available", ", ".join(available) if available else "none")
-        print(c("  /build-context <workflow> [workflow...] to override, /build-context reset to use arc.toml.", DIM))
+        print(
+            c(
+                "  /build-context <workflow> [workflow...] to override, "
+                "/build-context reset to use arc.toml.",
+                DIM,
+            )
+        )
         return
 
     if len(argv) == 1 and argv[0].lower() in {"reset", "clear"}:

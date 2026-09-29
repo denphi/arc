@@ -77,8 +77,8 @@ def test_mars_iterative_improvement_runs_end_to_end():
 
 def test_experiment_decomposer_returns_multiple_distinct_proposals():
     # YAML-workflow-only agent (registry path), so import by file.
-    from arc.core.loader import _import_class
     from arc.contracts.agent import AgentContext
+    from arc.core.loader import _import_class
 
     DecomposerCls = _import_class(
         "arc.packages.arc-mars.agents.experiment_decomposer:ExperimentDecomposerAgent"
@@ -97,8 +97,8 @@ def test_experiment_decomposer_returns_multiple_distinct_proposals():
 
 
 def test_improvement_planner_handles_none_history_and_review_model():
-    from arc.core.loader import _import_class
     from arc.contracts.agent import AgentContext
+    from arc.core.loader import _import_class
     from arc.schemas.review import ReviewResult
 
     Cls = _import_class(
@@ -121,8 +121,8 @@ def test_improvement_planner_handles_none_history_and_review_model():
 
 
 def test_improvement_planner_derives_param_names_from_plan():
-    from arc.core.loader import _import_class
     from arc.contracts.agent import AgentContext
+    from arc.core.loader import _import_class
 
     Cls = _import_class(
         "arc.packages.arc-mars.agents.improvement_planner:ImprovementPlannerAgent"

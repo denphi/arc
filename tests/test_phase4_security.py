@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -28,7 +27,7 @@ class _State:
 
 @pytest.mark.asyncio
 async def test_allowed_tools_rejects_unlisted_tool():
-    from arc.chat.tools import build_tool_registry, ToolValidationError
+    from arc.chat.tools import ToolValidationError, build_tool_registry
     reg = build_tool_registry()
     state = _State()
     # The reviewer agent's allowed_tools is []; with allowed=[] it must
@@ -65,7 +64,7 @@ async def test_allowed_tools_none_means_no_restriction():
 
 @pytest.mark.asyncio
 async def test_zero_budget_raises_immediately():
-    from arc.chat.tools import build_tool_registry, ToolBudgetExceeded
+    from arc.chat.tools import ToolBudgetExceeded, build_tool_registry
     reg = build_tool_registry()
     state = _State(cost_budget_usd=0)
     with pytest.raises(ToolBudgetExceeded):
@@ -74,7 +73,7 @@ async def test_zero_budget_raises_immediately():
 
 @pytest.mark.asyncio
 async def test_negative_budget_raises():
-    from arc.chat.tools import build_tool_registry, ToolBudgetExceeded
+    from arc.chat.tools import ToolBudgetExceeded, build_tool_registry
     reg = build_tool_registry()
     state = _State(cost_budget_usd=-0.5)
     with pytest.raises(ToolBudgetExceeded):
@@ -85,9 +84,9 @@ async def test_negative_budget_raises():
 
 @pytest.mark.asyncio
 async def test_side_effect_tool_blocked_in_plan_mode():
+    from arc.chat.plan_mode import PlanModeBlocked, plan_mode
     from arc.chat.tools import Tool, ToolRegistry
     from arc.chat.tools.routing import StartGoalArgs
-    from arc.chat.plan_mode import plan_mode, PlanModeBlocked
 
     async def writer(state, args):
         state.extras["wrote"] = True
@@ -111,6 +110,7 @@ async def test_side_effect_tool_blocked_in_plan_mode():
 
 def test_agent_definition_strict_extra_forbidden():
     from pydantic import ValidationError
+
     from arc.chat.agents.definition import AgentDefinition
     with pytest.raises(ValidationError):
         AgentDefinition(name="x", typoed_field="oops")

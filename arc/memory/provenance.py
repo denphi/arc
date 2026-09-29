@@ -38,10 +38,10 @@ def _truncate_value(value: Any, depth: int = 0) -> Any:
             out["…truncated"] = f"+{len(items) - _MAX_ITEMS} keys"
         return out
     if isinstance(value, (list, tuple)):
-        out = [_truncate_value(v, depth + 1) for v in value[:_MAX_ITEMS]]
+        items_out = [_truncate_value(v, depth + 1) for v in value[:_MAX_ITEMS]]
         if len(value) > _MAX_ITEMS:
-            out.append(f"…(+{len(value) - _MAX_ITEMS} items)")
-        return out
+            items_out.append(f"…(+{len(value) - _MAX_ITEMS} items)")
+        return items_out
     return value
 
 

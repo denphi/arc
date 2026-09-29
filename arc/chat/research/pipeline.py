@@ -27,7 +27,6 @@ from typing import (
     runtime_checkable,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

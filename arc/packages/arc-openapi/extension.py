@@ -58,6 +58,7 @@ def _host_allowed(url: str, allow_private: bool) -> bool:
     if allow_private:
         return True
     from urllib.parse import urlparse
+
     from arc.api.security import _host_is_private
     host = urlparse(url).hostname or ""
     return not _host_is_private(host)

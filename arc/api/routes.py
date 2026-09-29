@@ -306,7 +306,6 @@ async def list_artifacts(session_id: str | None = None):
 
 @router.post("/execution/run")
 async def run_execution(request: ExecutionRequest, session_id: str | None = None):
-    from arc.runtime.backend import safe_backend_action
 
     if not request.artifact_id:
         raise HTTPException(status_code=400, detail="artifact_id is required")

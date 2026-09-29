@@ -131,7 +131,7 @@ def _host_is_private(host: str) -> bool:
         # call to a name the local resolver can't even map.
         return True
     for entry in addr_info:
-        ip = entry[4][0]
+        ip = str(entry[4][0])
         try:
             addr = ipaddress.ip_address(ip.split("%", 1)[0])
         except ValueError:

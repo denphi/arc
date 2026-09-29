@@ -14,7 +14,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from arc.packages.arc_sim2l.agents.hypothesis import (
     HypothesisCandidates,
     rank_candidates,
@@ -23,6 +22,7 @@ from arc.packages.arc_sim2l.agents.hypothesis import (
     stub_candidates,
 )
 from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
+
 from arc.schemas.research import ResearchGoal, ResearchProposal
 
 pytestmark = pytest.mark.chat

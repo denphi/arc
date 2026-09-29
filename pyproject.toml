@@ -101,13 +101,22 @@ target-version = "py39"
 # modern `X | None`. FA102 specifically guards the 3.9 regression.
 select = ["E", "F", "I", "FA"]
 
+[tool.ruff.lint.per-file-ignores]
+# LLM prompt templates: reflowing these triple-quoted strings would change
+# the text the model sees.
+"arc/packages/arc-sim2l/agents/planner.py" = ["E501"]
+"arc/packages/arc-sim2l/agents/reviewer.py" = ["E501"]
+"arc/packages/arc-claude-code/agents/coder.py" = ["E501"]
+
 [tool.mypy]
-# Lowest supported runtime — catches accidental 3.10-only syntax (PEP 604
-# unions outside annotations, match statements) that would break the py39
-# FEniCS-conda path.
-python_version = "3.9"
+# Current mypy can't target 3.9; the 3.9 syntax guard is ruff's
+# target-version + FA rules above (and the py3.9 CI job).
+python_version = "3.10"
 strict = false
 ignore_missing_imports = true
+# Bundled packages live in hyphenated dirs (arc-sim2l, …) that mypy can't map
+# to module names; they're imported at runtime as arc.packages.arc_sim2l….
+exclude = ["^arc/packages/arc-"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -16,7 +16,6 @@ from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
 
-
 _PROMPT = """\
 You are generating an ARC Sim2L artifact.
 
@@ -102,7 +101,8 @@ def _build_codex_args(interactive_approvals: bool = False) -> tuple[list[str], l
     _append_option(args, "--cd", os.environ.get("ARC_CODEX_WORKDIR"))
     for item in shlex.split(os.environ.get("ARC_CODEX_CONFIG", "")):
         args.extend(["--config", item])
-    if os.environ.get("ARC_CODEX_SKIP_GIT_REPO_CHECK", "true").lower() in {"1", "true", "yes", "on"}:
+    skip_git_check = os.environ.get("ARC_CODEX_SKIP_GIT_REPO_CHECK", "true").lower()
+    if skip_git_check in {"1", "true", "yes", "on"}:
         args.append("--skip-git-repo-check")
     if interactive_approvals:
         args.append("--json")
@@ -204,12 +204,15 @@ class CodexCoderAgent(AgentContract):
     description = "Creates a Sim2L artifact by delegating code generation to the Codex CLI."
 
     async def run(self, input_data: ExperimentPlan) -> ArtifactDraft:
-        plan = input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        plan = (
+            input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        )
         workspace = self._workspace(plan)
         workspace.mkdir(parents=True, exist_ok=True)
 
         plan_json = json.dumps(plan.model_dump(), indent=2, default=str)
         from arc.runtime.workflow_safety import STRICT_ALLOWED_IMPORTS
+
         prompt = _PROMPT.format(
             allowed_imports=", ".join(sorted(_codex_allowed_imports(STRICT_ALLOWED_IMPORTS))),
             plan_json=plan_json,
@@ -224,7 +227,9 @@ class CodexCoderAgent(AgentContract):
                 "to the executable used to run Codex."
             )
 
-        permission_callback: PermissionCallback | None = self.context.config.get("permission_callback")
+        permission_callback: PermissionCallback | None = self.context.config.get(
+            "permission_callback"
+        )
         progress_callback: ProgressCallback | None = self.context.config.get("progress_callback")
         timeout = float(os.environ.get("ARC_CODEX_TIMEOUT_SECONDS", "300"))
 
@@ -240,7 +245,8 @@ class CodexCoderAgent(AgentContract):
             if not allow_non_interactive:
                 raise RuntimeError(
                     "Codex approval relay is not configured. Provide a permission_callback "
-                    "or set ARC_CODEX_ALLOW_NON_INTERACTIVE=true to run without user approval prompts."
+                    "or set ARC_CODEX_ALLOW_NON_INTERACTIVE=true to run without user "
+                    "approval prompts."
                 )
             stdout, stderr = await self._run_bypass(command, workspace, prompt, timeout)
 
@@ -258,8 +264,7 @@ class CodexCoderAgent(AgentContract):
         sim2l_path = workspace / "sim2l.yaml"
         if not workflow_path.exists() or not sim2l_path.exists():
             raise RuntimeError(
-                "Codex completed but did not create workflow.py and sim2l.yaml in "
-                f"{workspace}"
+                f"Codex completed but did not create workflow.py and sim2l.yaml in {workspace}"
             )
         try:
             _preflight_workflow(workflow_path)
@@ -306,7 +311,10 @@ class CodexCoderAgent(AgentContract):
     ) -> tuple[str, str]:
         global_args, args = _build_codex_args(interactive_approvals=False)
         proc = await asyncio.create_subprocess_exec(
-            command, *global_args, *args, prompt,
+            command,
+            *global_args,
+            *args,
+            prompt,
             cwd=workspace,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -344,7 +352,10 @@ class CodexCoderAgent(AgentContract):
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    command, *global_args, *args, prompt,
+                    command,
+                    *global_args,
+                    *args,
+                    prompt,
                     cwd=workspace,
                     stdin=stdin_slave_fd,
                     stdout=asyncio.subprocess.PIPE,
@@ -389,13 +400,18 @@ class CodexCoderAgent(AgentContract):
                         except Exception:
                             decision = "decline"
                         approval_decisions.append(decision)
-                        response = json.dumps({
-                            "method": "execCommandApproval",
-                            "params": {
-                                "approval_id": approval_id,
-                                "decision": decision,
-                            },
-                        }) + "\n"
+                        response = (
+                            json.dumps(
+                                {
+                                    "method": "execCommandApproval",
+                                    "params": {
+                                        "approval_id": approval_id,
+                                        "decision": decision,
+                                    },
+                                }
+                            )
+                            + "\n"
+                        )
                         # The PTY may already be closed if Codex exited
                         # between emitting the request and our reply. Writing
                         # to a dead fd raises OSError; swallow it and stop
@@ -430,7 +446,9 @@ class CodexCoderAgent(AgentContract):
                 raise CodexApprovalAborted("Codex run aborted by user approval decision.", "abort")
             if proc.returncode != 0:
                 if any(decision == "decline" for decision in approval_decisions):
-                    raise CodexApprovalDenied("Codex run stopped after user declined approval.", "decline")
+                    raise CodexApprovalDenied(
+                        "Codex run stopped after user declined approval.", "decline"
+                    )
                 raise RuntimeError(
                     f"Codex command failed with exit code {proc.returncode}: "
                     f"{(stderr or stdout).strip()[:500]}"

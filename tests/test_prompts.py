@@ -19,7 +19,6 @@ import pytest
 
 from arc.schemas.research import ResearchGoal, ResearchProposal
 
-
 pytestmark = pytest.mark.chat
 
 

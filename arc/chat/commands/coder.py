@@ -9,9 +9,12 @@ from arc.chat.ui import BOLD, DIM, c, err, ok, step
 
 async def run(state: ChatState, argv: list[str]) -> None:
     from arc.chat.loop import (
-        _selected_coder, _set_selected_coder,
-        _available_coding_backends, _set_session_package_state, _save_session,
+        _available_coding_backends,
         _coder_aliases,
+        _save_session,
+        _selected_coder,
+        _set_selected_coder,
+        _set_session_package_state,
     )
     if not argv:
         step("Coder", _selected_coder(state.workflow))

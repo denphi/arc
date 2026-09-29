@@ -10,7 +10,6 @@ Sessions are identified by a short human-readable ID like 'bandgap-abc1'.
 """
 from __future__ import annotations
 
-
 import json
 import os
 import re
@@ -120,11 +119,15 @@ def save_session_meta(
         "run_history": run_history,
         "target": target,
         "next_parameters": next_parameters,
-        "schema_registry": schema_registry if schema_registry is not None else existing.get("schema_registry", {}),
+        "schema_registry": schema_registry
+        if schema_registry is not None
+        else existing.get("schema_registry", {}),
         "primary_goal": primary_goal if primary_goal is not None else existing.get("primary_goal"),
         "refinements": refinements if refinements is not None else existing.get("refinements", []),
         "packages": packages if packages is not None else existing.get("packages", {}),
-        "agent_overrides": agent_overrides if agent_overrides is not None else existing.get("agent_overrides", {}),
+        "agent_overrides": agent_overrides
+        if agent_overrides is not None
+        else existing.get("agent_overrides", {}),
         "created": created or existing.get("created", ""),
     }
     atomic_write_text(p, json.dumps(meta, indent=2))
@@ -137,6 +140,7 @@ def load_session_meta(session_id: str) -> dict[str, Any]:
 def delete_session(session_id: str) -> bool:
     """Delete a session directory and all its contents. Returns True if deleted."""
     import shutil
+
     d = _session_dir(session_id)
     if not d.exists() or not (d / "session.json").exists():
         return False

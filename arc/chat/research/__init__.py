@@ -14,8 +14,8 @@ from arc.chat.research.pipeline import (
     Phase,
     Pipeline,
     PipelineHook,
-    PipelineState,
     PipelinePhaseError,
+    PipelineState,
     run_pipeline,
 )
 

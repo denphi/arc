@@ -10,8 +10,6 @@ Usage (via chat.py /optimize command):
 """
 from __future__ import annotations
 
-
-import math
 import random
 from typing import Any
 
@@ -19,10 +17,11 @@ from arc.contracts.agent import AgentContract
 from arc.runtime.key_matching import format_pct_off, target_errors
 from arc.schemas.artifact import ArtifactRecord
 
-
 # ── Fitness ───────────────────────────────────────────────────────────────────
 
-def _fitness(outputs: dict[str, Any], target: dict[str, Any], registry: dict | None = None) -> float:
+def _fitness(
+    outputs: dict[str, Any], target: dict[str, Any], registry: dict | None = None
+) -> float:
     """Lower is better. Returns sum of squared % error across matched target keys.
 
     Returns inf when no target keys match any output (not 0 — that would look
@@ -47,6 +46,7 @@ def _pct_off(outputs: dict, target: dict, registry: dict | None = None) -> str:
 
 
 # ── GA operators ──────────────────────────────────────────────────────────────
+
 
 def _initial_population(schema: dict[str, Any], pop_size: int) -> list[dict]:
     """Sample pop_size individuals from a range around each parameter's default."""
@@ -97,6 +97,7 @@ def _select(population: list[dict], fitnesses: list[float], n: int) -> list[dict
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
+
 class GeneticOptimizerAgent(AgentContract):
     name = "optimizer"
     description = "Runs a genetic algorithm over an artifact's input space to reach a target."
@@ -134,6 +135,7 @@ class GeneticOptimizerAgent(AgentContract):
         if not schema:
             try:
                 from arc.sim2l_schema import load_sim2l_schema
+
                 schema, _ = load_sim2l_schema(artifact.path)
                 if schema:
                     artifact.metadata["sim2l_inputs"] = schema
@@ -160,8 +162,10 @@ class GeneticOptimizerAgent(AgentContract):
         # check, etc.), we fall back to `adapter.run()` per evaluation.
         _simulate_func = None
         try:
-            from arc.runtime.sim2l_adapter import _import_workflow_func
             from pathlib import Path
+
+            from arc.runtime.sim2l_adapter import _import_workflow_func
+
             workflow_path = Path(artifact.path) / "workflow.py"
             if workflow_path.exists():
                 _simulate_func = _import_workflow_func(artifact.path, artifact.artifact_id)
@@ -215,12 +219,14 @@ class GeneticOptimizerAgent(AgentContract):
                 best_ind = dict(gen_best_ind)
                 best_out = dict(gen_best_out)
 
-            history.append({
-                "generation": gen,
-                "best_fitness": gen_best_fit,
-                "best_inputs": gen_best_ind,
-                "best_outputs": gen_best_out,
-            })
+            history.append(
+                {
+                    "generation": gen,
+                    "best_fitness": gen_best_fit,
+                    "best_inputs": gen_best_ind,
+                    "best_outputs": gen_best_out,
+                }
+            )
 
             if on_generation:
                 await on_generation(gen, gen_best_ind, gen_best_out, gen_best_fit)
@@ -230,7 +236,9 @@ class GeneticOptimizerAgent(AgentContract):
                 break
 
             # Next generation: elites + crossover/mutation offspring
-            sorted_pop = [population[i] for i in sorted(range(len(fitnesses)), key=lambda i: fitnesses[i])]
+            sorted_pop = [
+                population[i] for i in sorted(range(len(fitnesses)), key=lambda i: fitnesses[i])
+            ]
             elites = sorted_pop[:n_elite]
             parents = _select(population, fitnesses, pop_size - n_elite)
             offspring = []

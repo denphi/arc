@@ -21,7 +21,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 # Stable lifecycle phases. Both the YAML workflow path and the chat phase
 # path dispatch at these points so audits are not UI-specific.
 # ``step.before`` / ``step.after`` are generic: the YAML workflow path fires

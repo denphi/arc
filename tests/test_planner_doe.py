@@ -18,7 +18,6 @@ import pytest
 
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -137,6 +136,7 @@ def test_sobol_better_uniformity_than_random_on_2d():
     confirm the Sobol sample touches more cells than a fixed-seed
     uniform sample for the same point count."""
     import random
+
     from arc.packages.arc_sim2l.agents.planner_doe import sobol_sequence
 
     n = 16

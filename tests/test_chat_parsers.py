@@ -23,7 +23,6 @@ from arc.chat.parsers import (
     tokens_for_relevance,
 )
 
-
 pytestmark = pytest.mark.chat
 
 

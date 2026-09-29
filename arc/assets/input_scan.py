@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from pathlib import Path
 
 from arc.assets.files import FileAsset
 from arc.assets.store import FileStore
-
 
 DEFAULT_INPUTS_DIR = "./data"
 logger = logging.getLogger(__name__)

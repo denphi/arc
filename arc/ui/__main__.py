@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 
-
 DEFAULT_HOST = "127.0.0.1"
 # 8080 collides with common local containers (Docker-proxied Jupyter, etc.)
 # which often bind *:8080 on IPv6 and shadow localhost; default to a free port.

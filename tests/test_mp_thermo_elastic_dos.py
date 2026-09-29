@@ -29,7 +29,6 @@ import pytest
 
 from arc.schemas.research import ResearchGoal, ResearchProposal
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -303,7 +302,8 @@ def test_planner_attribution_lists_each_contributing_block():
 def test_planner_does_not_overwrite_existing_thermo_param():
     """LLM-supplied parameters survive a thermo splice."""
     from arc.packages.arc_sim2l.agents.planner import (
-        _apply_mp_property_defaults, _fallback_plan,
+        _apply_mp_property_defaults,
+        _fallback_plan,
     )
 
     ctx = _planner_context(catalog_hits=[_mp_hit_full()])
@@ -344,7 +344,8 @@ def test_planner_no_op_when_property_blocks_all_missing():
 def test_planner_handles_garbage_block_shape():
     """A metadata block that isn't a dict must not crash the splice."""
     from arc.packages.arc_sim2l.agents.planner import (
-        _apply_mp_property_defaults, _fallback_plan,
+        _apply_mp_property_defaults,
+        _fallback_plan,
     )
 
     hit = _mp_hit_full()
@@ -363,8 +364,9 @@ def test_planner_handles_garbage_block_shape():
 def test_search_then_plan_carries_all_axes(monkeypatch):
     """Search returns a Si record → planner has lattice, thermo,
     elastic, and DOS defaults."""
-    from arc.core.strategies import resolve_role
     from arc.packages.arc_sim2l.agents.planner import PlannerAgent
+
+    from arc.core.strategies import resolve_role
 
     monkeypatch.setenv("MP_API_KEY", "test-key")
 

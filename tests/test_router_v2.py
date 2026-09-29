@@ -3,13 +3,11 @@
 import pytest
 
 from arc.chat.router_v2 import (
-    ToolDecision,
     _parse_tool_call,
     route_via_tools,
 )
 from arc.chat.tools import build_tool_registry
 from tests.fakes import FakeProvider
-
 
 pytestmark = pytest.mark.chat
 
@@ -258,7 +256,6 @@ async def test_ab_parity_on_unambiguous_inputs():
 @pytest.mark.asyncio
 async def test_full_pipeline_route_then_dispatch():
     """End-to-end: text → router → registry.dispatch → state mutated."""
-    from arc.chat.tools.registry import ToolValidationError
 
     provider = FakeProvider(replies=[
         '{"tool": "start_research_goal", "args": {"goal": "simulate Si"}}'

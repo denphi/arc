@@ -22,7 +22,6 @@ from arc.core.strategies import (
     resolve_strategy_name,
 )
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -198,6 +197,7 @@ def test_packages_resolve_role_works_without_workflow():
 def test_strategy_command_list_all_does_not_crash():
     """``/strategy`` with no args prints role table — must not raise."""
     import asyncio
+
     from arc.chat.commands.strategy import run
     from tests.fakes import make_workflow
 
@@ -209,9 +209,10 @@ def test_strategy_command_list_all_does_not_crash():
 
 def test_strategy_command_lists_strategies_for_role():
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     state = ChatState(workflow=make_workflow())
     asyncio.run(run(state, ["planner"]))
@@ -220,9 +221,10 @@ def test_strategy_command_lists_strategies_for_role():
 def test_strategy_command_sets_session_override(monkeypatch):
     """``/strategy planner default`` records the override in memory."""
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     workflow = make_workflow()
     state = ChatState(workflow=workflow)
@@ -235,9 +237,10 @@ def test_strategy_command_sets_session_override(monkeypatch):
 
 def test_strategy_command_sets_space_separated_stack(monkeypatch):
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     workflow = make_workflow()
     state = ChatState(workflow=workflow)
@@ -252,9 +255,10 @@ def test_strategy_command_sets_space_separated_stack(monkeypatch):
 
 def test_strategy_command_reset_clears_override(monkeypatch):
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     workflow = make_workflow(memory={"strategy_overrides": {"planner": "default"}})
     state = ChatState(workflow=workflow)
@@ -267,9 +271,10 @@ def test_strategy_command_reset_clears_override(monkeypatch):
 def test_strategy_command_rejects_unknown_strategy(monkeypatch):
     """A typo in the impl name must not silently set a bogus override."""
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     workflow = make_workflow()
     state = ChatState(workflow=workflow)
@@ -281,9 +286,10 @@ def test_strategy_command_rejects_unknown_strategy(monkeypatch):
 
 def test_strategy_command_rejects_unknown_role(monkeypatch):
     import asyncio
+
     from arc.chat.commands.strategy import run
-    from tests.fakes import make_workflow
     from arc.chat.state import ChatState
+    from tests.fakes import make_workflow
 
     workflow = make_workflow()
     state = ChatState(workflow=workflow)

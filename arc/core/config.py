@@ -55,7 +55,8 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
 
     A project config overlays the bundled defaults (``arc/arc.toml``, shipped
     inside the package) so a project can add an external package path
-    without copying ARC's whole package catalogue. For ``[packages].paths`` the lists are appended and de-duped;
+    without copying ARC's whole package catalogue. For ``[packages].paths``
+    the lists are appended and de-duped;
     other local keys override the bundled defaults recursively.
 
     The returned dict is a fresh ``deepcopy`` of the cache entry — review
@@ -131,9 +132,7 @@ def _absolutize_package_paths(config: dict[str, Any], config_path: Path) -> None
     ]
 
 
-def resolve_package_paths(
-    config: dict[str, Any], config_path: Path
-) -> list[str]:
+def resolve_package_paths(config: dict[str, Any], config_path: Path) -> list[str]:
     """Turn the ``[packages].paths`` entries into absolute paths.
 
     Relative paths are anchored at the config file's directory (matching the
@@ -161,15 +160,14 @@ def package_name_for_path(package_dir: Path) -> str:
         return package_dir.name
     try:
         import yaml
+
         data = yaml.safe_load(manifest.read_text()) or {}
         return data.get("name") or package_dir.name
     except Exception:  # noqa: BLE001 — name resolution must never raise
         return package_dir.name
 
 
-def filter_package_paths(
-    package_paths: list[str], package_config: dict[str, Any]
-) -> list[str]:
+def filter_package_paths(package_paths: list[str], package_config: dict[str, Any]) -> list[str]:
     """Apply ``[packages].enabled`` / ``[packages].disabled`` to resolved paths.
 
     ``enabled`` (when non-empty) is an allow-list — only those package names
@@ -227,12 +225,14 @@ def build_context_workflow_specs(config: dict[str, Any]) -> list[dict[str, Any]]
         if isinstance(item, str):
             name = item.strip()
             if name:
-                specs.append({
-                    "name": name,
-                    "required": True,
-                    "cache": "per_iteration",
-                    "inputs": {},
-                })
+                specs.append(
+                    {
+                        "name": name,
+                        "required": True,
+                        "cache": "per_iteration",
+                        "inputs": {},
+                    }
+                )
             continue
         if not isinstance(item, dict):
             continue
@@ -242,12 +242,14 @@ def build_context_workflow_specs(config: dict[str, Any]) -> list[dict[str, Any]]
         inputs = item.get("inputs") or {}
         if not isinstance(inputs, dict):
             inputs = {}
-        specs.append({
-            "name": name,
-            "required": bool(item.get("required", True)),
-            "cache": str(item.get("cache") or "per_iteration"),
-            "inputs": dict(inputs),
-        })
+        specs.append(
+            {
+                "name": name,
+                "required": bool(item.get("required", True)),
+                "cache": str(item.get("cache") or "per_iteration"),
+                "inputs": dict(inputs),
+            }
+        )
     return specs
 
 

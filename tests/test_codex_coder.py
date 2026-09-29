@@ -6,7 +6,6 @@ import pytest
 from arc.contracts.agent import AgentContext
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 
-
 codex_coder = importlib.import_module("arc.packages.arc-codex.agents.coder")
 
 
@@ -132,7 +131,9 @@ def test_codex_prompt_lists_configured_allowed_imports(monkeypatch, tmp_path):
     from arc.runtime.workflow_safety import STRICT_ALLOWED_IMPORTS
 
     prompt = codex_coder._PROMPT.format(
-        allowed_imports=", ".join(sorted(codex_coder._codex_allowed_imports(STRICT_ALLOWED_IMPORTS))),
+        allowed_imports=", ".join(
+            sorted(codex_coder._codex_allowed_imports(STRICT_ALLOWED_IMPORTS))
+        ),
         plan_json=plan_json,
     )
 
@@ -144,9 +145,7 @@ def test_codex_preflight_honors_configured_allowed_imports(monkeypatch, tmp_path
     monkeypatch.setenv("ARC_CODEX_ALLOWED_IMPORTS", "dolfin")
     workflow_path = tmp_path / "workflow.py"
     workflow_path.write_text(
-        "def simulate(**inputs):\n"
-        "    import dolfin\n"
-        "    return {'result': 1.0}\n",
+        "def simulate(**inputs):\n    import dolfin\n    return {'result': 1.0}\n",
         encoding="utf-8",
     )
 
@@ -246,7 +245,9 @@ async def test_declined_codex_approval_raises_typed_error(monkeypatch, tmp_path)
     monkeypatch.setattr(codex_coder.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(codex_coder.pty, "openpty", lambda: (101, 102))
     monkeypatch.setattr(codex_coder.os, "close", lambda fd: None)
-    monkeypatch.setattr(codex_coder.os, "write", lambda fd, data: writes.append((fd, data.decode())))
+    monkeypatch.setattr(
+        codex_coder.os, "write", lambda fd, data: writes.append((fd, data.decode()))
+    )
     agent = codex_coder.CodexCoderAgent(context=AgentContext(session_id="test-session"))
 
     async def callback(approval_id, command, reason):

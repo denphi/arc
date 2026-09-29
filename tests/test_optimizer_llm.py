@@ -14,13 +14,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from arc.packages.arc_sim2l.agents.optimizer_llm import (
     LLMGuidedOptimizerAgent,
     _lhs_candidates,
     _parse_candidates,
 )
-
 
 pytestmark = pytest.mark.chat
 

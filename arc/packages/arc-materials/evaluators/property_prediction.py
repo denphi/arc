@@ -2,7 +2,6 @@
 
 from typing import Any
 
-
 # Known physical bounds for common materials properties.
 PROPERTY_BOUNDS: dict[str, tuple[float, float]] = {
     "band_gap": (0.0, 14.0),          # eV

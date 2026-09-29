@@ -7,8 +7,7 @@ injected so we can exercise every code path without an LLM."""
 import pytest
 
 from arc.chat.registry import CommandRegistry, SlashCommand
-from arc.chat.router import route_input, Route
-
+from arc.chat.router import Route, route_input
 
 pytestmark = pytest.mark.chat
 

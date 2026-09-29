@@ -59,6 +59,7 @@ class BandgapEvaluator:
             "reason": (
                 "Value within physical range."
                 if passed
-                else f"Value {band_gap} eV outside physical range [{self.PHYSICAL_MIN}, {self.PHYSICAL_MAX}]."
+                else f"Value {band_gap} eV outside physical range "
+                f"[{self.PHYSICAL_MIN}, {self.PHYSICAL_MAX}]."
             ),
         }

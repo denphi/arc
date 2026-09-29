@@ -13,7 +13,6 @@ from arc.chat.io_utils import (
     print_banner,
 )
 
-
 pytestmark = pytest.mark.chat
 
 

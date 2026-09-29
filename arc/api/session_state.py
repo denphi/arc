@@ -32,7 +32,6 @@ from typing import Any
 
 from arc.session import _session_dir  # type: ignore[attr-defined]
 
-
 _FILE_NAME = "session_state.json"
 
 

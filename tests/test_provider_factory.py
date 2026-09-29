@@ -96,14 +96,20 @@ def test_arc_providers_package_registers_anthropic_and_openai():
     assert "anthropic" in reg.list_providers()
     assert "openai" in reg.list_providers()
     # And the factory constructs them.
-    assert type(build_provider("anthropic", token="x", registry=reg)).__name__ == "AnthropicProvider"
+    assert (
+        type(build_provider("anthropic", token="x", registry=reg)).__name__ == "AnthropicProvider"
+    )
     assert type(build_provider("openai", registry=reg)).__name__ == "OpenAIProvider"
 
 
 def test_core_providers_dir_has_only_openwebui():
     """The package-first principle, pinned: core keeps only openwebui."""
     from pathlib import Path
+
     import arc.providers as providers_pkg
+
     providers_dir = Path(providers_pkg.__file__).parent
-    subpkgs = {p.name for p in providers_dir.iterdir() if p.is_dir() and not p.name.startswith("__")}
+    subpkgs = {
+        p.name for p in providers_dir.iterdir() if p.is_dir() and not p.name.startswith("__")
+    }
     assert subpkgs == {"openwebui"}, f"core providers should be only openwebui, got {subpkgs}"

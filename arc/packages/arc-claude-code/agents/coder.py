@@ -17,7 +17,6 @@ from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
 
-
 _PROMPT = """\
 You are generating an ARC Sim2L artifact.
 
@@ -72,7 +71,9 @@ def _build_claude_code_args(mcp_config_path: str | None = None) -> list[str]:
     _append_option(args, "--max-budget-usd", os.environ.get("ARC_CLAUDE_CODE_MAX_BUDGET_USD"))
     _append_option(args, "--effort", os.environ.get("ARC_CLAUDE_CODE_EFFORT"))
     _append_option(args, "--system-prompt", os.environ.get("ARC_CLAUDE_CODE_SYSTEM_PROMPT"))
-    _append_option(args, "--append-system-prompt", os.environ.get("ARC_CLAUDE_CODE_APPEND_SYSTEM_PROMPT"))
+    _append_option(
+        args, "--append-system-prompt", os.environ.get("ARC_CLAUDE_CODE_APPEND_SYSTEM_PROMPT")
+    )
     if os.environ.get("ARC_CLAUDE_CODE_ALLOWED_TOOLS"):
         args.extend(["--allowedTools", os.environ["ARC_CLAUDE_CODE_ALLOWED_TOOLS"]])
     if os.environ.get("ARC_CLAUDE_CODE_DISALLOWED_TOOLS"):
@@ -157,7 +158,7 @@ def _progress_from_event(
             delta_buffers[idx] = buf
             emitted = delta_emitted.get(idx, 0)
             if len(buf) - emitted >= _DELTA_EMIT_EVERY:
-                snippet = buf[emitted:emitted + _DELTA_EMIT_EVERY].strip()
+                snippet = buf[emitted : emitted + _DELTA_EMIT_EVERY].strip()
                 snippet = " ".join(snippet.split())[:100]
                 delta_emitted[idx] = len(buf)
                 if snippet:
@@ -173,7 +174,7 @@ def _progress_from_event(
         for block in event.get("message", {}).get("content", []):
             if block.get("type") == "tool_use":
                 name = block.get("name", "")
-                inp  = block.get("input", {})
+                inp = block.get("input", {})
                 if name == "Write":
                     return f"writing {Path(inp.get('file_path', '')).name}"
                 if name == "Edit":
@@ -233,7 +234,9 @@ class ClaudeCodeCoderAgent(AgentContract):
     description = "Creates a Sim2L artifact by delegating code generation to Claude Code."
 
     async def run(self, input_data: ExperimentPlan) -> ArtifactDraft:
-        plan = input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        plan = (
+            input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        )
         workspace = self._workspace(plan)
         workspace.mkdir(parents=True, exist_ok=True)
 
@@ -249,7 +252,9 @@ class ClaudeCodeCoderAgent(AgentContract):
                 "ARC_CLAUDE_CODE_COMMAND to the executable used to run it."
             )
 
-        permission_callback: PermissionCallback | None = self.context.config.get("permission_callback")
+        permission_callback: PermissionCallback | None = self.context.config.get(
+            "permission_callback"
+        )
         progress_callback: ProgressCallback | None = self.context.config.get("progress_callback")
         timeout = float(os.environ.get("ARC_CLAUDE_CODE_TIMEOUT_SECONDS", "300"))
 
@@ -276,7 +281,9 @@ class ClaudeCodeCoderAgent(AgentContract):
         (workspace / "claude-code.stdout.txt").write_text(stdout or "", encoding="utf-8")
         (workspace / "claude-code.stderr.txt").write_text(stderr or "", encoding="utf-8")
 
-        if stderr and ("usage limit" in stderr.lower() or "purchase more credits" in stderr.lower()):
+        if stderr and (
+            "usage limit" in stderr.lower() or "purchase more credits" in stderr.lower()
+        ):
             raise RuntimeError(
                 "Claude Code usage limit reached. Purchase more credits at "
                 "https://chatgpt.com/codex/settings/usage or try again later."
@@ -380,7 +387,8 @@ class ClaudeCodeCoderAgent(AgentContract):
         if progress:
             progress("Claude Code started")
         proc = await asyncio.create_subprocess_exec(
-            command, *args,
+            command,
+            *args,
             cwd=workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -403,7 +411,11 @@ class ClaudeCodeCoderAgent(AgentContract):
             await proc.communicate()
             raise RuntimeError(f"Claude Code timed out after {timeout}s")
 
-        stderr = stderr_b.decode(errors="replace") if isinstance(stderr_b, bytes) else str(stderr_b or "")
+        stderr = (
+            stderr_b.decode(errors="replace")
+            if isinstance(stderr_b, bytes)
+            else str(stderr_b or "")
+        )
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Claude Code command failed with exit code {proc.returncode}: "
@@ -421,6 +433,7 @@ class ClaudeCodeCoderAgent(AgentContract):
         timeout: float,
     ) -> tuple[str, str]:
         import uuid
+
         run_id = uuid.uuid4().hex[:8]
         tmp = Path(tempfile.gettempdir())
         # Keep paths short — Unix socket limit on macOS is ~104 chars.
@@ -435,9 +448,7 @@ class ClaudeCodeCoderAgent(AgentContract):
                 }
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".mcp.json", delete=False, dir=tmp
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".mcp.json", delete=False, dir=tmp) as f:
             json.dump(mcp_config, f)
             mcp_config_path = f.name
 
@@ -446,7 +457,8 @@ class ClaudeCodeCoderAgent(AgentContract):
             progress("Claude Code started with permission relay")
 
         proc = await asyncio.create_subprocess_exec(
-            command, *args,
+            command,
+            *args,
             cwd=workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -478,7 +490,11 @@ class ClaudeCodeCoderAgent(AgentContract):
             Path(mcp_config_path).unlink(missing_ok=True)
             Path(sock_path).unlink(missing_ok=True)
 
-        stderr = stderr_b.decode(errors="replace") if isinstance(stderr_b, bytes) else str(stderr_b or "")
+        stderr = (
+            stderr_b.decode(errors="replace")
+            if isinstance(stderr_b, bytes)
+            else str(stderr_b or "")
+        )
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Claude Code command failed with exit code {proc.returncode}: "
@@ -530,9 +546,9 @@ class ClaudeCodeCoderAgent(AgentContract):
                 except json.JSONDecodeError:
                     continue
 
-                request_id    = params.get("request_id", "")
-                tool_name     = params.get("tool_name", "")
-                description   = params.get("description", "")
+                request_id = params.get("request_id", "")
+                tool_name = params.get("tool_name", "")
+                description = params.get("description", "")
                 input_preview = params.get("input_preview", "")
 
                 try:
@@ -560,7 +576,9 @@ class ClaudeCodeCoderAgent(AgentContract):
 
         words = re.sub(r"[^a-z0-9 ]", " ", plan.proposal.objective.lower()).split()
         stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by", "via"}
-        stem = "_".join([w for w in words if w not in stop][:4])[:40] or "claude_code_sim2l_artifact"
+        stem = (
+            "_".join([w for w in words if w not in stop][:4])[:40] or "claude_code_sim2l_artifact"
+        )
         digest = hashlib.sha256(
             json.dumps(plan.model_dump(), sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()[:8]

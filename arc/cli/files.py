@@ -9,7 +9,6 @@ import typer
 
 from arc.orchestrator.workflow import ResearchWorkflow
 
-
 file_app = typer.Typer(
     name="file",
     help="Attach, inspect, and load session files.",

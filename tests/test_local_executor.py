@@ -12,7 +12,6 @@ Pins the "ARC has its own execution, no sim2l dependency" guarantee:
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +24,6 @@ from arc.runtime.executor import (
     run_in_process,
     run_in_subprocess,
 )
-
 
 pytestmark = pytest.mark.chat
 
@@ -169,7 +167,9 @@ def test_execute_workflow_missing_workflow():
 
 def test_execute_workflow_rejects_unsafe_source():
     """The AST safety lint runs before execution (subprocess mode)."""
-    d = _artifact_dir("import os\ndef simulate(x=1.0):\n    os.system('echo hi')\n    return {'z': x}\n")
+    d = _artifact_dir(
+        "import os\ndef simulate(x=1.0):\n    os.system('echo hi')\n    return {'z': x}\n"
+    )
     r = execute_workflow(d, "a", {"x": 1.0})
     assert r["ok"] is False
     assert "safety" in r["error"].lower() or "disallowed" in r["error"].lower()
@@ -178,11 +178,7 @@ def test_execute_workflow_rejects_unsafe_source():
 # ── allowed_imports seam (domain runtime adapters, e.g. FEniCS) ──────────
 
 
-_JSON_IMPORT = (
-    "def simulate(x=1.0):\n"
-    "    import json\n"
-    "    return {'z': len(json.dumps([x]))}\n"
-)
+_JSON_IMPORT = "def simulate(x=1.0):\n    import json\n    return {'z': len(json.dumps([x]))}\n"
 
 
 def test_execute_workflow_default_rejects_non_stdlib_import():
@@ -204,10 +200,7 @@ def test_execute_workflow_allowed_imports_widens_the_lint():
 
 def test_execute_workflow_allowed_imports_still_blocks_escapes():
     # Widening the IMPORT allow-list must NOT drop the sandbox-escape lint.
-    evil = (
-        "def simulate(x=1.0):\n"
-        "    return {'z': ().__class__.__bases__[0].__subclasses__()}\n"
-    )
+    evil = "def simulate(x=1.0):\n    return {'z': ().__class__.__bases__[0].__subclasses__()}\n"
     d = _artifact_dir(evil)
     r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json", "os"}))
     assert r["ok"] is False
@@ -234,11 +227,7 @@ def test_allowed_imports_accepts_from_module_import_member():
     # `from json import dumps` must pass when `json` is allow-listed — the
     # member name `dumps` is a binding, not a module to vet. (Mirrors
     # `from dolfin import UnitSquareMesh` for the FEniCS adapter.)
-    src = (
-        "from json import dumps\n"
-        "def simulate(x=1.0):\n"
-        "    return {'z': len(dumps([x]))}\n"
-    )
+    src = "from json import dumps\ndef simulate(x=1.0):\n    return {'z': len(dumps([x]))}\n"
     d = _artifact_dir(src)
     r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
     assert r["ok"] is True, r
@@ -247,11 +236,7 @@ def test_allowed_imports_accepts_from_module_import_member():
 
 def test_allowed_imports_accepts_star_import_from_allowed_module():
     # `from json import *` is the FEniCS-tutorial `from fenics import *` shape.
-    src = (
-        "from json import *\n"
-        "def simulate(x=1.0):\n"
-        "    return {'z': len(dumps([x]))}\n"
-    )
+    src = "from json import *\ndef simulate(x=1.0):\n    return {'z': len(dumps([x]))}\n"
     d = _artifact_dir(src)
     r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
     assert r["ok"] is True, r
@@ -260,11 +245,7 @@ def test_allowed_imports_accepts_star_import_from_allowed_module():
 def test_from_import_still_blocks_disallowed_source_module():
     # The source module is still gated: `from os import getcwd` must fail
     # because `os` isn't allow-listed (not because of the member name).
-    src = (
-        "from os import getcwd\n"
-        "def simulate(x=1.0):\n"
-        "    return {'z': getcwd()}\n"
-    )
+    src = "from os import getcwd\ndef simulate(x=1.0):\n    return {'z': getcwd()}\n"
     d = _artifact_dir(src)
     r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
     assert r["ok"] is False
@@ -273,11 +254,7 @@ def test_from_import_still_blocks_disallowed_source_module():
 
 def test_relative_from_import_is_blocked():
     # `from . import helpers` has no vettable source module → reject.
-    src = (
-        "from . import helpers\n"
-        "def simulate(x=1.0):\n"
-        "    return {'z': 1}\n"
-    )
+    src = "from . import helpers\ndef simulate(x=1.0):\n    return {'z': 1}\n"
     d = _artifact_dir(src)
     r = execute_workflow(d, "a", {"x": 1.0}, allowed_imports=frozenset({"json"}))
     assert r["ok"] is False
@@ -303,10 +280,7 @@ def test_name_main_guard_is_permitted():
 def test_dunder_attribute_name_still_blocked():
     # The bare-Name `__name__` exemption must NOT leak to attribute access:
     # `f.__name__` (a stepping stone to `__globals__`) stays rejected.
-    src = (
-        "def simulate(x=1.0):\n"
-        "    return {'z': simulate.__name__}\n"
-    )
+    src = "def simulate(x=1.0):\n    return {'z': simulate.__name__}\n"
     d = _artifact_dir(src)
     r = execute_workflow(d, "a", {"x": 1.0})
     assert r["ok"] is False
@@ -326,12 +300,14 @@ def test_execute_workflow_reads_timeout_env_at_call_time(monkeypatch):
 
 def _adapter():
     from arc.runtime.local import LocalRuntimeAdapter
+
     return LocalRuntimeAdapter()
 
 
 def _record(path):
-    return SimpleNamespace(artifact_id="art-e2e", path=path,
-                           name="sim", version="0.1.0", metadata={})
+    return SimpleNamespace(
+        artifact_id="art-e2e", path=path, name="sim", version="0.1.0", metadata={}
+    )
 
 
 _SCHEMA_XY = (
@@ -407,12 +383,9 @@ def test_adapter_run_sweep():
 
 def _import_lines(module_relpath: str) -> list[str]:
     """Return the actual import statements of a module (not prose)."""
-    src = (
-        Path(__file__).resolve().parent.parent / "arc" / module_relpath
-    ).read_text()
+    src = (Path(__file__).resolve().parent.parent / "arc" / module_relpath).read_text()
     return [
-        line.strip() for line in src.splitlines()
-        if line.strip().startswith(("import ", "from "))
+        line.strip() for line in src.splitlines() if line.strip().startswith(("import ", "from "))
     ]
 
 

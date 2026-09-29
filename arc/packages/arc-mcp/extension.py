@@ -108,7 +108,10 @@ def _content_to_plain(result: Any) -> Any:
     parts = []
     for block in getattr(result, "content", None) or []:
         text = getattr(block, "text", None)
-        parts.append(text if text is not None else getattr(block, "model_dump", lambda: str(block))())
+        if text is None:
+            dump = getattr(block, "model_dump", None)
+            text = dump() if callable(dump) else str(block)
+        parts.append(text)
     return parts if len(parts) != 1 else parts[0]
 
 
@@ -146,7 +149,8 @@ class McpExtension(ExtensionContract):
 
         logger.info(
             "mcp extension ready: %d app(s), %d tool skill(s) registered.",
-            len(self._sessions), len(self._skill_names),
+            len(self._sessions),
+            len(self._skill_names),
         )
 
     async def _connect_app(self, app: dict, ClientSession, registry) -> None:
@@ -155,13 +159,17 @@ class McpExtension(ExtensionContract):
 
         if transport in ("http", "streamable-http", "streamable_http"):
             from mcp.client.streamable_http import streamablehttp_client
+
             read, write, _ = await self._stack.enter_async_context(
                 streamablehttp_client(app["url"], headers=app.get("headers") or None)
             )
         elif transport == "stdio":
             from mcp.client.stdio import StdioServerParameters, stdio_client
+
             params = StdioServerParameters(
-                command=app["command"], args=app.get("args") or [], env=app.get("env") or None,
+                command=app["command"],
+                args=app.get("args") or [],
+                env=app.get("env") or None,
             )
             read, write = await self._stack.enter_async_context(stdio_client(params))
         else:
@@ -174,7 +182,10 @@ class McpExtension(ExtensionContract):
         tools = await session.list_tools()
         for tool in getattr(tools, "tools", []) or []:
             skill = _McpToolSkill(
-                app_name, tool.name, session, getattr(tool, "description", "") or "",
+                app_name,
+                tool.name,
+                session,
+                getattr(tool, "description", "") or "",
             )
             registry.register_skill(skill.name, skill)
             self._skill_names.append(skill.name)

@@ -51,41 +51,38 @@ regressions.
 """
 
 # Public entry points ──────────────────────────────────────────────────────
-from arc.chat.loop import (
-    main,
-    chat_loop,
-    print_banner,
-    chat_input,
-    chat_input_async,
-)
-
 # Legacy re-exports (kept for backwards compatibility — prefer the
 # canonical submodule imports listed in the docstring above).
 from arc.chat.loop import (
-    # Classifiers / parsers
-    _is_question,
-    _llm_classify_intent,
-    _is_related_refinement,
-    _refinement_needs_artifact_rebuild,
-    _parse_target,
-    _parse_refinement_target,
-    _parse_target_command,
-    _normalize_chat_command,
-    _build_refined_goal,
-    # Adapters / helpers
-    _register_artifact_with_sim2l,
-    _check_sim2l_services,
-    _selected_coder,
-    _set_selected_coder,
-    _set_session_package_state,
-    _available_coding_backends,
-    _answer_question,
-    _save_session,
-    _restore_session,
+    _CONVERSATIONAL,
     # Constants
     _QUESTION_STARTERS,
     _RESEARCH_STARTERS,
-    _CONVERSATIONAL,
+    _answer_question,
+    _available_coding_backends,
+    _build_refined_goal,
+    _check_sim2l_services,
+    # Classifiers / parsers
+    _is_question,
+    _is_related_refinement,
+    _llm_classify_intent,
+    _normalize_chat_command,
+    _parse_refinement_target,
+    _parse_target,
+    _parse_target_command,
+    _refinement_needs_artifact_rebuild,
+    # Adapters / helpers
+    _register_artifact_with_sim2l,
+    _restore_session,
+    _save_session,
+    _selected_coder,
+    _set_selected_coder,
+    _set_session_package_state,
+    chat_input,
+    chat_input_async,
+    chat_loop,
+    main,
+    print_banner,
 )
 
 __all__ = [
@@ -94,4 +91,26 @@ __all__ = [
     "print_banner",
     "chat_input",
     "chat_input_async",
+    # Legacy underscored re-exports (see above).
+    "_CONVERSATIONAL",
+    "_QUESTION_STARTERS",
+    "_RESEARCH_STARTERS",
+    "_answer_question",
+    "_available_coding_backends",
+    "_build_refined_goal",
+    "_check_sim2l_services",
+    "_is_question",
+    "_is_related_refinement",
+    "_llm_classify_intent",
+    "_normalize_chat_command",
+    "_parse_refinement_target",
+    "_parse_target",
+    "_parse_target_command",
+    "_refinement_needs_artifact_rebuild",
+    "_register_artifact_with_sim2l",
+    "_restore_session",
+    "_save_session",
+    "_selected_coder",
+    "_set_selected_coder",
+    "_set_session_package_state",
 ]

@@ -17,12 +17,10 @@ import pytest
 from arc import chat
 from arc.chat import loop as chat_loop
 from tests.fakes import (
-    FakeProvider,
-    make_workflow,
     make_artifact,
     make_run,
+    make_workflow,
 )
-
 
 pytestmark = pytest.mark.chat
 

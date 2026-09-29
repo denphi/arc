@@ -4,7 +4,6 @@ import pytest
 
 from arc.chat._env import env_flag
 
-
 pytestmark = pytest.mark.chat
 
 

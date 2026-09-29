@@ -25,7 +25,6 @@ from typing import Any, Literal, Optional
 
 from arc.chat.registry import CommandRegistry, SlashCommand
 
-
 RouteKind = Literal[
     "command",        # slash command (cmd + argv)
     "command_error",  # malformed slash (e.g. /unknown, unmatched quote)

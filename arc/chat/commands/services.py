@@ -18,17 +18,23 @@ from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
 from arc.chat.ui import BOLD, DIM, GREEN, RED, c, err, ok, warn
 
-
 _VALID_SUBS = {"status", "start", "stop", "restart", "logs"}
 
 
 async def run(state: ChatState, argv: list[str]) -> None:
-    from arc.services import (
-        sim2l_available, status_all,
-        start as svc_start, stop as svc_stop,
-        _SERVICES, _log_path,
-    )
     from arc.chat.io_utils import check_sim2l_services
+    from arc.services import (
+        _SERVICES,
+        _log_path,
+        sim2l_available,
+        status_all,
+    )
+    from arc.services import (
+        start as svc_start,
+    )
+    from arc.services import (
+        stop as svc_stop,
+    )
 
     if not sim2l_available():
         err("sim2l is not installed. Install it with: pip install sim2l")

@@ -10,10 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -24,22 +24,23 @@ from pydantic import BaseModel, Field
 from arc.api import research_loop_routes as loop_actions
 from arc.api.research_loop_routes import router as research_loop_router
 from arc.api.routes import router as core_api_router
-from arc.api.session_state import load_state, save_state
 from arc.api.security import (
     LoopbackHostGuard,
     load_security_config,
-    token_matches,
     require_api_token,
+    token_matches,
     validate_provider_base_url,
 )
+from arc.api.session_state import load_state, save_state
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.runtime.backend import safe_backend_action
 from arc.schemas.research import ResearchGoal
-from arc.ui import jobs
 from arc.session import (
     delete_session as delete_session_dir,
+)
+from arc.session import (
     list_sessions,
     load_session_meta,
     new_session_id,
@@ -47,8 +48,8 @@ from arc.session import (
     session_paths,
     validate_session_id,
 )
+from arc.ui import jobs
 from arc.version import __version__
-
 
 STATIC_DIR = Path(__file__).parent / "static"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -406,7 +407,10 @@ def create_app() -> FastAPI:
                 {
                     "name": "Core API",
                     "base_path": "/api/core",
-                    "summary": "Research, artifact, execution, review, and provider-model endpoints.",
+                    "summary": (
+                        "Research, artifact, execution, review, and "
+                        "provider-model endpoints."
+                    ),
                 },
                 {
                     "name": "Research-loop API",
@@ -514,12 +518,16 @@ def create_app() -> FastAPI:
     def list_session_artifacts(session_id: str) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         paths = session_paths(session_id)
-        return {"session_id": session_id,
-                "artifacts": _list_artifacts_readonly(Path(paths["artifacts"]))}
+        return {
+            "session_id": session_id,
+            "artifacts": _list_artifacts_readonly(Path(paths["artifacts"])),
+        }
 
     @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}", dependencies=auth)
     def get_session_artifact(
-        session_id: str, artifact_id: str, version: str | None = None,
+        session_id: str,
+        artifact_id: str,
+        version: str | None = None,
     ) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
@@ -530,29 +538,41 @@ def create_app() -> FastAPI:
             "files": _list_artifact_files(Path(artifact.path)),
         }
 
-    @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}/files/{file_path:path}",
-             dependencies=auth)
+    @app.get(
+        "/api/sessions/{session_id}/artifacts/{artifact_id}/files/{file_path:path}",
+        dependencies=auth,
+    )
     def get_artifact_file(
-        session_id: str, artifact_id: str, file_path: str, version: str | None = None,
+        session_id: str,
+        artifact_id: str,
+        file_path: str,
+        version: str | None = None,
     ) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
         artifact = _resolve_artifact(registry, artifact_id, version or "0.1.0")
         content = _read_artifact_file(Path(artifact.path), file_path)
-        return {"session_id": session_id, "artifact_id": artifact.artifact_id,
-                "path": file_path, "content": content}
+        return {
+            "session_id": session_id,
+            "artifact_id": artifact.artifact_id,
+            "path": file_path,
+            "content": content,
+        }
 
     @app.get("/api/sessions/{session_id}/results", dependencies=auth)
     def list_session_results(
-        session_id: str, limit: int = 200, offset: int = 0,
+        session_id: str,
+        limit: int = 200,
+        offset: int = 0,
     ) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         paths = session_paths(session_id)
-        return {"session_id": session_id,
-                "limit": limit,
-                "offset": offset,
-                "results": _list_results_readonly(
-                    Path(paths["runs"]), limit=limit, offset=offset)}
+        return {
+            "session_id": session_id,
+            "limit": limit,
+            "offset": offset,
+            "results": _list_results_readonly(Path(paths["runs"]), limit=limit, offset=offset),
+        }
 
     @app.get("/api/sessions/{session_id}/results/{run_id}", dependencies=auth)
     def get_session_result(session_id: str, run_id: str) -> dict[str, Any]:
@@ -564,14 +584,20 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc))
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Result not found")
-        return {"session_id": session_id, "result": result.model_dump(),
-                "review": _review_for_result(session_id, run_id)}
+        return {
+            "session_id": session_id,
+            "result": result.model_dump(),
+            "review": _review_for_result(session_id, run_id),
+        }
 
     @app.get("/api/sessions/{session_id}/state", dependencies=auth)
     def get_session_state(session_id: str) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
-        return {"session_id": session_id, "state": load_state(session_id),
-                "meta": load_session_meta(session_id)}
+        return {
+            "session_id": session_id,
+            "state": load_state(session_id),
+            "meta": load_session_meta(session_id),
+        }
 
     @app.patch("/api/sessions/{session_id}/target", dependencies=auth)
     def patch_session_target(session_id: str, body: TargetPatchRequest) -> dict[str, Any]:
@@ -585,13 +611,17 @@ def create_app() -> FastAPI:
             for key in body.remove or []:
                 target.pop(key, None)
         _save_session_fields(session_id, target=target)
-        return {"session_id": session_id, "target": target,
-                "session": _session_snapshot(session_id)}
+        return {
+            "session_id": session_id,
+            "target": target,
+            "session": _session_snapshot(session_id),
+        }
 
     @app.get("/api/strategies", dependencies=auth)
     def list_strategies(session_id: str | None = None) -> dict[str, Any]:
         return loop_actions.list_strategies_endpoint(
-            session_id=_safe_session_id(session_id) if session_id else "ui-default")
+            session_id=_safe_session_id(session_id) if session_id else "ui-default"
+        )
 
     @app.put("/api/sessions/{session_id}/strategies/{role}", dependencies=auth)
     def set_strategy(session_id: str, role: str, body: StrategySetRequest) -> dict[str, Any]:
@@ -607,7 +637,8 @@ def create_app() -> FastAPI:
     @app.get("/api/recipes", dependencies=auth)
     def list_recipes(session_id: str | None = None) -> dict[str, Any]:
         return loop_actions.list_recipes_endpoint(
-            session_id=_safe_session_id(session_id) if session_id else "ui-default")
+            session_id=_safe_session_id(session_id) if session_id else "ui-default"
+        )
 
     @app.post("/api/sessions/{session_id}/recipes/{name}/apply", dependencies=auth)
     def apply_recipe(session_id: str, name: str, body: RecipeApplyBody) -> dict[str, Any]:
@@ -624,6 +655,7 @@ def create_app() -> FastAPI:
     def validate_workflow(body: WorkflowValidateRequest) -> dict[str, Any]:
         """Dry-run the workflow safety check on draft source — no file write."""
         from arc.runtime.workflow_safety import check_workflow_source_safe
+
         ok, message = check_workflow_source_safe(body.source)
         return {"valid": ok, "message": message}
 
@@ -634,38 +666,55 @@ def create_app() -> FastAPI:
         source = body.files.get("workflow.py")
         if source:
             from arc.runtime.workflow_safety import check_workflow_source_safe
+
             ok, message = check_workflow_source_safe(source)
             if not ok:
                 raise HTTPException(status_code=400, detail=f"Unsafe workflow: {message}")
         registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
         from arc.schemas.artifact import ArtifactDraft
+
         try:
             record = registry.register(
                 ArtifactDraft(
-                    name=body.name, description=body.description,
-                    files=body.files, metadata=body.metadata,
+                    name=body.name,
+                    description=body.description,
+                    files=body.files,
+                    metadata=body.metadata,
                 ),
                 version=body.version,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        _append_thread(session_id, "tool", f"Created artifact {record.name}.",
-                       title="Artifact", payload=record.model_dump())
-        return {"session_id": session_id, "artifact": record.model_dump(),
-                "files": _list_artifact_files(Path(record.path)),
-                "session": _session_snapshot(session_id)}
+        _append_thread(
+            session_id,
+            "tool",
+            f"Created artifact {record.name}.",
+            title="Artifact",
+            payload=record.model_dump(),
+        )
+        return {
+            "session_id": session_id,
+            "artifact": record.model_dump(),
+            "files": _list_artifact_files(Path(record.path)),
+            "session": _session_snapshot(session_id),
+        }
 
     @app.get("/api/sessions/{session_id}/artifacts/{artifact_id}/diff", dependencies=auth)
     def diff_artifact_versions(
-        session_id: str, artifact_id: str, left: str, right: str,
+        session_id: str,
+        artifact_id: str,
+        left: str,
+        right: str,
     ) -> dict[str, Any]:
         session_id = _safe_session_id(session_id)
         registry = ArtifactRegistry(root=session_paths(session_id)["artifacts"])
         left_rec = _resolve_artifact(registry, artifact_id, left)
         right_rec = _resolve_artifact(registry, artifact_id, right)
         return {
-            "session_id": session_id, "artifact_id": left_rec.artifact_id,
-            "left": left, "right": right,
+            "session_id": session_id,
+            "artifact_id": left_rec.artifact_id,
+            "left": left,
+            "right": right,
             "diff": _diff_artifact_files(Path(left_rec.path), Path(right_rec.path)),
         }
 
@@ -699,8 +748,12 @@ def create_app() -> FastAPI:
         if jobs.registry.get(job_id) is None:
             raise HTTPException(status_code=404, detail="Job not found")
         cancelled = await jobs.registry.cancel(job_id)
-        return {"job_id": job_id, "cancelled": cancelled,
-                "status": jobs.registry.get(job_id).status}
+        job = jobs.registry.get(job_id)
+        return {
+            "job_id": job_id,
+            "cancelled": cancelled,
+            "status": job.status if job is not None else None,
+        }
 
     # ── sim2l services: status + on-demand start (mirrors the CLI prompt) ──
 
@@ -711,10 +764,10 @@ def create_app() -> FastAPI:
         services are running — the same condition the CLI chat uses to ask
         'Start sim2l services now?'."""
         from arc.services import sim2l_available, status_all
+
         services = status_all()
         any_running = any(
-            (s.get("running") if isinstance(s, dict) else bool(s))
-            for s in services.values()
+            (s.get("running") if isinstance(s, dict) else bool(s)) for s in services.values()
         )
         available = sim2l_available()
         return {
@@ -728,6 +781,7 @@ def create_app() -> FastAPI:
     async def services_start() -> dict[str, Any]:
         """Start the (non-optional) sim2l services, like '/services start'."""
         from arc.services import sim2l_available, start_all, status_all
+
         if not sim2l_available():
             raise HTTPException(status_code=400, detail="sim2l package is not installed")
         loop = asyncio.get_running_loop()
@@ -737,15 +791,16 @@ def create_app() -> FastAPI:
         for _ in range(10):
             services = await loop.run_in_executor(None, status_all)
             if all(
-                (s.get("running") if isinstance(s, dict) else bool(s))
-                for s in services.values()
+                (s.get("running") if isinstance(s, dict) else bool(s)) for s in services.values()
             ):
                 break
             await asyncio.sleep(0.5)
         return {"reports": reports, "services": status_all()}
 
     @app.get("/api/jobs/{job_id}/events", dependencies=[Depends(_require_token_header_or_query)])
-    async def job_events(job_id: str, request: Request, token: str | None = None) -> StreamingResponse:
+    async def job_events(
+        job_id: str, request: Request, token: str | None = None
+    ) -> StreamingResponse:
         job = jobs.registry.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -799,13 +854,10 @@ def _config_snapshot() -> dict[str, Any]:
     file_values = _read_env_values(path)
     # Secrets are reported as set/unset only — never echoed back.
     values = {
-        key: _masked(key, file_values.get(key, os.environ.get(key, "")))
-        for key in CONFIG_KEYS
+        key: _masked(key, file_values.get(key, os.environ.get(key, ""))) for key in CONFIG_KEYS
     }
     extra = {
-        key: _masked(key, value)
-        for key, value in file_values.items()
-        if key not in CONFIG_KEYS
+        key: _masked(key, value) for key, value in file_values.items() if key not in CONFIG_KEYS
     }
     return {
         "path": str(path),
@@ -887,11 +939,7 @@ def _write_env_values(path: Path, values: dict[str, str]) -> None:
             continue
         updated.append(line)
 
-    additions = [
-        key
-        for key in values
-        if key not in seen and values[key]
-    ]
+    additions = [key for key in values if key not in seen and values[key]]
     if additions:
         if updated and updated[-1].strip():
             updated.append("")
@@ -960,7 +1008,9 @@ def _list_artifacts_readonly(root: Path) -> list[dict[str, Any]]:
 
 
 def _list_results_readonly(
-    root: Path, limit: int = 200, offset: int = 0,
+    root: Path,
+    limit: int = 200,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     if not root.is_dir():
         return []
@@ -1048,11 +1098,14 @@ def _diff_artifact_files(left_dir: Path, right_dir: Path) -> list[dict[str, Any]
             right_text = _read_artifact_file(right_dir, rel) if rel in right_files else ""
         except HTTPException:
             right_text = ""
-        diff = "".join(difflib.unified_diff(
-            left_text.splitlines(keepends=True),
-            right_text.splitlines(keepends=True),
-            fromfile=f"a/{rel}", tofile=f"b/{rel}",
-        ))
+        diff = "".join(
+            difflib.unified_diff(
+                left_text.splitlines(keepends=True),
+                right_text.splitlines(keepends=True),
+                fromfile=f"a/{rel}",
+                tofile=f"b/{rel}",
+            )
+        )
         out.append({"path": rel, "changed": left_text != right_text, "diff": diff})
     return out
 
@@ -1145,7 +1198,9 @@ def _save_session_fields(session_id: str, **updates: Any) -> None:
         goal=updates.get("goal", meta.get("goal", "")),
         iteration=updates.get("iteration", meta.get("iteration", 0)),
         current_artifact_id=updates.get("current_artifact_id", meta.get("current_artifact_id")),
-        current_artifact_name=updates.get("current_artifact_name", meta.get("current_artifact_name")),
+        current_artifact_name=updates.get(
+            "current_artifact_name", meta.get("current_artifact_name")
+        ),
         run_history=updates.get("run_history", meta.get("run_history", [])),
         target=updates.get("target", meta.get("target", {})),
         next_parameters=updates.get("next_parameters", meta.get("next_parameters", {})),
@@ -1188,6 +1243,7 @@ async def _execute_artifact(
     # Full bookkeeping (audit phases + provenance + save/publish); a
     # blocking execution.before audit gates UI runs like chat/YAML runs.
     from arc.runtime.audit import AuditBlockedError
+
     try:
         result = await workflow.execute_recorded(artifact, inputs, action="ui_run")
     except AuditBlockedError as exc:
@@ -1215,7 +1271,8 @@ def _resolve_artifact(
     except FileNotFoundError:
         records = registry.list_all()
         matches = [
-            item for item in records
+            item
+            for item in records
             if item.artifact_id.startswith(artifact_ref) or item.name == artifact_ref
         ]
         if len(matches) == 1:
@@ -1362,8 +1419,12 @@ async def _run_research_job(job, session_id: str, body: "MessageRequest") -> dic
     _append_thread(session_id, "user", body.content, title="You")
     safe_base_url = validate_provider_base_url(body.base_url) if body.base_url else None
     workflow = ResearchWorkflow(
-        provider_name=body.provider, token=body.token, model=body.model,
-        base_url=safe_base_url, session_id=session_id, workflow_name=body.workflow_name,
+        provider_name=body.provider,
+        token=body.token,
+        model=body.model,
+        base_url=safe_base_url,
+        session_id=session_id,
+        workflow_name=body.workflow_name,
     )
     _hydrate_workflow_state(workflow)
     # Bridge package audit results into this job's SSE stream so the browser
@@ -1371,38 +1432,53 @@ async def _run_research_job(job, session_id: str, body: "MessageRequest") -> dic
     # arc.chat — the dispatcher just calls this callback per persisted result.
     audit_dispatcher = getattr(workflow, "audit", None)
     if audit_dispatcher is not None:
+
         def _emit_audit(record: dict[str, Any]) -> None:
-            kind = {"fail": "warning"}.get(record.get("status"), "audit")
+            kind = {"fail": "warning"}.get(str(record.get("status")), "audit")
             job.events.emit(
                 kind,
                 f"audit[{record.get('phase')}] {record.get('name')}: {record.get('summary', '')}",
                 audit=record,
             )
+
         audit_dispatcher.set_event_sink(_emit_audit)
     goal = ResearchGoal(goal=body.content, domain=body.domain, target=body.target)
     total = max(1, body.iterations)
     results: list[dict[str, Any]] = []
     for index in range(total):
-        job.events.emit("phase_start", f"Iteration {index + 1}/{total}",
-                        phase="iteration", index=index + 1)
+        job.events.emit(
+            "phase_start", f"Iteration {index + 1}/{total}", phase="iteration", index=index + 1
+        )
         result = await workflow.run_once(goal)
         results.append(result)
         job.progress = (index + 1) / total
         execution = (result or {}).get("execution") or {}
         review = (result or {}).get("review") or {}
-        job.events.emit("result", _assistant_summary(result), phase="iteration",
-                        index=index + 1, status=execution.get("status"))
+        job.events.emit(
+            "result",
+            _assistant_summary(result),
+            phase="iteration",
+            index=index + 1,
+            status=execution.get("status"),
+        )
         if review.get("summary"):
             job.events.emit("review", str(review["summary"]), index=index + 1)
-        job.events.emit("phase_end", f"Iteration {index + 1} done", phase="iteration",
-                        index=index + 1)
+        job.events.emit(
+            "phase_end", f"Iteration {index + 1} done", phase="iteration", index=index + 1
+        )
         if review.get("approved"):
             job.events.emit("status", "Goal approved — stopping early.")
             break
     _save_workflow_meta(workflow, body.content, body.target)
     final = results[-1] if results else None
-    _append_thread(session_id, "assistant", _assistant_summary(final), title="ARC",
-                   payload=final, suggestions=_suggestions_for(final))
+    _append_thread(
+        session_id,
+        "assistant",
+        _assistant_summary(final),
+        title="ARC",
+        payload=final,
+        suggestions=_suggestions_for(final),
+    )
     return {"result": final, "iterations": results, "session_id": session_id}
 
 
@@ -1420,9 +1496,9 @@ async def _sse_event_generator(job, request: "Request"):
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=15.0)
             except asyncio.TimeoutError:
-                yield ": keep-alive\n\n"   # comment frame to hold the connection
+                yield ": keep-alive\n\n"  # comment frame to hold the connection
                 continue
-            if event is None:           # stream closed sentinel
+            if event is None:  # stream closed sentinel
                 yield _sse_frame({"kind": "done", "text": "", "meta": {}, "ts": 0})
                 break
             yield _sse_frame(event.to_dict())
@@ -1499,8 +1575,9 @@ async def _dispatch_ui_command(body: CommandRunRequest) -> dict[str, Any]:
             text,
             title=f"/{command}",
             payload=payload if isinstance(payload, dict) else {"value": payload},
-            suggestions=_suggestions_for(run_result) if command in
-            {"run", "continue", "iterate"} else [],
+            suggestions=_suggestions_for(run_result)
+            if command in {"run", "continue", "iterate"}
+            else [],
         )
     return _command_response(command, session_id, text, payload)
 
@@ -1621,7 +1698,13 @@ async def _handle_research_command(
         goal_text = meta.get("primary_goal") or meta.get("goal")
         if not goal_text:
             raise HTTPException(status_code=400, detail="No saved goal. Use /run <goal>.")
-        iterations = 1 if command == "continue" else _positive_int(argv[0], default=body.iterations or 3) if argv else 3
+        iterations = (
+            1
+            if command == "continue"
+            else _positive_int(argv[0], default=body.iterations or 3)
+            if argv
+            else 3
+        )
 
     result = await _run_research_iterations(
         session_id=session_id,
@@ -1654,7 +1737,9 @@ def _handle_target_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
         target = _parse_key_values(argv)
 
     _save_session_fields(session_id, target=target)
-    text = "Target cleared." if not target else f"Target set to {json.dumps(target, sort_keys=True)}."
+    text = (
+        "Target cleared." if not target else f"Target set to {json.dumps(target, sort_keys=True)}."
+    )
     return text, {"target": target}
 
 
@@ -1664,7 +1749,9 @@ async def _handle_exec_command(
     workflow_name: str,
 ) -> tuple[str, Any]:
     if not argv:
-        raise HTTPException(status_code=400, detail="Usage: /exec <artifact_id_or_name> [key=value ...]")
+        raise HTTPException(
+            status_code=400, detail="Usage: /exec <artifact_id_or_name> [key=value ...]"
+        )
     artifact_ref = argv[0]
     inputs = _parse_key_values(argv[1:]) if len(argv) > 1 else {}
     payload = await _execute_artifact(
@@ -1676,7 +1763,11 @@ async def _handle_exec_command(
     )
     execution = payload["execution"]
     artifact = payload["artifact"]
-    return f"Executed {artifact.get('name') or artifact.get('artifact_id')}. Status: {execution.get('status')}.", payload
+    return (
+        f"Executed {artifact.get('name') or artifact.get('artifact_id')}. "
+        f"Status: {execution.get('status')}.",
+        payload,
+    )
 
 
 async def _handle_sweep_command(
@@ -1689,14 +1780,19 @@ async def _handle_sweep_command(
     artifact_ref = argv[0] if argv else None
     artifact = (
         _resolve_artifact(workflow.artifacts, artifact_ref)
-        if artifact_ref else workflow._context.memory.get("current_artifact")
+        if artifact_ref
+        else workflow._context.memory.get("current_artifact")
     )
     if artifact is None:
-        raise HTTPException(status_code=400, detail="No artifact. Use /sweep <artifact_id_or_name>.")
+        raise HTTPException(
+            status_code=400, detail="No artifact. Use /sweep <artifact_id_or_name>."
+        )
     plan = workflow._context.memory.get("current_plan")
     sweep = getattr(plan, "parameter_sweep", {}) if plan else {}
     if not sweep:
-        raise HTTPException(status_code=400, detail="No parameter sweep is available for this session.")
+        raise HTTPException(
+            status_code=400, detail="No parameter sweep is available for this session."
+        )
 
     # Sweep points get the same bookkeeping as single runs (audits, save,
     # run_history, hooks, backend publish) plus one provenance entry for
@@ -1724,8 +1820,7 @@ async def _handle_sweep_command(
                         "execution.after",
                         artifact_id=artifact.artifact_id,
                         run_id=result.run_id,
-                        output_summary={"status": result.status,
-                                        "outputs": result.outputs},
+                        output_summary={"status": result.status, "outputs": result.outputs},
                         payload={"sweep": True},
                     )
                 rows.append({"inputs": inputs, "run": result.model_dump()})
@@ -1745,8 +1840,15 @@ async def _handle_sweep_command(
                 await workflow.publish_provenance()
             except Exception:  # noqa: BLE001 — publishing is best-effort
                 pass
-    _save_workflow_meta(workflow, load_session_meta(session_id).get("goal", ""), workflow._context.memory.get("target", {}))
-    return f"Sweep completed with {len(rows)} runs.", {"artifact": artifact.model_dump(), "runs": rows}
+    _save_workflow_meta(
+        workflow,
+        load_session_meta(session_id).get("goal", ""),
+        workflow._context.memory.get("target", {}),
+    )
+    return f"Sweep completed with {len(rows)} runs.", {
+        "artifact": artifact.model_dump(),
+        "runs": rows,
+    }
 
 
 async def _handle_optimize_command(
@@ -1801,7 +1903,9 @@ async def _handle_services_command(argv: list[str]) -> tuple[str, Any]:
     sub = argv[0].lower() if argv else "status"
     target = argv[1].lower() if len(argv) > 1 else None
     if sub not in {"status", "start", "stop", "restart", "logs"}:
-        raise HTTPException(status_code=400, detail="Usage: /services [status|start|stop|restart|logs] [name]")
+        raise HTTPException(
+            status_code=400, detail="Usage: /services [status|start|stop|restart|logs] [name]"
+        )
 
     if sub == "status":
         payload = {"available": sim2l_available(), "services": status_all()}
@@ -1823,9 +1927,9 @@ async def _handle_services_command(argv: list[str]) -> tuple[str, Any]:
     if not sim2l_available():
         raise HTTPException(status_code=400, detail="sim2l package is not installed")
 
-    names = [target] if target else [
-        name for name, cfg in _SERVICES.items() if not cfg.get("optional")
-    ]
+    names = (
+        [target] if target else [name for name, cfg in _SERVICES.items() if not cfg.get("optional")]
+    )
     for name in names:
         if name not in _SERVICES:
             raise HTTPException(status_code=400, detail=f"Unknown service: {name}")
@@ -1841,7 +1945,10 @@ async def _handle_services_command(argv: list[str]) -> tuple[str, Any]:
             await loop.run_in_executor(None, stop, name)
             ok, message = await loop.run_in_executor(None, start, name)
         reports.append({"service": name, "ok": ok, "message": message})
-    return f"{sub.title()} requested for {len(reports)} service(s).", {"reports": reports, "services": status_all()}
+    return f"{sub.title()} requested for {len(reports)} service(s).", {
+        "reports": reports,
+        "services": status_all(),
+    }
 
 
 def _handle_strategy_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
@@ -1897,7 +2004,9 @@ def _handle_recipe_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
         return f"Applied recipe {payload['applied']}.", payload
     if sub == "save":
         if not rest:
-            raise HTTPException(status_code=400, detail="Usage: /recipe save <name> [description] [--force]")
+            raise HTTPException(
+                status_code=400, detail="Usage: /recipe save <name> [description] [--force]"
+            )
         force = "--force" in rest
         parts = [item for item in rest if not item.startswith("--")]
         payload = loop_actions.save_recipe_endpoint(
@@ -2009,7 +2118,9 @@ def _handle_package_toggle_command(session_id: str, argv: list[str]) -> tuple[st
     package_state["enabled"] = sorted(enabled)
     package_state["disabled"] = sorted(disabled)
     _save_session_fields(session_id, packages=package_state)
-    return f"{action.title()}d package {package_name} for this session.", {"packages": package_state}
+    return f"{action.title()}d package {package_name} for this session.", {
+        "packages": package_state
+    }
 
 
 def _handle_coder_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
@@ -2017,7 +2128,13 @@ def _handle_coder_command(session_id: str, argv: list[str]) -> tuple[str, Any]:
         return _handle_strategy_command(session_id, ["builder"])
     try:
         from arc.core.strategies import list_strategies
-        aliases = {"builder": "default", "builtin": "default", "built-in": "default", "sim2l": "default"}
+
+        aliases = {
+            "builder": "default",
+            "builtin": "default",
+            "built-in": "default",
+            "sim2l": "default",
+        }
         for spec in list_strategies("builder"):
             aliases[spec.name.lower()] = spec.name
             label = getattr(spec, "backend_label", None)
@@ -2093,18 +2210,20 @@ def _append_thread(
     suggestions: list[dict[str, Any]] | None = None,
 ) -> None:
     messages = _load_thread(session_id)
-    messages.append({
-        "id": f"msg-{int(time.time() * 1000)}-{len(messages)}",
-        "role": role,
-        "title": title or role.title(),
-        "content": content,
-        "payload": payload or {},
-        # Contextual next-step chips the UI renders under this message — set
-        # only when the loop signals it wants user input (e.g. a run that
-        # wasn't approved). Empty for a fresh/goal-first turn.
-        "suggestions": suggestions or [],
-        "ts": time.time(),
-    })
+    messages.append(
+        {
+            "id": f"msg-{int(time.time() * 1000)}-{len(messages)}",
+            "role": role,
+            "title": title or role.title(),
+            "content": content,
+            "payload": payload or {},
+            # Contextual next-step chips the UI renders under this message — set
+            # only when the loop signals it wants user input (e.g. a run that
+            # wasn't approved). Empty for a fresh/goal-first turn.
+            "suggestions": suggestions or [],
+            "ts": time.time(),
+        }
+    )
     _save_thread(session_id, messages)
 
 
@@ -2131,11 +2250,14 @@ def _suggestions_for(result: dict[str, Any] | None) -> list[dict[str, Any]]:
     ]
     next_params = result.get("next_parameters") or review.get("next_parameters")
     if isinstance(next_params, dict) and next_params:
-        chips.insert(0, {
-            "label": "Run suggested next parameters",
-            "command": "/continue",
-            "note": ", ".join(f"{k}={v}" for k, v in list(next_params.items())[:4]),
-        })
+        chips.insert(
+            0,
+            {
+                "label": "Run suggested next parameters",
+                "command": "/continue",
+                "note": ", ".join(f"{k}={v}" for k, v in list(next_params.items())[:4]),
+            },
+        )
     return chips
 
 
@@ -2146,14 +2268,16 @@ def _thread_for_session(session_id: str, results: list[dict[str, Any]]) -> list[
     meta = load_session_meta(session_id) or {}
     derived: list[dict[str, Any]] = []
     if meta.get("goal"):
-        derived.append({
-            "id": "derived-goal",
-            "role": "user",
-            "title": "Goal",
-            "content": meta["goal"],
-            "payload": {},
-            "ts": 0,
-        })
+        derived.append(
+            {
+                "id": "derived-goal",
+                "role": "user",
+                "title": "Goal",
+                "content": meta["goal"],
+                "payload": {},
+                "ts": 0,
+            }
+        )
 
     run_history = meta.get("run_history") or []
     if isinstance(run_history, list) and run_history:
@@ -2163,26 +2287,33 @@ def _thread_for_session(session_id: str, results: list[dict[str, Any]]) -> list[
             if not isinstance(entry, dict):
                 continue
             iteration = offset + idx + 1
-            derived.append({
-                "id": f"derived-run-history-{iteration}",
-                "role": "assistant",
-                "title": f"Iteration {iteration}",
-                "content": _run_history_message(entry, iteration),
-                "payload": entry,
-                "ts": iteration,
-            })
+            derived.append(
+                {
+                    "id": f"derived-run-history-{iteration}",
+                    "role": "assistant",
+                    "title": f"Iteration {iteration}",
+                    "content": _run_history_message(entry, iteration),
+                    "payload": entry,
+                    "ts": iteration,
+                }
+            )
         if derived:
             return derived
 
     for idx, result in enumerate(results[-5:]):
-        derived.append({
-            "id": f"derived-result-{idx}",
-            "role": "assistant",
-            "title": "Result",
-            "content": f"Run {result.get('run_id', idx)} finished with status {result.get('status', 'unknown')}.",
-            "payload": result,
-            "ts": idx + 1,
-        })
+        derived.append(
+            {
+                "id": f"derived-result-{idx}",
+                "role": "assistant",
+                "title": "Result",
+                "content": (
+                    f"Run {result.get('run_id', idx)} finished with status "
+                    f"{result.get('status', 'unknown')}."
+                ),
+                "payload": result,
+                "ts": idx + 1,
+            }
+        )
     return derived
 
 

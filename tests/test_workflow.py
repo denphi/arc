@@ -2,8 +2,8 @@
 
 import pytest
 
-from arc.core.registry import ComponentRegistry
 from arc.contracts.audit import AuditActionContract, AuditResult
+from arc.core.registry import ComponentRegistry
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.runtime.local import LocalRuntimeAdapter
 from arc.schemas.execution import ExecutionResult
@@ -144,7 +144,10 @@ class CaptureBuilderAgent:
         self.context = context
 
     async def run(self, input_data):
-        plan = input_data if isinstance(input_data, ExperimentPlan) else ExperimentPlan(**input_data)
+        plan = (
+            input_data if isinstance(input_data, ExperimentPlan)
+            else ExperimentPlan(**input_data)
+        )
         self.context.memory["captured_build_contexts"] = [
             item.model_dump() for item in plan.build_contexts
         ]
@@ -176,9 +179,7 @@ async def test_workflow_uses_declared_adapter():
     workflow.registry.register_workflow("marker-loop", definition)
     workflow.workflow_name = "marker-loop"
 
-    result = await workflow.run_once(
-        ResearchGoal(goal="Use marker adapter", target={"result": 42})
-    )
+    result = await workflow.run_once(ResearchGoal(goal="Use marker adapter", target={"result": 42}))
     assert result["execution"]["outputs"]["result"] == 42
     assert result["execution"]["metrics"]["marker_adapter"] is True
 
@@ -212,15 +213,14 @@ async def test_workflow_retries_retry_steps():
     definition["name"] = "flaky-loop"
     definition["steps"] = [
         {**step, "adapter": "flaky", "on_error": "retry", "retry_max": 1}
-        if step.get("id") == "run" else step
+        if step.get("id") == "run"
+        else step
         for step in definition["steps"]
     ]
     workflow.registry.register_workflow("flaky-loop", definition)
     workflow.workflow_name = "flaky-loop"
 
-    result = await workflow.run_once(
-        ResearchGoal(goal="Retry adapter", target={"result": 2.0})
-    )
+    result = await workflow.run_once(ResearchGoal(goal="Retry adapter", target={"result": 2.0}))
     assert result["execution"]["status"] == "completed"
     assert FlakyAdapter.attempts == 2
 
@@ -669,7 +669,10 @@ async def test_build_context_audit_provenance_recorded(monkeypatch):
 
     assert audit.events
     assert audit.events[0].phase == "build_context.after"
-    assert workflow._context.memory["build_context_provenance"][0]["package_name"] == "external-package"
+    assert (
+        workflow._context.memory["build_context_provenance"][0]["package_name"]
+        == "external-package"
+    )
 
 
 @pytest.mark.asyncio
@@ -710,9 +713,10 @@ async def test_build_context_workflow_rejects_invalid_output(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reviewer_uses_build_context_acceptance_and_reflector_records_failure():
-    from arc.contracts.agent import AgentContext
     from arc.packages.arc_sim2l.agents.reflector import ReflectorAgent
     from arc.packages.arc_sim2l.agents.reviewer import ReviewerAgent
+
+    from arc.contracts.agent import AgentContext
 
     memory = {
         "build_contexts": [

@@ -14,8 +14,9 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from arc.contracts.agent import AgentContext  # noqa: E402
 from arc.packages.arc_sim2l.agents import curator as curator_mod  # noqa: E402
+
+from arc.contracts.agent import AgentContext  # noqa: E402
 from arc.schemas.artifact import ArtifactRecord  # noqa: E402
 
 CuratorAgent = curator_mod.CuratorAgent

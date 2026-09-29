@@ -11,6 +11,15 @@ def _runner():
     return CliRunner()
 
 
+def _all_output(result) -> str:
+    """stdout + stderr regardless of the installed click's mixing default."""
+    try:
+        stderr = result.stderr
+    except (ValueError, AttributeError):
+        stderr = ""
+    return result.output + ("" if stderr in result.output else stderr)
+
+
 def test_skill_validate_accepts_canonical_bundle(tmp_path):
     bundle = tmp_path / "demo-skill"
     bundle.mkdir()
@@ -36,8 +45,8 @@ def test_skill_validate_rejects_invalid_bundle(tmp_path):
     result = _runner().invoke(app, ["skill", "validate", str(bundle)])
 
     assert result.exit_code == 1
-    assert "must declare description" in result.output
-    assert "must match skill name" in result.output
+    assert "must declare description" in _all_output(result)
+    assert "must match skill name" in _all_output(result)
 
 
 def test_skill_validate_rejects_unknown_and_mistyped_frontmatter(tmp_path):
@@ -56,6 +65,6 @@ def test_skill_validate_rejects_unknown_and_mistyped_frontmatter(tmp_path):
     result = _runner().invoke(app, ["skill", "validate", str(bundle)])
 
     assert result.exit_code == 1
-    assert "'description' must be a string" in result.output
-    assert "'allowed-tools' must be a string or list" in result.output
-    assert "unknown SKILL.md frontmatter fields: unexpected" in result.output
+    assert "'description' must be a string" in _all_output(result)
+    assert "'allowed-tools' must be a string or list" in _all_output(result)
+    assert "unknown SKILL.md frontmatter fields: unexpected" in _all_output(result)

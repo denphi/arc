@@ -25,11 +25,9 @@ strategy should not break the chat loop.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -575,7 +573,9 @@ def resolve_role(
                 "Strategy %r for role %r failed to load (%s) — falling back to %r",
                 spec.name, role, exc, default_name,
             )
-            return _load_spec(_find_spec(role, default_name))
+            default_spec = _find_spec(role, default_name)
+            if default_spec is not None:
+                return _load_spec(default_spec)
         raise
 
 
@@ -701,7 +701,10 @@ def _load_spec(spec: StrategySpec) -> Any:
     from arc.core.loader import import_module_file
 
     pkg_root = Path(__file__).resolve().parent.parent / "packages"
-    full_path = Path(spec.file_path) if spec.file_path else pkg_root / spec.package_dir / spec.module_path
+    full_path = (
+        Path(spec.file_path) if spec.file_path
+        else pkg_root / spec.package_dir / spec.module_path
+    )
     if not full_path.exists():
         raise FileNotFoundError(f"Strategy module not found: {full_path}")
     return getattr(import_module_file(full_path), spec.attr)

@@ -24,7 +24,7 @@ from __future__ import annotations
 from arc.chat.input import chat_input_async
 from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
-from arc.chat.ui import BOLD, CYAN, DIM, GREEN, RED, YELLOW, c, err, header, ok, step, warn
+from arc.chat.ui import BOLD, CYAN, DIM, GREEN, YELLOW, c, err, header, ok, step, warn
 
 
 def _list_recipes(state: ChatState) -> None:

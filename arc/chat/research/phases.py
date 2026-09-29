@@ -15,12 +15,21 @@ hook subscribers (auto-save, snapshot, JSON event sink) want to attach.
 from __future__ import annotations
 
 import textwrap
-from typing import Any
 
 from arc.chat.research.pipeline import Phase, PipelineState
 from arc.chat.ui import (
-    BOLD, CYAN, DIM, GREEN, RED, YELLOW,
-    c, err, header, ok, step, warn,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    RED,
+    YELLOW,
+    c,
+    err,
+    header,
+    ok,
+    step,
+    warn,
 )
 from arc.runtime.backend import safe_backend_action
 

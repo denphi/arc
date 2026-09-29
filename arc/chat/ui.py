@@ -12,7 +12,6 @@ in ``events.py``. New call sites should prefer ``emit()`` directly.
 
 from __future__ import annotations
 
-
 RESET  = "\033[0m"
 BOLD   = "\033[1m"
 DIM    = "\033[2m"

@@ -172,7 +172,9 @@ class AuditDispatcher:
                 pass
 
 
-def assemble_report(context: Any, *, extra_sections: dict[str, Any] | None = None) -> dict[str, Any]:
+def assemble_report(
+    context: Any, *, extra_sections: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a structured research report from accumulated state.
 
     Consumes the audit results, review, and run history on ``context.memory``
@@ -219,12 +221,16 @@ def assemble_report(context: Any, *, extra_sections: dict[str, Any] | None = Non
                 try:
                     value = contributor.contribute(context)
                 except Exception as exc:  # noqa: BLE001 — one section must not break the report
-                    logger.debug("report section %s failed: %s",
-                                 getattr(contributor, "name", contributor), exc)
+                    logger.debug(
+                        "report section %s failed: %s",
+                        getattr(contributor, "name", contributor),
+                        exc,
+                    )
                     continue
                 if value is not None:
-                    key = getattr(contributor, "section_name", None) \
-                        or getattr(contributor, "name", "section")
+                    key = getattr(contributor, "section_name", None) or getattr(
+                        contributor, "name", "section"
+                    )
                     report["sections"][key] = value
         except Exception as exc:  # noqa: BLE001
             logger.debug("report-section collection failed: %s", exc)

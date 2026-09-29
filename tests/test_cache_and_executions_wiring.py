@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -38,8 +37,10 @@ def _sim2l_accepts(key: str) -> bool:
 def test_get_repo_forwards_cache_url_to_sim2l_configure(monkeypatch):
     """The adapter must wire SIM2L_CACHE_URL into sim2l.configure so
     the executor can route lookups through the cache service."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+    pytest.importorskip("sim2l")
     import sim2l
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     monkeypatch.setenv("SIM2L_CACHE_URL", "http://localhost:8001")
 
@@ -76,8 +77,10 @@ def test_get_repo_forwards_cache_url_to_sim2l_configure(monkeypatch):
 
 def test_get_repo_forwards_cache_session_id(monkeypatch):
     """When the chat has authenticated, the cache session id flows to sim2l."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+    pytest.importorskip("sim2l")
     import sim2l
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     if not _sim2l_accepts("cache_session_id"):
         pytest.skip("installed sim2l doesn't expose cache_session_id")
@@ -105,8 +108,10 @@ def test_get_repo_skips_unaccepted_kwargs_gracefully(monkeypatch):
     build), the adapter must NOT pass it — otherwise sim2l raises and
     the adapter is unusable. The adapter probes the config object's
     attributes to decide what's safe to forward."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
+    pytest.importorskip("sim2l")
     import sim2l
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     # Stub a minimal config object exposing ONLY db_path. The adapter's
     # _accepted_configure_keys() walks the real config — replace it with
@@ -157,8 +162,9 @@ def _stub_sim2l_result(execution_id="exec-1"):
 
 def test_push_to_catalog_execution_registry_happy_path(monkeypatch):
     """When the catalog has the simulation, /executions receives the row."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
     import requests
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     posts = []
 
@@ -209,8 +215,9 @@ def test_push_to_catalog_execution_registry_happy_path(monkeypatch):
 def test_push_to_catalog_execution_silently_skips_on_404(monkeypatch):
     """When the catalog doesn't know the simulation, the registry push
     is a no-op and the run continues."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
     import requests
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     class _NotFound:
         status_code = 404
@@ -236,8 +243,9 @@ def test_push_to_catalog_execution_silently_skips_on_404(monkeypatch):
 
 def test_push_to_catalog_execution_records_401(monkeypatch):
     """Lookup returns 200, but POST /executions returns 401 → recorded."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
     import requests
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     class _LookupOk:
         status_code = 200
@@ -264,8 +272,9 @@ def test_push_to_catalog_execution_records_401(monkeypatch):
 
 def test_push_to_catalog_execution_computes_input_hash(monkeypatch):
     """Identical inputs produce identical hashes (stability check)."""
-    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
     import requests
+
+    from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
     posts = []
 
@@ -302,6 +311,7 @@ def test_authenticate_attaches_cache_session_to_adapter(monkeypatch):
     """The chat's _authenticate_and_prompt must set _cache_session_id on
     the adapter when the cache login succeeded."""
     import asyncio
+
     from arc.chat.loop import _authenticate_and_prompt
     from arc.chat.sim2l_auth import ServiceAuth
 
@@ -328,6 +338,7 @@ def test_authenticate_handles_adapter_without_cache_session_id_attr(monkeypatch)
     """Older adapter classes (or LocalRuntimeAdapter) don't have the new
     ``_cache_session_id`` slot — must not crash."""
     import asyncio
+
     from arc.chat.loop import _authenticate_and_prompt
     from arc.chat.sim2l_auth import ServiceAuth
 

@@ -261,7 +261,9 @@ class CompositeValidatorAgent(_CompositeBase):
             return await self.validate(input_data["outputs"], target=input_data.get("target"))
         return await self.validate(input_data)
 
-    async def validate(self, outputs: dict[str, Any], *, target: dict[str, Any] | None = None) -> Any:
+    async def validate(
+        self, outputs: dict[str, Any], *, target: dict[str, Any] | None = None,
+    ) -> Any:
         from arc.schemas.research import ValidatorReport
 
         passed = True
@@ -289,7 +291,10 @@ class CompositeValidatorAgent(_CompositeBase):
         if not ran_any:
             return ValidatorReport(passed=True)
         return ValidatorReport(
-            passed=passed, errors=errors, warnings=warnings, evaluations=evaluations,
+            passed=passed,
+            errors=errors,
+            warnings=warnings,
+            evaluations=evaluations,
         )
 
 
@@ -321,6 +326,7 @@ class CompositeReviewerAgent(_CompositeBase):
 
         if not reviews:
             from arc.core.strategies import resolve_role
+
             cls = resolve_role("reviewer", overrides={"reviewer": "default"})
             return await cls(context=self.context).run(input_data)
 
@@ -333,12 +339,18 @@ class CompositeReviewerAgent(_CompositeBase):
         iteration_complete = all(r.iteration_complete for _, r in reviews)
         # Strategy: most conservative wins (stop > explore > step).
         strategies = [r.strategy for _, r in reviews]
-        strategy = "stop" if "stop" in strategies else ("explore" if "explore" in strategies else "step")
+        strategy = (
+            "stop" if "stop" in strategies else ("explore" if "explore" in strategies else "step")
+        )
 
         return ReviewResult(
-            approved=approved, summary=summary or "Consensus review.",
-            strengths=strengths, weaknesses=weaknesses, recommendations=recommendations,
-            next_parameters=next_parameters, iteration_complete=iteration_complete,
+            approved=approved,
+            summary=summary or "Consensus review.",
+            strengths=strengths,
+            weaknesses=weaknesses,
+            recommendations=recommendations,
+            next_parameters=next_parameters,
+            iteration_complete=iteration_complete,
             strategy=strategy,
         )
 
@@ -346,7 +358,7 @@ class CompositeReviewerAgent(_CompositeBase):
 def _union(iterables) -> list[str]:
     out: list[str] = []
     for it in iterables:
-        for x in (it or []):
+        for x in it or []:
             if x not in out:
                 out.append(x)
     return out
@@ -367,7 +379,9 @@ class CompositeReflectorAgent(_CompositeBase):
     description = "Runs multiple reflectors and merges their lessons."
     role = "reflector"
 
-    async def run(self, input_data: ReviewResult, execution: ExecutionResult | None = None) -> dict[str, Any]:
+    async def run(
+        self, input_data: ReviewResult, execution: ExecutionResult | None = None
+    ) -> dict[str, Any]:
         merged: dict[str, Any] = {}
         seen_lessons: list[str] = []
         for name, agent in self._components():
@@ -406,14 +420,25 @@ class CompositeOptimizerAgent(_CompositeBase):
     description = "Runs multiple optimizers and keeps the global best candidate."
     role = "optimizer"
 
-    async def run(self, artifact, target: dict[str, Any], max_generations: int = 10,
-                  pop_size: int = 8, **kwargs) -> dict[str, Any]:
+    async def run(
+        self,
+        artifact,
+        target: dict[str, Any],
+        max_generations: int = 10,
+        pop_size: int = 8,
+        **kwargs,
+    ) -> dict[str, Any]:
         components = list(self._components())
         if not components:
             from arc.core.strategies import resolve_role
+
             cls = resolve_role("optimizer", overrides={"optimizer": "default"})
             return await cls(context=self.context).run(
-                artifact, target, max_generations=max_generations, pop_size=pop_size, **kwargs,
+                artifact,
+                target,
+                max_generations=max_generations,
+                pop_size=pop_size,
+                **kwargs,
             )
 
         # Split the generation budget so the *total* across optimizers never
@@ -432,19 +457,24 @@ class CompositeOptimizerAgent(_CompositeBase):
                 logger.debug(
                     "composite optimizer: no budget left for %s "
                     "(max_generations=%s, %d optimizers) — skipping",
-                    name, max_generations, n,
+                    name,
+                    max_generations,
+                    n,
                 )
                 continue
             try:
                 result = await agent.run(
-                    artifact, target, max_generations=gen_budget, pop_size=pop_size,
+                    artifact,
+                    target,
+                    max_generations=gen_budget,
+                    pop_size=pop_size,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("composite optimizer component %s failed: %s", name, exc)
                 continue
             if not isinstance(result, dict):
                 continue
-            for h in (result.get("history") or []):
+            for h in result.get("history") or []:
                 entry = dict(h) if isinstance(h, dict) else {"value": h}
                 entry["optimizer"] = name
                 combined_history.append(entry)
@@ -454,9 +484,14 @@ class CompositeOptimizerAgent(_CompositeBase):
 
         if best is None:
             from arc.core.strategies import resolve_role
+
             cls = resolve_role("optimizer", overrides={"optimizer": "default"})
             return await cls(context=self.context).run(
-                artifact, target, max_generations=max_generations, pop_size=pop_size, **kwargs,
+                artifact,
+                target,
+                max_generations=max_generations,
+                pop_size=pop_size,
+                **kwargs,
             )
         best["history"] = combined_history
         return best

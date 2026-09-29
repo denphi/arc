@@ -28,7 +28,11 @@ async def run(state: ChatState, argv: list[str]) -> None:
         _save_session(state.workflow, state.primary_goal)
         ok(f"Target set to {target}")
     elif action == "error":
-        err(detail or "Unknown /target usage. Try /target [key=value], /target update key=value, or /target clear.")
+        err(
+            detail
+            or "Unknown /target usage. Try /target [key=value], "
+            "/target update key=value, or /target clear."
+        )
     else:
         err(f"Unknown /target action: {action}")
 

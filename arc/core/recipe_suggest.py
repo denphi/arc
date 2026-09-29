@@ -263,8 +263,9 @@ def _recipe_triggers(recipe: Recipe) -> list[dict]:
 def _raw_recipe_data(recipe: Recipe) -> dict | None:
     """Re-load the recipe YAML body to inspect fields the dataclass drops."""
     try:
+
         import yaml  # type: ignore[import-not-found]
-        from pathlib import Path
+
         from arc.core import recipes as _recipes_mod
 
         for base in (_recipes_mod._bundled_recipes_dir(), _recipes_mod._user_recipes_dir()):

@@ -62,6 +62,7 @@ def _check_target(
     approval — it can't silently drop out of the check.
     """
     import logging
+
     _log = logging.getLogger(__name__)
 
     rel_errors, unmatched = target_errors(outputs, target, registry)
@@ -69,7 +70,8 @@ def _check_target(
         _log.warning(
             "Target key %r did not match any numeric output key %s — "
             "approval will fail. Add a synonym or rename the output.",
-            tk, list(outputs.keys()),
+            tk,
+            list(outputs.keys()),
         )
     errors = {ok: round(err * 100, 2) for ok, err in rel_errors.items()}
     if not errors or unmatched:
@@ -125,7 +127,10 @@ def _build_context_acceptance(
             # Prefer a numeric output (so a units/label key can't shadow the
             # value), falling back to any output for presence-only checks.
             matched_key = best_output_key(metric, outputs, registry) or best_output_key(
-                metric, outputs, registry, numeric_only=False,
+                metric,
+                outputs,
+                registry,
+                numeric_only=False,
             )
             if matched_key is None:
                 checks[metric] = "missing output"
@@ -157,9 +162,7 @@ class ReviewerAgent(AgentContract):
 
     async def run(self, input_data: ExecutionResult) -> ReviewResult:
         result = (
-            input_data
-            if isinstance(input_data, ExecutionResult)
-            else ExecutionResult(**input_data)
+            input_data if isinstance(input_data, ExecutionResult) else ExecutionResult(**input_data)
         )
 
         target = self.context.memory.get("target", {})
@@ -177,7 +180,10 @@ class ReviewerAgent(AgentContract):
         elif target:
             approved, target_errors = _check_target(outputs, target, registry=registry)
             context_approved, context_errors = _build_context_acceptance(
-                outputs, build_contexts, target, registry=registry,
+                outputs,
+                build_contexts,
+                target,
+                registry=registry,
             )
             if context_approved is not None:
                 approved = approved and context_approved
@@ -185,7 +191,10 @@ class ReviewerAgent(AgentContract):
         else:
             target_errors = {}
             context_approved, context_errors = _build_context_acceptance(
-                outputs, build_contexts, target, registry=registry,
+                outputs,
+                build_contexts,
+                target,
+                registry=registry,
             )
             # A context with explicit acceptance criteria can serve as the
             # goal-achievement condition. Without it, keep the loop alive.
@@ -212,7 +221,8 @@ class ReviewerAgent(AgentContract):
             ]
             errors_display = (
                 {k: f"{v:.1f}%" for k, v in target_errors.items()}
-                if target_errors else "no target matches found"
+                if target_errors
+                else "no target matches found"
             )
             if context_errors:
                 errors_display = {
@@ -229,8 +239,11 @@ class ReviewerAgent(AgentContract):
             if schema_keys:
                 sim_inputs = {k: v for k, v in (result.metrics or {}).items() if k in schema_keys}
             else:
-                sim_inputs = {k: v for k, v in (result.metrics or {}).items()
-                              if k not in _NON_INPUT and isinstance(v, (int, float))}
+                sim_inputs = {
+                    k: v
+                    for k, v in (result.metrics or {}).items()
+                    if k not in _NON_INPUT and isinstance(v, (int, float))
+                }
             prompt = _REVIEW_PROMPT.format(
                 status=result.status,
                 inputs=sim_inputs,
@@ -260,8 +273,7 @@ class ReviewerAgent(AgentContract):
         # Stub fallback
         if approved:
             summary = (
-                "Target met: " +
-                ", ".join(f"{k} within {v:.1f}%" for k, v in target_errors.items())
+                "Target met: " + ", ".join(f"{k} within {v:.1f}%" for k, v in target_errors.items())
             )[:100]
         elif target_errors:
             worst = max(target_errors, key=lambda k: target_errors[k])
@@ -276,13 +288,21 @@ class ReviewerAgent(AgentContract):
             summary=summary,
             strengths=["Execution completed"] if result.status == "completed" else [],
             weaknesses=(
-                [f"{k}: {v:.1f}% off" for k, v in target_errors.items() if v > APPROVAL_THRESHOLD * 100]
-                if target_errors else (["No target output match"] if target else ["No target specified"])
+                [
+                    f"{k}: {v:.1f}% off"
+                    for k, v in target_errors.items()
+                    if v > APPROVAL_THRESHOLD * 100
+                ]
+                if target_errors
+                else (["No target output match"] if target else ["No target specified"])
             ),
             recommendations=(
                 ["Adjust parameters to reduce target error"]
-                if target else ["Define a numeric target before approving the goal"]
-            ) if not approved else [],
+                if target
+                else ["Define a numeric target before approving the goal"]
+            )
+            if not approved
+            else [],
             next_parameters={},
             iteration_complete=iteration_complete,
             strategy="stop" if approved else ("step" if target else "explore"),

@@ -1,7 +1,6 @@
 """Improvement planner: decides what to change next based on reflection."""
 from __future__ import annotations
 
-
 from typing import Any
 
 from arc.contracts.agent import AgentContract

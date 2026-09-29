@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
 
 from arc.contracts.agent import AgentContract
 from arc.schemas.research import ExperimentPlan, ResearchProposal

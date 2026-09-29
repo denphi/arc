@@ -1,7 +1,7 @@
 import pytest
 
-from arc.assets.input_scan import scan_inputs_from_env
 from arc.assets import FileStore
+from arc.assets.input_scan import scan_inputs_from_env
 from arc.core.registry import ComponentRegistry
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.schemas.research import ResearchGoal

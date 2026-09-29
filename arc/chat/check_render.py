@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from arc.chat.check import CheckReport, CheckItem
+from arc.chat.check import CheckReport
 from arc.chat.ui import BOLD, CYAN, DIM, GREEN, RED, YELLOW, c
-
 
 _MARK = {"ok": "✓", "warning": "⚠", "blocked": "✗"}
 _COLOR = {"ok": GREEN, "warning": YELLOW, "blocked": RED}

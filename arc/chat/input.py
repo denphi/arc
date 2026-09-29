@@ -12,10 +12,10 @@ import asyncio
 import builtins
 import os
 from pathlib import Path
+from typing import Any
 
-
-_PROMPT_SESSION = None
-_PROMPT_RENDER = None
+_PROMPT_SESSION: Any = None
+_PROMPT_RENDER: Any = None
 
 
 def chat_history_path() -> Path:

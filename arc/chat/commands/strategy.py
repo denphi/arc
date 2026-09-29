@@ -44,9 +44,9 @@ def _resolved_name(role: str, overrides: dict[str, str] | None) -> str:
 
 async def run(state: ChatState, argv: list[str]) -> None:
     from arc.core.strategies import (
+        default_strategy,
         known_roles,
         list_strategies,
-        default_strategy,
         parse_strategy_names,
     )
 

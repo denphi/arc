@@ -16,7 +16,10 @@ def _print_asset(asset) -> None:
 
 async def file_handler(state: ChatState, argv: list[str]) -> None:
     if not argv or argv[0] not in {"add", "list", "show", "load"}:
-        err("Usage: /file add <path> [role] | /file list | /file show <id> | /file load <id> [loader]")
+        err(
+            "Usage: /file add <path> [role] | /file list | /file show <id> "
+            "| /file load <id> [loader]"
+        )
         return
 
     action = argv[0]

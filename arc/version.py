@@ -6,7 +6,8 @@ is only used when this module is imported from a working tree that hasn't
 been installed (e.g. when running tests directly without ``pip install -e``).
 """
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # Literal kept here so setup.py's read_version() regex can find it during
 # the editable-install bootstrap (before the package is registered).

@@ -122,6 +122,7 @@ class BayesOptOptimizerAgent(AgentContract):
         _simulate_func = None
         try:
             from pathlib import Path
+
             from arc.runtime.sim2l_adapter import _import_workflow_func
             workflow_path = Path(artifact.path) / "workflow.py"
             if workflow_path.exists():

@@ -134,7 +134,9 @@ def test_import_workflow_func_reloads_changed_source(tmp_path):
 
 def test_import_workflow_func_times_out_top_level_hang(tmp_path):
     workflow = tmp_path / "workflow.py"
-    workflow.write_text("while True:\n    pass\n\ndef simulate(**inputs):\n    return {'result': 1}\n")
+    workflow.write_text(
+        "while True:\n    pass\n\ndef simulate(**inputs):\n    return {'result': 1}\n"
+    )
     with pytest.raises(TimeoutError):
         _import_workflow_func(str(tmp_path), "hanging-artifact")
 
@@ -143,9 +145,7 @@ def test_import_workflow_func_times_out_top_level_hang(tmp_path):
 
 
 def _sim2l_artifact(tmp_path, yaml_text):
-    (tmp_path / "workflow.py").write_text(
-        "def simulate(**inputs):\n    return {'result': 1.0}\n"
-    )
+    (tmp_path / "workflow.py").write_text("def simulate(**inputs):\n    return {'result': 1.0}\n")
     (tmp_path / "sim2l.yaml").write_text(yaml_text)
     return ArtifactRecord(
         artifact_id="schema-test",
@@ -162,25 +162,28 @@ def test_schemas_for_artifact_preserve_declared_types(tmp_path):
     sim2l = pytest.importorskip("sim2l")  # noqa: F841
     from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
-    artifact = _sim2l_artifact(tmp_path, (
-        "inputs:\n"
-        "  temperature:\n"
-        "    type: Number\n"
-        "    default: 300.0\n"
-        "    units: K\n"
-        "    min: 0.0\n"
-        "  element:\n"
-        "    type: Text\n"
-        "    default: Si\n"
-        "  converge:\n"
-        "    type: Boolean\n"
-        "    default: true\n"
-        "outputs:\n"
-        "  band_gap:\n"
-        "    type: Number\n"
-        "  label:\n"
-        "    type: Text\n"
-    ))
+    artifact = _sim2l_artifact(
+        tmp_path,
+        (
+            "inputs:\n"
+            "  temperature:\n"
+            "    type: Number\n"
+            "    default: 300.0\n"
+            "    units: K\n"
+            "    min: 0.0\n"
+            "  element:\n"
+            "    type: Text\n"
+            "    default: Si\n"
+            "  converge:\n"
+            "    type: Boolean\n"
+            "    default: true\n"
+            "outputs:\n"
+            "  band_gap:\n"
+            "    type: Number\n"
+            "  label:\n"
+            "    type: Text\n"
+        ),
+    )
     adapter = Sim2LRuntimeAdapter(db_path=str(tmp_path / "sim.db"))
     in_schema, out_schema = adapter._schemas_for_artifact(artifact)
 
@@ -201,14 +204,17 @@ def test_schemas_for_artifact_normalizes_alias_types(tmp_path):
     pytest.importorskip("sim2l")
     from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
 
-    artifact = _sim2l_artifact(tmp_path, (
-        "inputs:\n"
-        "  a: {type: float, default: 1.5}\n"
-        "  b: {type: string, default: hi}\n"
-        "  c: {type: WeirdCustomType, default: zz}\n"
-        "outputs:\n"
-        "  r: {type: int}\n"
-    ))
+    artifact = _sim2l_artifact(
+        tmp_path,
+        (
+            "inputs:\n"
+            "  a: {type: float, default: 1.5}\n"
+            "  b: {type: string, default: hi}\n"
+            "  c: {type: WeirdCustomType, default: zz}\n"
+            "outputs:\n"
+            "  r: {type: int}\n"
+        ),
+    )
     adapter = Sim2LRuntimeAdapter(db_path=str(tmp_path / "sim.db"))
     in_schema, out_schema = adapter._schemas_for_artifact(artifact)
     in_dict = in_schema.to_dict()
@@ -246,11 +252,11 @@ def test_function_workflow_bundle_includes_all_artifact_files(tmp_path):
     (tmp_path / "tests" / "test_workflow.py").write_text("def test_ok(): pass\n")
 
     bundle = _function_workflow_bundle(
-        (tmp_path / "workflow.py").read_text(), artifact_dir=tmp_path,
+        (tmp_path / "workflow.py").read_text(),
+        artifact_dir=tmp_path,
     )
     paths = {f["path"] for f in bundle["files"]}
-    assert paths == {"workflow.py", "sim2l.yaml", "arc_record.json",
-                     "tests/test_workflow.py"}
+    assert paths == {"workflow.py", "sim2l.yaml", "arc_record.json", "tests/test_workflow.py"}
     assert bundle["entrypoint"] == "workflow.py"
     # Every file entry carries a content hash for integrity checking.
     assert all(f.get("sha256") for f in bundle["files"])

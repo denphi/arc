@@ -9,7 +9,6 @@ import pytest
 
 from arc.chat.check import _check_provider_auth
 
-
 pytestmark = pytest.mark.chat
 
 

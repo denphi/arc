@@ -3,8 +3,7 @@
 import pytest
 
 from arc.chat.state import ChatState
-from tests.fakes import make_workflow, make_artifact
-
+from tests.fakes import make_artifact, make_workflow
 
 pytestmark = pytest.mark.chat
 

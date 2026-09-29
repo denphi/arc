@@ -5,7 +5,6 @@ import pytest
 from arc import chat
 from tests.fakes import FakeProvider, make_workflow
 
-
 pytestmark = pytest.mark.chat
 
 

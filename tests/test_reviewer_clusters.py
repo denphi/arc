@@ -31,7 +31,6 @@ import pytest
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
 
-
 pytestmark = pytest.mark.chat
 
 

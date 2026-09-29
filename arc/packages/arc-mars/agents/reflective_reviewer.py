@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 _STAGNATION_THRESHOLD = 3  # consecutive non-improving runs → switch strategy
-_CLUSTER_DOMINANCE_THRESHOLD = 2  # ≥ this many entries in the top failure cluster → escalate to explore
+_CLUSTER_DOMINANCE_THRESHOLD = 2
 
 
 def _distance_to_target(
@@ -61,7 +61,10 @@ def _distance_to_target(
 
 
 def _inputs_match(
-    a: dict[str, Any], b: dict[str, Any], *, tol: float = 0.01,
+    a: dict[str, Any],
+    b: dict[str, Any],
+    *,
+    tol: float = 0.01,
 ) -> bool:
     """Return True if every shared key matches within ``tol`` relative."""
     common = set(a) & set(b)
@@ -114,18 +117,16 @@ class ReflectiveReviewerAgent(AgentContract):
 
         target = self.context.memory.get("target", {})
         registry = self.context.memory.get("schema_registry", {})
-        history: list[dict] = (
-            self.context.memory.get("run_history")
-            or wrapped_history
-            or []
-        )
+        history: list[dict] = self.context.memory.get("run_history") or wrapped_history or []
         outputs = execution.outputs or {}
 
         # ── Deterministic signals ────────────────────────────────────
         current_fit = _distance_to_target(outputs, target, registry)
         prior_fits = [
             _distance_to_target(
-                entry.get("outputs", {}), target, registry,
+                entry.get("outputs", {}),
+                target,
+                registry,
             )
             for entry in history
         ]
@@ -160,12 +161,11 @@ class ReflectiveReviewerAgent(AgentContract):
         # widen the search instead of nudging the same parameter set.
         # Empty/missing means the prior reflector didn't run or saw
         # nothing systemic, so we just fall through to the streak logic.
-        failure_clusters: list[dict] = (
-            self.context.memory.get("failure_clusters") or []
-        )
+        failure_clusters: list[dict] = self.context.memory.get("failure_clusters") or []
         dominant_cluster: dict | None = (
             failure_clusters[0]
-            if failure_clusters and isinstance(failure_clusters[0], dict)
+            if failure_clusters
+            and isinstance(failure_clusters[0], dict)
             and failure_clusters[0].get("count", 0) >= _CLUSTER_DOMINANCE_THRESHOLD
             else None
         )
@@ -198,9 +198,7 @@ class ReflectiveReviewerAgent(AgentContract):
             weaknesses.append("Inputs nearly identical to a prior run.")
             recommendations.append("Vary at least one parameter to extract new information.")
         if not improving and prior_fits:
-            weaknesses.append(
-                f"No improvement over best prior fitness ({best_prior:.3g})."
-            )
+            weaknesses.append(f"No improvement over best prior fitness ({best_prior:.3g}).")
         if streak >= _STAGNATION_THRESHOLD:
             recommendations.append(
                 f"{streak} consecutive non-improving runs — switch strategy ({strategy})."
@@ -210,9 +208,7 @@ class ReflectiveReviewerAgent(AgentContract):
         if dominant_cluster is not None:
             count = dominant_cluster.get("count", 0)
             reason = dominant_cluster.get("reason") or dominant_cluster.get("signature", "")
-            weaknesses.append(
-                f"Systemic failure across {count} prior runs: {reason}"
-            )
+            weaknesses.append(f"Systemic failure across {count} prior runs: {reason}")
             recommendations.append(
                 "Switch parameter regime rather than nudging current values — "
                 f"the existing search is producing repeat failures ({reason})."
@@ -222,9 +218,7 @@ class ReflectiveReviewerAgent(AgentContract):
         if execution.status == "completed":
             strengths.append("Execution completed.")
         if improving and prior_fits:
-            strengths.append(
-                f"Improved on prior best ({best_prior:.3g} → {current_fit:.3g})."
-            )
+            strengths.append(f"Improved on prior best ({best_prior:.3g} → {current_fit:.3g}).")
 
         summary = (
             f"fit={current_fit:.3g}; best_prior={best_prior:.3g}; "

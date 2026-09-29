@@ -393,26 +393,32 @@ class Sim2LBuilderAgent(AgentContract):
         adapt = self.context.memory.get("adapt_from_artifact")
         if isinstance(adapt, dict) and (adapt.get("workflow_source") or "").strip():
             cap = adapt.get("capability") or {}
-            cap_line = (cap.get("summary") if isinstance(cap, dict) else "") or adapt.get("description", "")
+            cap_line = (
+                (cap.get("summary") if isinstance(cap, dict) else "")
+                or adapt.get("description", "")
+            )
             adapt_hint = (
                 "\nADAPT AN EXISTING ARTIFACT — start from the reference "
                 f"implementation below (catalog artifact '{adapt.get('name', '')}'"
                 + (f": {cap_line}" if cap_line else "")
                 + "). Reuse its structure and correct logic; modify only what the "
                 "objective and required outputs demand. Do not regress working code.\n"
-                "```python\n"
-                + adapt["workflow_source"][:6000]
-                + "\n```\n"
+                "```python\n" + adapt["workflow_source"][:6000] + "\n```\n"
             )
 
         if provider:
-            prompt = _WORKFLOW_PROMPT.format(
-                objective=plan.proposal.objective[:300],
-                methodology=plan.proposal.methodology[:300],
-                parameters=plan.parameters,
-                target=target or "none specified",
-                build_context=render_build_contexts(getattr(plan, "build_contexts", [])),
-            ) + required_hint + canonical_hint + adapt_hint
+            prompt = (
+                _WORKFLOW_PROMPT.format(
+                    objective=plan.proposal.objective[:300],
+                    methodology=plan.proposal.methodology[:300],
+                    parameters=plan.parameters,
+                    target=target or "none specified",
+                    build_context=render_build_contexts(getattr(plan, "build_contexts", [])),
+                )
+                + required_hint
+                + canonical_hint
+                + adapt_hint
+            )
             try:
                 code = await provider.complete(prompt)
                 code = _strip_fences(code)
@@ -422,9 +428,9 @@ class Sim2LBuilderAgent(AgentContract):
                     valid, reason = _validate_simulate(code)
                     if not valid:
                         import logging
+
                         logging.getLogger(__name__).warning(
-                            "Generated simulate() failed pre-validation (%s) — "
-                            "using fallback",
+                            "Generated simulate() failed pre-validation (%s) — using fallback",
                             reason,
                         )
                         code = _fallback_workflow(required_outputs)

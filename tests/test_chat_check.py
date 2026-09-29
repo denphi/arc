@@ -1,7 +1,6 @@
 """``arc chat --check`` dry-run report tests (Phase 2)."""
 
 import json
-import os
 import re
 
 import pytest
@@ -10,7 +9,6 @@ from arc.chat.check import (
     CheckItem,
     CheckReport,
     _check_arc_installed,
-    _check_dotenv,
     _check_env_vars,
     _check_packages,
     _check_python_version,
@@ -19,7 +17,6 @@ from arc.chat.check import (
     run_check,
 )
 from arc.chat.check_render import render, render_ansi, render_json
-
 
 pytestmark = pytest.mark.chat
 

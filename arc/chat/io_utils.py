@@ -10,9 +10,14 @@ import os
 import signal
 
 from arc.chat.ui import (
-    c, BOLD, CYAN, DIM, GREEN, RED, YELLOW,
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    RED,
+    YELLOW,
+    c,
 )
-
 
 # Service registry. Each entry: (env var override, default URL).
 _SIM2L_SERVICES: dict[str, tuple[str, str]] = {

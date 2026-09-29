@@ -6,16 +6,15 @@ from types import SimpleNamespace
 import pytest
 
 from arc.chat.research.phases import (
+    POST_BUILD_PHASES,
     ExecutionPhase,
     ProvenancePhase,
     ReflectionPhase,
     ReviewPhase,
     ValidationPhase,
-    POST_BUILD_PHASES,
 )
 from arc.chat.research.pipeline import Pipeline, PipelineState
 from tests.fakes import make_artifact, make_run, make_workflow
-
 
 pytestmark = pytest.mark.chat
 

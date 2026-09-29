@@ -1,10 +1,10 @@
 """Chat-level tools + ToolRegistry tests (Phase 4)."""
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 
+from arc.chat.plan_mode import PlanModeBlocked, plan_mode
 from arc.chat.tools import (
     Tool,
     ToolBudgetExceeded,
@@ -22,8 +22,6 @@ from arc.chat.tools.routing import (
     set_target,
     start_goal,
 )
-from arc.chat.plan_mode import plan_mode, PlanModeBlocked
-
 
 pytestmark = pytest.mark.chat
 
@@ -158,9 +156,9 @@ async def test_dispatch_does_not_tick_counter_when_budget_exhausted():
 @pytest.mark.asyncio
 async def test_dispatch_does_not_tick_counter_in_plan_mode_for_side_effect_tool():
     """P4-4 regression: plan-mode refusal must not bump router_calls."""
+    from arc.chat.plan_mode import PlanModeBlocked, plan_mode
     from arc.chat.tools import Tool, ToolRegistry
     from arc.chat.tools.routing import StartGoalArgs
-    from arc.chat.plan_mode import plan_mode, PlanModeBlocked
 
     async def writer(state, args):
         pass

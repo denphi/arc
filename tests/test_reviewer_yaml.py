@@ -21,7 +21,6 @@ from arc.chat.agents.definition import (
     load_agent_definition,
 )
 
-
 pytestmark = pytest.mark.chat
 
 

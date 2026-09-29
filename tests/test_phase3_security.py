@@ -4,12 +4,9 @@ Covers the skill loader's YAML safety, path traversal, and size limits;
 plus the pipeline-hook isolation guarantee.
 """
 
-import logging
-import os
 from pathlib import Path
 
 import pytest
-
 
 pytestmark = pytest.mark.chat
 
@@ -72,6 +69,7 @@ def test_discover_skips_oversized_files(tmp_path):
 def test_user_override_gate_default_is_off():
     """Belt-and-braces: even if a tester clears state, the default must be off."""
     import inspect
+
     from arc.chat.skill_loader import discover_skills
     sig = inspect.signature(discover_skills)
     assert sig.parameters["allow_user_overrides"].default is False
@@ -110,7 +108,9 @@ async def test_buggy_hook_does_not_break_pipeline():
 @pytest.mark.asyncio
 async def test_unhandled_phase_error_propagates():
     from arc.chat.research.pipeline import (
-        Pipeline, PipelinePhaseError, PipelineState,
+        Pipeline,
+        PipelinePhaseError,
+        PipelineState,
     )
     from tests.fakes import make_workflow
 
@@ -146,6 +146,7 @@ def test_parse_frontmatter_is_deterministic_and_cheap(monkeypatch):
     """Calling parse_frontmatter many times with hostile input must not
     take significant time — protects against algorithmic-DOS frontmatter."""
     import time
+
     from arc.chat.skill_loader import parse_frontmatter
 
     hostile = "---\n" + "a: b\n" * 10_000 + "---\n"

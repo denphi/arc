@@ -10,7 +10,6 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-
 logger = logging.getLogger(__name__)
 
 

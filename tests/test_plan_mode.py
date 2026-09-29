@@ -1,7 +1,5 @@
 """Plan-mode (Phase 2): write nothing, network nothing."""
 
-import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +13,7 @@ from arc.chat.plan_mode import (
     set_plan_mode,
 )
 from arc.chat.state import ChatState
-from tests.fakes import make_workflow, make_artifact
-
+from tests.fakes import make_artifact, make_workflow
 
 pytestmark = pytest.mark.chat
 

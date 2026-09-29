@@ -249,7 +249,7 @@ def save_recipe(
     # catalogue check rather than duplicating it.
     candidate = Recipe(
         name=slug,
-        description=description or f"Saved from chat session.",
+        description=description or "Saved from chat session.",
         strategies=dict(strategies),
         tags=("user-saved",),
         source="user",

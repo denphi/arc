@@ -23,7 +23,7 @@ from typing import Any
 
 @dataclass
 class UIEvent:
-    kind: str                       # phase_start | phase_end | warning | artifact | result | review | status
+    kind: str  # phase_start | phase_end | warning | artifact | result | review | status
     text: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
@@ -46,7 +46,7 @@ class EventStream:
             return
         self._buffer.append(event)
         if len(self._buffer) > self._max_buffer:
-            self._buffer = self._buffer[-self._max_buffer:]
+            self._buffer = self._buffer[-self._max_buffer :]
         for queue in list(self._subscribers):
             queue.put_nowait(event)
 
@@ -75,7 +75,7 @@ class EventStream:
             return
         self._closed = True
         for queue in list(self._subscribers):
-            queue.put_nowait(None)   # sentinel: stream finished
+            queue.put_nowait(None)  # sentinel: stream finished
 
     @property
     def closed(self) -> bool:

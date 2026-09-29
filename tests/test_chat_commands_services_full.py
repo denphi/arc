@@ -11,7 +11,6 @@ from arc.chat.commands import build_registry
 from arc.chat.state import ChatState
 from tests.fakes import make_workflow
 
-
 pytestmark = pytest.mark.chat
 
 

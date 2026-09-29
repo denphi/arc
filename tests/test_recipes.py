@@ -17,11 +17,8 @@ must:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-
 
 pytestmark = pytest.mark.chat
 
@@ -137,7 +134,7 @@ def test_apply_force_overwrites_manual_overrides():
 
 def test_consecutive_apply_calls_replace_old_recipe_keys():
     """apply(A) then apply(B) drops A's keys that B doesn't set."""
-    from arc.core.recipes import apply_recipe, Recipe
+    from arc.core.recipes import Recipe, apply_recipe
 
     a = Recipe(
         name="a", description="", source="bundled",
@@ -160,7 +157,7 @@ def test_consecutive_apply_calls_replace_old_recipe_keys():
 
 def test_consecutive_apply_preserves_manual_change_made_between_them():
     """apply(A) → /strategy planner default → apply(B) keeps the manual choice."""
-    from arc.core.recipes import apply_recipe, Recipe
+    from arc.core.recipes import Recipe, apply_recipe
 
     a = Recipe(name="a", description="", source="bundled",
                strategies={"planner": "mars_planner"})
@@ -178,7 +175,7 @@ def test_consecutive_apply_preserves_manual_change_made_between_them():
 
 
 def test_clear_drops_only_recipe_keys():
-    from arc.core.recipes import apply_recipe, clear_recipe, Recipe
+    from arc.core.recipes import Recipe, apply_recipe, clear_recipe
 
     recipe = Recipe(
         name="r", description="", source="bundled",
@@ -455,7 +452,7 @@ def test_save_recipe_round_trips_through_list_recipes(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_recipes, "_user_recipes_dir", lambda: tmp_path)
 
-    out = save_recipe(
+    save_recipe(
         "round-trip-test",
         {"planner": "mars_planner", "reviewer": "reflective"},
         description="round trip test",

@@ -573,8 +573,11 @@ def load_package(package_dir: Path, registry: ComponentRegistry) -> None:
             registry.register_script(definition["name"], definition, package_name=pkg_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load script '%s': %s", script_def, exc)
-            name = script_def.get("name") if isinstance(script_def, dict) else script_def
-            record_error("script", name, exc)
+            record_error(
+                "script",
+                str(script_def.get("name") if isinstance(script_def, dict) else script_def),
+                exc,
+            )
 
     for extension_def in manifest.get("provides", {}).get("extensions", []):
         try:

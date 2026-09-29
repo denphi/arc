@@ -17,14 +17,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from arc.packages.arc_sim2l.agents.searcher_negative import (
-    NegativeResultsSearcherAgent,
     _annotate_failures,
     _is_failed_run,
 )
-from arc.schemas.research import ResearchGoal, SearchResult
 
+from arc.schemas.research import ResearchGoal, SearchResult
 
 pytestmark = pytest.mark.chat
 

@@ -9,7 +9,6 @@ from arc.chat.registry import SlashCommand
 from arc.chat.state import ChatState
 from arc.chat.ui import BOLD, CYAN, DIM, c
 
-
 # ── /help ─────────────────────────────────────────────────────────────────
 
 async def help_handler(state: ChatState, argv: list[str]) -> None:

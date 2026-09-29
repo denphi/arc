@@ -30,7 +30,6 @@ import pytest
 
 from arc.schemas.research import ResearchProposal
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -222,10 +221,11 @@ def test_planner_does_not_overwrite_existing_parameter():
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     # Pre-seed a parameter under the same name.
-    agent = PlannerAgent(context=ctx)
+    PlannerAgent(context=ctx)
     # Bypass run() to control plan shape exactly.
     from arc.packages.arc_sim2l.agents.planner import (
-        _apply_mp_lattice_defaults, _fallback_plan,
+        _apply_mp_lattice_defaults,
+        _fallback_plan,
     )
     plan = _fallback_plan(_proposal())
     plan.parameters["lattice_a"] = 99.99   # user-supplied placeholder
@@ -306,8 +306,9 @@ def test_search_then_plan_carries_lattice_into_parameters(monkeypatch):
     catalog_hits → planner splices lattice into parameters."""
     from unittest.mock import patch
 
-    from arc.core.strategies import resolve_role
     from arc.packages.arc_sim2l.agents.planner import PlannerAgent
+
+    from arc.core.strategies import resolve_role
     from arc.schemas.research import ResearchGoal
 
     monkeypatch.setenv("MP_API_KEY", "test-key")

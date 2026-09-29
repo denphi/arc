@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 
 from arc.cli.main import app
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -32,7 +31,6 @@ def test_check_exit_code_is_2_when_blocked(monkeypatch, runner):
     """Finding #9: pin the actual blocked → exit 2 mapping by patching
     ``run_check`` to return a deterministic blocked report. The previous
     test allowed exit codes 1 or 2, which masked the contract."""
-    import asyncio
     from arc.chat.check import CheckItem, CheckReport
 
     async def _fake_check(**kwargs):

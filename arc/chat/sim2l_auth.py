@@ -25,7 +25,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -80,7 +79,7 @@ class ServiceAuth:
 def resolve_credentials(
     username: Optional[str] = None,
     password: Optional[str] = None,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str, str]:
     """Read sim2l credentials from env vars when not supplied.
 
     Lookup order: explicit args, ``SIM2L_USERNAME`` / ``SIM2L_PASSWORD``,

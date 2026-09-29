@@ -86,33 +86,56 @@ class KubernetesRuntimeAdapter(BaseSubmitPollAdapter):
 
     def _job_manifest(self, name: str) -> dict:
         return {
-            "apiVersion": "batch/v1", "kind": "Job",
+            "apiVersion": "batch/v1",
+            "kind": "Job",
             "metadata": {"name": name},
             "spec": {
                 "backoffLimit": 0,
-                "template": {"spec": {
-                    "restartPolicy": "Never",
-                    "containers": [{
-                        "name": "arc",
-                        "image": self.image,
-                        "command": ["python", "/arc/runner.py"],
-                        "volumeMounts": [
-                            {"name": "art", "mountPath": "/arc/workflow.py", "subPath": "workflow.py"},
-                            {"name": "art", "mountPath": "/arc/inputs.json", "subPath": "inputs.json"},
-                            {"name": "runner", "mountPath": "/arc/runner.py", "subPath": "runner.py"},
+                "template": {
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "containers": [
+                            {
+                                "name": "arc",
+                                "image": self.image,
+                                "command": ["python", "/arc/runner.py"],
+                                "volumeMounts": [
+                                    {
+                                        "name": "art",
+                                        "mountPath": "/arc/workflow.py",
+                                        "subPath": "workflow.py",
+                                    },
+                                    {
+                                        "name": "art",
+                                        "mountPath": "/arc/inputs.json",
+                                        "subPath": "inputs.json",
+                                    },
+                                    {
+                                        "name": "runner",
+                                        "mountPath": "/arc/runner.py",
+                                        "subPath": "runner.py",
+                                    },
+                                ],
+                            }
                         ],
-                    }],
-                    "volumes": [
-                        {"name": "art", "configMap": {"name": name}},
-                        {"name": "runner", "configMap": {"name": f"{name}-runner"}},
-                    ],
-                }},
+                        "volumes": [
+                            {"name": "art", "configMap": {"name": name}},
+                            {"name": "runner", "configMap": {"name": f"{name}-runner"}},
+                        ],
+                    }
+                },
             },
         }
 
     def _poll_status(self, native_id: str) -> str:
-        r = self._kubectl("get", "job", native_id, "-o",
-                          "jsonpath={.status.succeeded}:{.status.failed}", timeout=15)
+        r = self._kubectl(
+            "get",
+            "job",
+            native_id,
+            "-o",
+            "jsonpath={.status.succeeded}:{.status.failed}",
+            timeout=15,
+        )
         if r.returncode != 0:
             return "pending"
         succeeded, _, failed = r.stdout.strip().partition(":")
@@ -129,7 +152,7 @@ class KubernetesRuntimeAdapter(BaseSubmitPollAdapter):
         for line in raw.splitlines():
             if line.startswith(_RESULT_MARKER):
                 try:
-                    data = json.loads(line[len(_RESULT_MARKER):])
+                    data = json.loads(line[len(_RESULT_MARKER) :])
                     outputs = data.get("outputs", {}) if data.get("ok") else {}
                     if not data.get("ok"):
                         logs.append(f"simulate error: {data.get('error')}")
@@ -144,8 +167,11 @@ class KubernetesRuntimeAdapter(BaseSubmitPollAdapter):
         self._cleanup(native_id)
 
     def _cleanup(self, native_id: str) -> None:
-        for target in (f"job/{native_id}", f"configmap/{native_id}",
-                       f"configmap/{native_id}-runner"):
+        for target in (
+            f"job/{native_id}",
+            f"configmap/{native_id}",
+            f"configmap/{native_id}-runner",
+        ):
             try:
                 self._kubectl("delete", target, "--ignore-not-found", timeout=20)
             except Exception:  # noqa: BLE001

@@ -7,7 +7,6 @@ from arc.chat.loop import _route_via_v2
 from arc.chat.router import Route
 from tests.fakes import FakeProvider
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -153,7 +152,6 @@ async def test_route_via_v2_set_target_works_without_active_goal():
 def test_arc_chat_v2_flag_recognised(monkeypatch):
     """The flag is read inside chat_loop. We don't enter the REPL here —
     just confirm the env var lookup succeeds."""
-    import os
 
     # The lookup happens *inside* chat_loop; we just verify the env-var
     # name is referenced in the loop file so a future refactor doesn't
@@ -166,6 +164,7 @@ def test_arc_chat_v2_flag_recognised(monkeypatch):
 def test_route_input_default_path_still_works():
     """Sanity: default (no ARC_CHAT_V2) path is undisturbed."""
     import asyncio
+
     from arc.chat.router import route_input
 
     async def runme():
@@ -184,7 +183,8 @@ def test_route_input_default_path_still_works():
 async def test_router_call_budget_enforced():
     """When state.router_calls >= router_call_budget, raise."""
     from dataclasses import dataclass, field
-    from arc.chat.loop import _route_via_v2, RouterBudgetExceeded
+
+    from arc.chat.loop import RouterBudgetExceeded, _route_via_v2
 
     @dataclass
     class _S:
@@ -208,6 +208,7 @@ async def test_router_call_budget_enforced():
 async def test_router_call_budget_ticks_per_call():
     """Each v2 routing call increments state.router_calls."""
     from dataclasses import dataclass, field
+
     from arc.chat.loop import _route_via_v2
 
     @dataclass
@@ -233,6 +234,7 @@ async def test_router_call_budget_ticks_per_call():
 async def test_router_call_budget_does_not_tick_slash_commands():
     """Slash commands bypass v2; they must not count against the budget."""
     from dataclasses import dataclass, field
+
     from arc.chat.loop import _route_via_v2
 
     @dataclass
@@ -254,6 +256,7 @@ async def test_router_call_budget_does_not_tick_in_stub_mode():
     budget MUST NOT tick. Otherwise stub-mode sessions would exhaust
     the budget for free."""
     from dataclasses import dataclass, field
+
     from arc.chat.loop import _route_via_v2
 
     @dataclass

@@ -41,7 +41,6 @@ from arc.api.research_loop_routes import (
 )
 from arc.api.session_state import load_state
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -354,6 +353,7 @@ def test_presets_apply_and_show_delegate(session_id):
 def _write_session_meta(session_id: str, **fields) -> None:
     """Write a fake session.json including failure_clusters."""
     import json
+
     from arc.session import _session_dir
     path = _session_dir(session_id) / "session.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -613,7 +613,9 @@ def test_server_includes_research_loop_router():
     from arc.api.server import create_app
 
     app = create_app()
-    routes = {getattr(r, "path", None) for r in app.routes}
+    # The OpenAPI schema lists every mounted path regardless of how the
+    # installed FastAPI version represents included routers internally.
+    routes = set(app.openapi()["paths"])
     assert "/strategies" in routes
     assert "/recipes" in routes  # compatibility alias
     assert "/presets" in routes  # primary user-facing name (item 6)

@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 import json
-import importlib.util
 from pathlib import Path
 from typing import Any
 
 from arc.contracts.agent import AgentContract
+from arc.packages.arc_coscientist import bridge as _BRIDGE
 from arc.schemas.research import ResearchGoal
-
-_BRIDGE_PATH = Path(__file__).resolve().parents[1] / "bridge.py"
-_BRIDGE_SPEC = importlib.util.spec_from_file_location("arc_coscientist_bridge", _BRIDGE_PATH)
-if _BRIDGE_SPEC is None or _BRIDGE_SPEC.loader is None:  # pragma: no cover - impossible in normal installs
-    raise ImportError(f"Cannot load Co-Scientist bridge from {_BRIDGE_PATH}")
-_BRIDGE = importlib.util.module_from_spec(_BRIDGE_SPEC)
-_BRIDGE_SPEC.loader.exec_module(_BRIDGE)
 
 CoScientistUnavailable = _BRIDGE.CoScientistUnavailable
 data_dir = _BRIDGE.data_dir

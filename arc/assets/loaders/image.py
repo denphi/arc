@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from arc.assets.files import FileAsset
 from arc.assets.loaders.base import BaseAssetLoader, LoaderContext
@@ -15,7 +16,7 @@ class ImageLoader(BaseAssetLoader):
     supported_roles = ("image", "figure", "screenshot", None)
 
     def load(self, asset: FileAsset, context: LoaderContext) -> list[FileAsset]:
-        metadata = {
+        metadata: dict[str, Any] = {
             "name": asset.name,
             "media_type": asset.media_type,
             "size_bytes": asset.size_bytes,

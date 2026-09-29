@@ -50,6 +50,7 @@ class FormationEnergyEvaluator:
                 f"Formation energy {ef:.3f} eV/atom — "
                 + ("thermodynamically stable." if stable else "metastable or unstable.")
                 if in_range
-                else f"Value {ef} eV/atom outside physical range [{self.PHYSICAL_MIN}, {self.PHYSICAL_MAX}]."
+                else f"Value {ef} eV/atom outside physical range "
+                f"[{self.PHYSICAL_MIN}, {self.PHYSICAL_MAX}]."
             ),
         }

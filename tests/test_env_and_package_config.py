@@ -104,6 +104,7 @@ def test_package_config_string_entry_shorthand(monkeypatch):
 def test_required_unset_config_warns_on_load(tmp_path, monkeypatch, caplog):
     """A required config var that's unset surfaces a warning at load time."""
     import logging
+
     from arc.core.loader import load_package
     from arc.core.registry import ComponentRegistry
 

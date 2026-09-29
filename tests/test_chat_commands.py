@@ -11,8 +11,7 @@ from arc.chat.commands import build_registry
 from arc.chat.commands.builtins import _QuitRequested
 from arc.chat.registry import format_help_lines
 from arc.chat.state import ChatState
-from tests.fakes import make_workflow, make_artifact, make_run
-
+from tests.fakes import make_artifact, make_run, make_workflow
 
 pytestmark = pytest.mark.chat
 
@@ -232,6 +231,7 @@ async def test_coder_set_unknown_prints_error(capsys):
 @pytest.mark.asyncio
 async def test_services_status_renders(capsys, monkeypatch):
     """When sim2l is installed, /services status prints all three rows."""
+    pytest.importorskip("sim2l")
     reg = build_registry()
     state = ChatState(workflow=make_workflow())
     # Force `is_running` to return False for everything (no real daemons)
@@ -246,6 +246,7 @@ async def test_services_status_renders(capsys, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_services_unknown_subcommand_prints_usage(capsys):
+    pytest.importorskip("sim2l")
     reg = build_registry()
     state = ChatState(workflow=make_workflow())
     await reg.get("services").resolve_handler()(state, ["banana"])

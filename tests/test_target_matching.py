@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from arc.packages.arc_sim2l.agents.optimizer import _fitness
 from arc.packages.arc_sim2l.agents.reviewer import _check_target
+
 from arc.runtime.key_matching import best_output_key, match_targets, target_errors
 
 
@@ -31,7 +32,9 @@ def test_unmatched_target_key_fails_approval():
 
 
 def test_all_keys_within_threshold_approves():
-    approved, _ = _check_target({"bandgap_ev": 1.12, "temp": 300.0}, {"band_gap": 1.1, "temperature": 300})
+    approved, _ = _check_target(
+        {"bandgap_ev": 1.12, "temp": 300.0}, {"band_gap": 1.1, "temperature": 300}
+    )
     assert approved is True
 
 

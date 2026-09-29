@@ -21,7 +21,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Literal, Optional
 
-
 EventKind = Literal[
     "info",         # plain text line
     "step",         # label + value pair (e.g. "Status: completed")

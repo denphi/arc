@@ -17,7 +17,9 @@ def _dump(value: Any) -> Any:
     return value
 
 
-def render_build_contexts(contexts: list[Any] | tuple[Any, ...] | None, *, limit: int = 6000) -> str:
+def render_build_contexts(
+    contexts: list[Any] | tuple[Any, ...] | None, *, limit: int = 6000
+) -> str:
     """Render build contexts for prompt-only builders.
 
     The structured models remain the source of truth. This renderer is only a

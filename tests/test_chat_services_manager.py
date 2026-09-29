@@ -8,12 +8,11 @@ import pytest
 
 from arc import services as svc
 
-
 pytestmark = pytest.mark.chat
 
 
 def test_sim2l_available_truthy_when_sim2l_importable():
-    # sim2l is installed in this repo, so this should be True.
+    pytest.importorskip("sim2l")
     assert svc.sim2l_available() is True
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
 from arc.packages.arc_coscientist.agents.ideator import CoScientistIdeatorAgent
 from arc.packages.arc_coscientist.agents.supervisor import CoScientistSupervisorAgent
 
@@ -111,6 +112,12 @@ def test_coscientist_report_section_contributes_from_memory():
 
 
 def test_coscientist_supervisor_probe_keeps_clone_read_only():
+    from arc.packages.arc_coscientist import bridge
+
+    try:
+        bridge.repo_root({})
+    except bridge.CoScientistUnavailable as exc:
+        pytest.skip(f"upstream Co-Scientist clone not available: {exc}")
     ctx = AgentContext(session_id="test-coscientist")
     agent = CoScientistSupervisorAgent(ctx)
 

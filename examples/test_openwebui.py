@@ -25,16 +25,15 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from arc.orchestrator.workflow import ResearchWorkflow
-from arc.schemas.research import ResearchGoal
-
+from arc.orchestrator.workflow import ResearchWorkflow  # noqa: E402
+from arc.schemas.research import ResearchGoal  # noqa: E402
 
 GOAL = "Explore how the input parameter affects the simulation output"
 
 
 async def run(provider, token, model, base_url):
     print(f"\n{'='*60}")
-    print(f"  ARC test run")
+    print("  ARC test run")
     print(f"  Provider : {provider or 'stub (no LLM)'}")
     print(f"  Model    : {model or 'auto'}")
     print(f"  Base URL : {base_url or 'n/a'}")

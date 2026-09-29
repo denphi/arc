@@ -10,7 +10,6 @@ from __future__ import annotations
 import threading
 from typing import Dict, Optional, Tuple
 
-
 # Review item #T17: each provider instance previously kept its own
 # ``_native_json_supported`` toggle. When ARC builds a fresh provider per
 # workflow run (the default in ``ResearchWorkflow``), every new instance

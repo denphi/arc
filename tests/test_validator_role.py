@@ -25,7 +25,6 @@ import pytest
 
 from arc.schemas.research import ValidatorReport
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -285,6 +284,7 @@ def test_apply_recipe_writes_validator_override(monkeypatch):
     """End-to-end: apply a recipe with validator role → ExecutionPhase
     picks the materials validator."""
     import asyncio
+
     from arc.chat.commands.recipe import run as recipe_run
     from arc.chat.state import ChatState
     from arc.core import recipes as _recipes

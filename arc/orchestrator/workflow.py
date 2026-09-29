@@ -5,7 +5,6 @@ The provider is optional — without it, agents use deterministic stub logic.
 """
 from __future__ import annotations
 
-
 import logging
 import os
 from pathlib import Path
@@ -25,12 +24,12 @@ from arc.core.registry import ComponentRegistry
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.provenance import ProvenanceLog
 from arc.memory.results_store import ResultsStore
+from arc.runtime.backend import safe_backend_action
 from arc.schemas.artifact import ArtifactDraft, ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.research import BuildContext, ExperimentPlan, ResearchGoal
 from arc.schemas.review import ReviewResult
 from arc.session import session_paths
-from arc.runtime.backend import safe_backend_action
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +126,7 @@ def _build_auto_adapter(db_path: str | None = None, session_id: str | None = Non
     """
     try:
         import sim2l  # noqa: F401
+
         from arc.runtime.sim2l_adapter import Sim2LRuntimeAdapter
         logger.info("Using Sim2LRuntimeAdapter (auto-detected)")
         return Sim2LRuntimeAdapter(db_path=db_path, session_id=session_id)
@@ -434,7 +434,9 @@ class ResearchWorkflow:
         """Configured pre-builder context workflows for this session."""
         runtime_specs = self._context.memory.get("build_context_workflows")
         if runtime_specs is not None:
-            return build_context_workflow_specs({"workflows": {"build": {"context": runtime_specs}}})
+            return build_context_workflow_specs(
+                {"workflows": {"build": {"context": runtime_specs}}}
+            )
         try:
             _path, config = load_arc_toml()
         except Exception:
@@ -471,7 +473,9 @@ class ResearchWorkflow:
             data.setdefault("workflow", workflow_name)
             if not data.get("workflow"):
                 data["workflow"] = workflow_name
-            data.setdefault("package_name", self.registry.component_source("workflow", workflow_name))
+            data.setdefault(
+                "package_name", self.registry.component_source("workflow", workflow_name)
+            )
             contexts.append(BuildContext(**data))
         return contexts
 
@@ -511,9 +515,7 @@ class ResearchWorkflow:
             return []
         if self._workflow_disabled(name):
             if spec.get("required", True):
-                raise KeyError(
-                    f"Build-context workflow {name!r} belongs to a disabled package"
-                )
+                raise KeyError(f"Build-context workflow {name!r} belongs to a disabled package")
             return []
         try:
             workflow = self.registry.get_workflow(name)
@@ -540,7 +542,7 @@ class ResearchWorkflow:
         steps = workflow.get("steps", [])
         step_index = {step["id"]: idx for idx, step in enumerate(steps)}
         conditions = workflow.get("conditions", [])
-        state = {
+        state: dict[str, Any] = {
             "user_goal": goal,
             "inputs": self._bind_workflow_inputs(
                 workflow,
@@ -559,9 +561,7 @@ class ResearchWorkflow:
         )
         while idx < len(steps):
             if transitions >= max_transitions:
-                raise RuntimeError(
-                    f"Build-context workflow {name!r} exceeded transition limit"
-                )
+                raise RuntimeError(f"Build-context workflow {name!r} exceeded transition limit")
             step = steps[idx]
             step_id = step["id"]
             output = await self._execute_step_with_policy(step, state, workflow_config)
@@ -586,7 +586,9 @@ class ResearchWorkflow:
                     logger.warning(
                         "Build-context workflow condition after %r has unknown "
                         "goto=%r; known step ids are %s.",
-                        step_id, goto, sorted(step_index),
+                        step_id,
+                        goto,
+                        sorted(step_index),
                     )
             if not jumped:
                 idx += 1
@@ -777,9 +779,7 @@ class ResearchWorkflow:
             elif spec.get("required"):
                 missing.append(name)
         if missing:
-            raise ValueError(
-                "Missing required workflow input(s): " + ", ".join(sorted(missing))
-            )
+            raise ValueError("Missing required workflow input(s): " + ", ".join(sorted(missing)))
         return bound
 
     def _lookup_declared_input(
@@ -930,9 +930,15 @@ class ResearchWorkflow:
     ) -> list[FileAsset]:
         loader_name = (derivative_spec or {}).get("loader")
         if loader_name:
-            loaders = [(loader_name, self.registry.get_loader(
-                loader_name, disabled_packages=self._disabled_packages(),
-            ))]
+            loaders = [
+                (
+                    loader_name,
+                    self.registry.get_loader(
+                        loader_name,
+                        disabled_packages=self._disabled_packages(),
+                    ),
+                )
+            ]
         else:
             loaders = [
                 (name, self.registry.get_loader(name, disabled_packages=self._disabled_packages()))
@@ -940,6 +946,7 @@ class ResearchWorkflow:
             ]
 
         from arc.assets.loaders import LoaderContext
+
         context = LoaderContext(
             file_store=self.file_store,
             workspace=Path(self.file_store.root),
@@ -1051,7 +1058,7 @@ class ResearchWorkflow:
             idx = expression.find(op)
             if idx >= 0:
                 left = expression[:idx].strip()
-                right = expression[idx + len(op):].strip()
+                right = expression[idx + len(op) :].strip()
                 break
         else:
             raise ValueError(
@@ -1108,14 +1115,18 @@ class ResearchWorkflow:
                 self._context.memory["current_artifact"] = artifact
                 self.memory_hooks.on_artifact_registered(artifact)
                 state["backend_register"] = await safe_backend_action(
-                    self.backend, "register_artifact", artifact,
+                    self.backend,
+                    "register_artifact",
+                    artifact,
                 )
                 return artifact
             if isinstance(input_data, ArtifactRecord):
                 self._context.memory["current_artifact"] = input_data
                 self.memory_hooks.on_artifact_registered(input_data)
                 state["backend_register"] = await safe_backend_action(
-                    self.backend, "register_artifact", input_data,
+                    self.backend,
+                    "register_artifact",
+                    input_data,
                 )
             return input_data
         if name == "improve-artifact":
@@ -1137,17 +1148,19 @@ class ResearchWorkflow:
     # malicious / typo'd workflow file from calling private helpers (eg.
     # ``_get_repo``, ``_push_to_catalog``) via ``getattr(adapter, …)``.
     # Review item #A6.
-    _ALLOWED_ADAPTER_METHODS = frozenset({
-        "run",
-        "run_sweep",
-        "validate_artifact",
-        "prepare_inputs",
-        "get_status",
-        "collect_outputs",
-        "collect_logs",
-        "collect_metrics",
-        "register_artifact",
-    })
+    _ALLOWED_ADAPTER_METHODS = frozenset(
+        {
+            "run",
+            "run_sweep",
+            "validate_artifact",
+            "prepare_inputs",
+            "get_status",
+            "collect_outputs",
+            "collect_logs",
+            "collect_metrics",
+            "register_artifact",
+        }
+    )
 
     async def _execute_workflow_step(self, step: dict, state: dict, workflow_config: dict):
         input_data = self._resolve_ref(step.get("input", "user_goal"), state, workflow_config)
@@ -1160,13 +1173,16 @@ class ResearchWorkflow:
                 run_output = self._get_field(state["steps"].get("run", {}), "output")
                 run_id = self._get_field(run_output, "run_id")
                 self.memory_hooks.on_review_completed(
-                    self._context.memory.get("current_artifact"), output, run_id,
+                    self._context.memory.get("current_artifact"),
+                    output,
+                    run_id,
                 )
             return output
         if "skill" in step:
             return await self._execute_skill(step["skill"], input_data, state)
         if "script" in step:
             from arc.runtime.package_scripts import PackageScriptRunner
+
             script_input = input_data if isinstance(input_data, dict) else {}
             workspace = script_input.get("cwd")
             if not workspace:
@@ -1237,7 +1253,8 @@ class ResearchWorkflow:
             # An adapter from a session-disabled package is not selectable
             # (review finding 1).
             adapter_class = self.registry.get_adapter(
-                adapter_name, disabled_packages=self._disabled_packages(),
+                adapter_name,
+                disabled_packages=self._disabled_packages(),
             )
         except KeyError:
             if adapter_name == type(self.adapter).__name__:
@@ -1245,7 +1262,9 @@ class ResearchWorkflow:
             raise
         if isinstance(self.adapter, adapter_class):
             return self.adapter
-        return _instantiate_adapter(adapter_class, db_path=self._db_path, session_id=self.session_id)
+        return _instantiate_adapter(
+            adapter_class, db_path=self._db_path, session_id=self.session_id
+        )
 
     async def _execute_step_with_policy(self, step: dict, state: dict, workflow_config: dict):
         retry_max = int(step.get("retry_max", 0) or 0)
@@ -1333,8 +1352,7 @@ class ResearchWorkflow:
         artifact_id = self._get_field(artifact, "artifact_id")
         run_id = self._get_field(run_output, "run_id")
         output_summary = (
-            self._dump(output) if not isinstance(output, ArtifactRecord)
-            else output.model_dump()
+            self._dump(output) if not isinstance(output, ArtifactRecord) else output.model_dump()
         )
         await self.audit.dispatch(
             "step.after",
@@ -1364,7 +1382,7 @@ class ResearchWorkflow:
         steps = workflow.get("steps", [])
         step_index = {step["id"]: idx for idx, step in enumerate(steps)}
         conditions = workflow.get("conditions", [])
-        state = {
+        state: dict[str, Any] = {
             "user_goal": goal,
             "inputs": self._bind_workflow_inputs(workflow, goal),
             "steps": {},
@@ -1395,7 +1413,9 @@ class ResearchWorkflow:
                 session_id,
                 step_id,
                 step.get("agent") or step.get("skill") or step.get("adapter", "workflow"),
-                outputs=self._dump(output) if not isinstance(output, ArtifactRecord) else output.model_dump(),
+                outputs=self._dump(output)
+                if not isinstance(output, ArtifactRecord)
+                else output.model_dump(),
             )
             await self._dispatch_step_audit(step, step_id, output, state)
 
@@ -1416,7 +1436,9 @@ class ResearchWorkflow:
                     logger.warning(
                         "Workflow condition after %r has goto=%r, which is not "
                         "a known step id %s — ignoring the jump.",
-                        step_id, goto, sorted(step_index),
+                        step_id,
+                        goto,
+                        sorted(step_index),
                     )
             if not jumped:
                 idx += 1
@@ -1533,18 +1555,29 @@ class ResearchWorkflow:
         """
         run_inputs = dict(inputs if inputs is not None else (result.inputs or {}))
         result_path = self.results.save(result)
-        self._context.memory.setdefault("run_history", []).append({
-            "run_id": result.run_id,
-            "inputs": run_inputs,
-            "outputs": result.outputs,
-            "metrics": result.metrics,
-        })
+        self._context.memory.setdefault("run_history", []).append(
+            {
+                "run_id": result.run_id,
+                "inputs": run_inputs,
+                "outputs": result.outputs,
+                "metrics": result.metrics,
+            }
+        )
         self.memory_hooks.on_result_saved(artifact, result, run_inputs)
         backend_persist = await safe_backend_action(
-            self.backend, "persist_result", artifact, result, run_inputs,
+            self.backend,
+            "persist_result",
+            artifact,
+            result,
+            run_inputs,
         )
         backend_record = await safe_backend_action(
-            self.backend, "record_execution", artifact, result, run_inputs, result.outputs,
+            self.backend,
+            "record_execution",
+            artifact,
+            result,
+            run_inputs,
+            result.outputs,
         )
         return {
             "result_path": result_path,
@@ -1613,7 +1646,10 @@ class ResearchWorkflow:
         if not entries:
             return {"published": True, "count": 0}
         result = await safe_backend_action(
-            self.backend, "publish_provenance", self.session_id, entries,
+            self.backend,
+            "publish_provenance",
+            self.session_id,
+            entries,
         )
         if not result.get("published") and not result.get("skipped"):
             self.provenance.requeue_unpublished(entries)
@@ -1627,4 +1663,5 @@ class ResearchWorkflow:
         ``extra_sections`` (item 7).
         """
         from arc.runtime.audit import assemble_report
+
         return assemble_report(self._context, extra_sections=extra_sections or None)

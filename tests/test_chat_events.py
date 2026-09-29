@@ -16,7 +16,6 @@ from arc.chat.events import (
     set_sink,
 )
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -252,7 +251,8 @@ def test_materialise_pending_sink_uses_per_session_path(tmp_path, monkeypatch):
     """When --events jsonl is set without --events-path, the materialiser
     must put the file under <session_dir>/events.jsonl."""
     from types import SimpleNamespace
-    from arc.chat.events import SinkConfig, set_sink_config, current_sink
+
+    from arc.chat.events import SinkConfig, current_sink, set_sink_config
     from arc.chat.loop import _materialise_pending_sink
 
     monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
@@ -273,7 +273,8 @@ def test_materialise_pending_sink_uses_per_session_path(tmp_path, monkeypatch):
 def test_materialise_pending_sink_honours_explicit_path(tmp_path, monkeypatch):
     """--events-path override is preserved verbatim."""
     from types import SimpleNamespace
-    from arc.chat.events import SinkConfig, set_sink_config, current_sink, ChatEvent
+
+    from arc.chat.events import ChatEvent, SinkConfig, current_sink, set_sink_config
     from arc.chat.loop import _materialise_pending_sink
 
     monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
@@ -297,7 +298,8 @@ def test_materialise_pending_sink_honours_explicit_path(tmp_path, monkeypatch):
 def test_materialise_is_idempotent(monkeypatch, tmp_path):
     """Second call must not double-install."""
     from types import SimpleNamespace
-    from arc.chat.events import SinkConfig, set_sink_config, get_sink_config, current_sink
+
+    from arc.chat.events import SinkConfig, current_sink, get_sink_config, set_sink_config
     from arc.chat.loop import _materialise_pending_sink
 
     monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
@@ -319,7 +321,8 @@ def test_materialise_rejects_unsafe_session_id(monkeypatch, tmp_path, caplog):
     """R3-2: a session id with path traversal must not produce a sink
     rooted outside SIM2L_HOME."""
     from types import SimpleNamespace
-    from arc.chat.events import SinkConfig, set_sink_config, current_sink
+
+    from arc.chat.events import SinkConfig, current_sink, set_sink_config
     from arc.chat.loop import _materialise_pending_sink
 
     monkeypatch.setenv("SIM2L_HOME", str(tmp_path / "home"))
@@ -330,17 +333,20 @@ def test_materialise_rejects_unsafe_session_id(monkeypatch, tmp_path, caplog):
         # No sink installed
         assert current_sink() is None
         # Nothing written under SIM2L_HOME
-        leaks = list((tmp_path / "home").rglob("events.jsonl")) if (tmp_path / "home").exists() else []
+        home = tmp_path / "home"
+        leaks = list(home.rglob("events.jsonl")) if home.exists() else []
         assert leaks == []
         # And the malicious dir wasn't created upstream
         assert not (tmp_path / "etc").exists()
     finally:
         set_sink_config(None)
         from arc.chat.events import set_sink
+
         set_sink(None)
 
 
 # ── MultiSink ─────────────────────────────────────────────────────────────
+
 
 def test_multi_sink_fans_out(tmp_path):
     cap = CapturingSink()
@@ -355,9 +361,11 @@ def test_multi_sink_fans_out(tmp_path):
 
 def test_multi_sink_swallows_failing_subsink(tmp_path):
     """One sink raising must not break the others."""
+
     class BoomSink(Sink):
         def handle(self, ev):
             raise RuntimeError("kaboom")
+
     cap = CapturingSink()
     multi = MultiSink(BoomSink(), cap)
     multi.handle(ChatEvent(kind="ok", text="hi"))

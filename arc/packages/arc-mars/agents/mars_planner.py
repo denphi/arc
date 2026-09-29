@@ -19,7 +19,6 @@ don't regress on the cold-start case.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from arc.contracts.agent import AgentContract
 from arc.schemas.research import ExperimentPlan, ResearchProposal
@@ -119,8 +118,6 @@ class MARSPlannerAgent(AgentContract):
             or []
         )
         if not history:
-            from arc.packages import resolve_role
-            workflow = self.context.memory.get("workflow")
             # Avoid an infinite loop if someone configures planner=mars_planner
             # AND calls us cold — fall through to the bundled default class
             # directly rather than re-resolving.

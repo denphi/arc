@@ -56,7 +56,9 @@ class SlurmRuntimeAdapter(BaseSubmitPollAdapter):
         self.partition = os.environ.get("ARC_SLURM_PARTITION", "")
         self.account = os.environ.get("ARC_SLURM_ACCOUNT", "")
         self.time_limit = os.environ.get("ARC_SLURM_TIME", "00:30:00")
-        self.scratch = Path(os.environ.get("ARC_SLURM_SCRATCH", str(Path.home() / ".arc" / "slurm")))
+        self.scratch = Path(
+            os.environ.get("ARC_SLURM_SCRATCH", str(Path.home() / ".arc" / "slurm"))
+        )
         self.python = os.environ.get("ARC_SLURM_PYTHON", "python")
         self._jobdirs: dict[str, Path] = {}
 
@@ -78,9 +80,12 @@ class SlurmRuntimeAdapter(BaseSubmitPollAdapter):
         (job_dir / "runner.py").write_text(_RUNNER)
 
         script = job_dir / "job.sbatch"
-        lines = ["#!/bin/bash", f"#SBATCH --job-name=arc-{job_dir.name}",
-                 f"#SBATCH --time={self.time_limit}",
-                 f"#SBATCH --output={job_dir / 'slurm.out'}"]
+        lines = [
+            "#!/bin/bash",
+            f"#SBATCH --job-name=arc-{job_dir.name}",
+            f"#SBATCH --time={self.time_limit}",
+            f"#SBATCH --output={job_dir / 'slurm.out'}",
+        ]
         if self.partition:
             lines.append(f"#SBATCH --partition={self.partition}")
         if self.account:
@@ -88,11 +93,12 @@ class SlurmRuntimeAdapter(BaseSubmitPollAdapter):
         lines += [f"export ARC_JOB_DIR={job_dir}", f"{self.python} {job_dir / 'runner.py'}"]
         script.write_text("\n".join(lines) + "\n")
 
-        proc = subprocess.run(["sbatch", "--parsable", str(script)],
-                              capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            ["sbatch", "--parsable", str(script)], capture_output=True, text=True, timeout=60
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"sbatch failed: {proc.stderr.strip()[:300]}")
-        job_id = proc.stdout.strip().split(";")[0]   # --parsable → "<jobid>[;cluster]"
+        job_id = proc.stdout.strip().split(";")[0]  # --parsable → "<jobid>[;cluster]"
         self._jobdirs[job_id] = job_dir
         return job_id
 
@@ -100,12 +106,14 @@ class SlurmRuntimeAdapter(BaseSubmitPollAdapter):
         try:
             r = subprocess.run(
                 ["sacct", "-j", native_id, "--format=State", "--noheader", "--parsable2"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
         except Exception:  # noqa: BLE001
             return "running"
         if r.returncode != 0 or not r.stdout.strip():
-            return "pending"   # job not yet in the accounting db
+            return "pending"  # job not yet in the accounting db
         # First line is the job's primary state (steps follow).
         state = r.stdout.strip().splitlines()[0].split()[0].strip().rstrip("+")
         return _SLURM_STATE_MAP.get(state, "running")

@@ -5,7 +5,6 @@ Uses prompt caching on system prompts to reduce cost on repeated calls.
 """
 from __future__ import annotations
 
-
 import asyncio
 import json
 import logging
@@ -150,7 +149,8 @@ class AnthropicProvider(ProviderContract):
             None, lambda: client.messages.create(**create_kwargs)
         )
         for block in getattr(response, "content", None) or []:
-            if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
+            is_tool_use = getattr(block, "type", None) == "tool_use"
+            if is_tool_use and getattr(block, "name", None) == tool_name:
                 tool_input = block.input
                 if isinstance(tool_input, dict):
                     set_native_json_support("anthropic", self.model, True)

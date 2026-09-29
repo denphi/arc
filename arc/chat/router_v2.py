@@ -16,10 +16,8 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from arc.chat.tools.registry import ToolRegistry
-
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,9 @@ def _build_system_prompt(registry: ToolRegistry, has_active_goal: bool) -> str:
     descriptions = []
     for tool in registry.all():
         descriptions.append(f"  - {tool.name}: {tool.description}")
-    context = "There is an active research goal." if has_active_goal else "No research goal is active."
+    context = (
+        "There is an active research goal." if has_active_goal else "No research goal is active."
+    )
     return _SYSTEM_TEMPLATE.format(
         tool_descriptions="\n".join(descriptions),
         context_block=context,
@@ -88,7 +88,7 @@ def _parse_tool_call(text: str) -> tuple[str, dict] | None:
         elif ch == "}":
             depth -= 1
             if depth == 0 and start != -1:
-                blob = stripped[start:i + 1]
+                blob = stripped[start : i + 1]
                 try:
                     parsed = json.loads(blob)
                 except json.JSONDecodeError:
@@ -176,7 +176,8 @@ async def route_via_tools(
     except Exception as exc:  # noqa: BLE001 — Pydantic ValidationError or anything weirder
         logger.info(
             "router emitted invalid args for %r (%s) — falling back",
-            tool_name, type(exc).__name__,
+            tool_name,
+            type(exc).__name__,
         )
         return ToolDecision(
             tool=fallback_tool,

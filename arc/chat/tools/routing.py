@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.chat.tools.registry import Tool
 
-
 # ── Argument schemas ─────────────────────────────────────────────────────
 
 

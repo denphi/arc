@@ -25,7 +25,6 @@ import pytest
 
 from arc.schemas.research import ResearchGoal, SearchResult
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -314,6 +313,7 @@ def test_mp_discovery_recipe_is_valid():
 
 def test_mp_discovery_recipe_applies_through_resolver(monkeypatch):
     import asyncio
+
     from arc.chat.commands.recipe import run
     from arc.chat.state import ChatState
     from arc.packages import resolve_role as pkg_resolve_role

@@ -5,7 +5,6 @@ from pathlib import Path
 from arc.schemas.execution import ExecutionResult
 from arc.utils.io import atomic_write_text
 
-
 _SAFE_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 

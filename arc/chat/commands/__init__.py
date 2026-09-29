@@ -21,26 +21,64 @@ from arc.chat.registry import CommandRegistry, SlashCommand
 def build_registry() -> CommandRegistry:
     """Construct the canonical chat command registry."""
     from arc.chat.commands import (
-        builtins as _builtins,
         artifacts as _artifacts,
-        results as _results,
-        sessions as _sessions,
-        packages as _packages,
-        coder as _coder,
-        target as _target,
-        services as _services,
-        exec_cmd as _exec_cmd,
-        sweep as _sweep,
-        optimize as _optimize,
-        iterate as _iterate,
-        run_cmd as _run_cmd,
-        cont as _cont,
-        strategy as _strategy,
-        recipe as _recipe,
-        clusters as _clusters,
-        skills as _skills,
-        files as _files,
+    )
+    from arc.chat.commands import (
         build_context as _build_context,
+    )
+    from arc.chat.commands import (
+        builtins as _builtins,
+    )
+    from arc.chat.commands import (
+        clusters as _clusters,
+    )
+    from arc.chat.commands import (
+        coder as _coder,
+    )
+    from arc.chat.commands import (
+        cont as _cont,
+    )
+    from arc.chat.commands import (
+        exec_cmd as _exec_cmd,
+    )
+    from arc.chat.commands import (
+        files as _files,
+    )
+    from arc.chat.commands import (
+        iterate as _iterate,
+    )
+    from arc.chat.commands import (
+        optimize as _optimize,
+    )
+    from arc.chat.commands import (
+        packages as _packages,
+    )
+    from arc.chat.commands import (
+        recipe as _recipe,
+    )
+    from arc.chat.commands import (
+        results as _results,
+    )
+    from arc.chat.commands import (
+        run_cmd as _run_cmd,
+    )
+    from arc.chat.commands import (
+        services as _services,
+    )
+    from arc.chat.commands import (
+        sessions as _sessions,
+    )
+    from arc.chat.commands import (
+        skills as _skills,
+    )
+    from arc.chat.commands import (
+        strategy as _strategy,
+    )
+    from arc.chat.commands import (
+        sweep as _sweep,
+    )
+    from arc.chat.commands import (
+        target as _target,
     )
 
     reg = CommandRegistry()

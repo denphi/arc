@@ -22,7 +22,6 @@ import asyncio
 import json
 import sys
 
-
 _INIT_RESPONSE = {
     "jsonrpc": "2.0",
     "result": {

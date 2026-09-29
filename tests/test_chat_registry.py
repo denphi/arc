@@ -3,11 +3,10 @@
 import pytest
 
 from arc.chat.registry import (
-    SlashCommand,
     CommandRegistry,
+    SlashCommand,
     format_help_lines,
 )
-
 
 pytestmark = pytest.mark.chat
 

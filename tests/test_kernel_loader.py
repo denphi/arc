@@ -1,7 +1,8 @@
 """Tests for package manifest loading."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from arc.core.kernel import Kernel
 from arc.core.registry import ComponentRegistry

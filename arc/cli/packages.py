@@ -461,7 +461,7 @@ def _verify_registered(manifest: dict, registry, package_dir: Path) -> list[str]
         for item in provides.get("strategies", []) or []:
             if not isinstance(item, dict):
                 continue
-            role, name = item.get("role"), item.get("name")
+            role, name = str(item.get("role") or ""), str(item.get("name") or "")
             if not role or not name:
                 errors.append(
                     f"provides.strategies.{name or '<unnamed>'} needs both role and name"

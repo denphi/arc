@@ -1,6 +1,5 @@
 """Pipeline / Phase / Hook core tests (Phase 3)."""
 
-from dataclasses import dataclass
 
 import pytest
 
@@ -12,7 +11,6 @@ from arc.chat.research.pipeline import (
     run_pipeline,
 )
 from tests.fakes import make_workflow
-
 
 pytestmark = pytest.mark.chat
 

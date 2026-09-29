@@ -15,14 +15,13 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from arc.packages.arc_sim2l.agents.ideator_constraint_aware import (
     _domain_to_package_dir,
     _load_vocab_yaml,
     _render_vocabulary_block,
 )
-from arc.schemas.research import ResearchGoal, ResearchProposal
 
+from arc.schemas.research import ResearchGoal, ResearchProposal
 
 pytestmark = pytest.mark.chat
 

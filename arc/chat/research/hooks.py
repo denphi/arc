@@ -6,15 +6,12 @@ phase events. The chat layer wires them up before invoking the pipeline.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from arc.chat.events import emit
 from arc.chat.research.pipeline import (
     Phase,
     PipelineHook,
     PipelineState,
 )
-
 
 # ── auto_save_after — persist session after each completed phase ──────────
 

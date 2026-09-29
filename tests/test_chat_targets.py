@@ -9,7 +9,6 @@ import pytest
 
 from arc.chat.research.targets import pct_off, registry_keys_match
 
-
 pytestmark = pytest.mark.chat
 
 

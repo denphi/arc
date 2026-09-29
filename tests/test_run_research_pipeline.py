@@ -11,7 +11,6 @@ import pytest
 from arc.chat.loop import run_research
 from tests.fakes import make_artifact
 
-
 pytestmark = pytest.mark.chat
 
 
@@ -33,7 +32,6 @@ async def test_run_research_invokes_pipeline_phases(monkeypatch):
     monkeypatch.setattr(pipeline_mod.Pipeline, "__init__", tracking_init)
 
     # Make Pipeline.run a no-op that returns the input state with execution set
-    real_run = pipeline_mod.Pipeline.run
     async def fake_run(self, state):
         # Mark it as having gone through ALL phases without exploding
         state.execution = SimpleNamespace(

@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import re
 import uuid
 from pathlib import Path
@@ -8,6 +7,7 @@ from pathlib import Path
 from arc.contracts.artifact import ArtifactState
 from arc.schemas.artifact import ArtifactDraft, ArtifactRecord
 from arc.sim2l_schema import load_sim2l_schema
+
 # Review item #T22: ``_atomic_write_text`` moved to ``arc.utils.io`` so
 # other callers (results store, provenance log) can reuse it.
 from arc.utils.io import atomic_write_text as _atomic_write_text
