@@ -57,7 +57,6 @@ from arc.chat.input import (
 from arc.chat.input import (
     chat_history_path as _chat_history_path,
 )
-from arc.chat.plan_mode import is_plan_mode
 
 # Target-distance helpers — canonical home is arc.chat.research.targets.
 # Re-exported under the legacy underscored names for callers in this
@@ -86,6 +85,7 @@ from arc.chat.ui import (
     step,
     warn,
 )
+from arc.core.plan_mode import is_plan_mode
 from arc.orchestrator.workflow import ResearchWorkflow
 from arc.schemas.artifact import ArtifactRecord
 from arc.schemas.research import ResearchGoal

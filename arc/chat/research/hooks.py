@@ -71,7 +71,7 @@ def plan_mode_skip(*phase_names: str) -> PipelineHook:
             return
         # Re-raise anything that isn't a plan-mode block — the runner
         # checks the truthiness of hook handling, not the absorb count.
-        from arc.chat.plan_mode import PlanModeBlocked
+        from arc.core.plan_mode import PlanModeBlocked
         if not isinstance(exc, PlanModeBlocked):
             raise exc  # noqa: TRY201 — re-raise verbatim
         emit("info", f"[plan-mode] phase {phase.name} skipped", phase=phase.name)

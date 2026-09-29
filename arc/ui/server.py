@@ -46,6 +46,7 @@ from arc.session import (
     new_session_id,
     save_session_meta,
     session_paths,
+    update_session_meta,
     validate_session_id,
 )
 from arc.ui import jobs
@@ -727,7 +728,10 @@ def create_app() -> FastAPI:
         async def _body(job) -> dict[str, Any]:
             return await _run_research_job(job, session_id, body)
 
-        job = jobs.registry.start("research", session_id, _body)
+        try:
+            job = jobs.registry.start("research", session_id, _body)
+        except jobs.SessionBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"job_id": job.job_id, "session_id": session_id, "status": job.status}
 
     @app.get("/api/jobs", dependencies=auth)
@@ -1192,25 +1196,7 @@ def _hydrate_workflow_state(workflow: ResearchWorkflow) -> None:
 
 
 def _save_session_fields(session_id: str, **updates: Any) -> None:
-    meta = load_session_meta(session_id) or {}
-    save_session_meta(
-        session_id=session_id,
-        goal=updates.get("goal", meta.get("goal", "")),
-        iteration=updates.get("iteration", meta.get("iteration", 0)),
-        current_artifact_id=updates.get("current_artifact_id", meta.get("current_artifact_id")),
-        current_artifact_name=updates.get(
-            "current_artifact_name", meta.get("current_artifact_name")
-        ),
-        run_history=updates.get("run_history", meta.get("run_history", [])),
-        target=updates.get("target", meta.get("target", {})),
-        next_parameters=updates.get("next_parameters", meta.get("next_parameters", {})),
-        created=updates.get("created", meta.get("created")),
-        schema_registry=updates.get("schema_registry", meta.get("schema_registry", {})),
-        primary_goal=updates.get("primary_goal", meta.get("primary_goal")),
-        refinements=updates.get("refinements", meta.get("refinements", [])),
-        packages=updates.get("packages", meta.get("packages", {})),
-        agent_overrides=updates.get("agent_overrides", meta.get("agent_overrides", {})),
-    )
+    update_session_meta(session_id, **updates)
 
 
 async def _execute_artifact(

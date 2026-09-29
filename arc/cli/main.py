@@ -255,7 +255,7 @@ def chat(
 ):
     """Start the interactive ARC research chat."""
     if plan:
-        from arc.chat.plan_mode import set_plan_mode
+        from arc.core.plan_mode import set_plan_mode
 
         set_plan_mode(True)
         print("⚑ Plan mode active: no files will be written, no sim2l pushes.")

@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from arc.contracts.artifact import ArtifactState
+from arc.core.plan_mode import check_plan_gate
 from arc.schemas.artifact import ArtifactDraft, ArtifactRecord
 from arc.sim2l_schema import load_sim2l_schema
 
@@ -37,17 +38,11 @@ class ArtifactRegistry:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def register(self, draft: ArtifactDraft, version: str = "0.1.0") -> ArtifactRecord:
-        # Plan-mode gate: in --plan mode the chat must not write any
-        # artifact files. Importing here avoids a hard dep on arc.chat
-        # from the memory layer.
-        try:
-            from arc.chat.plan_mode import check_plan_gate
-            check_plan_gate(
-                "artifact registration",
-                hint=f"would create files under {self.root}/<uuid>/{version}/",
-            )
-        except ImportError:
-            pass  # arc.chat may not be importable in non-chat contexts
+        # Plan-mode gate: in --plan mode no artifact files are written.
+        check_plan_gate(
+            "artifact registration",
+            hint=f"would create files under {self.root}/<uuid>/{version}/",
+        )
 
         _validate_safe_id(version, "version")
         artifact_id = str(uuid.uuid4())

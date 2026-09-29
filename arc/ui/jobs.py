@@ -61,6 +61,13 @@ class Job:
         }
 
 
+class SessionBusyError(RuntimeError):
+    def __init__(self, session_id: str | None, job_id: str) -> None:
+        self.session_id = session_id
+        self.job_id = job_id
+        super().__init__(f"session {session_id!r} already has an active job ({job_id})")
+
+
 # A job body receives the Job (so it can emit events / set progress) and
 # returns the final result payload.
 JobBody = Callable[["Job"], Awaitable[Any]]
@@ -71,7 +78,25 @@ class JobRegistry:
         self._jobs: "OrderedDict[str, Job]" = OrderedDict()
         self._max_records = max_records
 
+    def active_for_session(self, session_id: str | None) -> Job | None:
+        """The queued/running job for ``session_id``, if any."""
+        if session_id is None:
+            return None
+        for job in self._jobs.values():
+            if job.session_id == session_id and job.status not in _TERMINAL:
+                return job
+        return None
+
     def start(self, kind: str, session_id: str | None, body: JobBody) -> Job:
+        """Launch ``body`` as a background job.
+
+        Raises :class:`SessionBusyError` when the session already has an
+        active job: two concurrent research loops would interleave writes
+        to the same session state.
+        """
+        active = self.active_for_session(session_id)
+        if active is not None:
+            raise SessionBusyError(session_id, active.job_id)
         job = Job(job_id=f"job-{uuid.uuid4().hex[:12]}", kind=kind, session_id=session_id)
         self._jobs[job.job_id] = job
         self._evict()

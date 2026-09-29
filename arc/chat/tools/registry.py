@@ -134,7 +134,7 @@ class ToolRegistry:
 
         # Plan-mode gate for side-effect tools.
         if tool.side_effects:
-            from arc.chat.plan_mode import check_plan_gate
+            from arc.core.plan_mode import check_plan_gate
             check_plan_gate(f"tool {tool.name!r}",
                             hint="set --plan to dry-run, or omit to execute")
 

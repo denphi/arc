@@ -1,12 +1,15 @@
 """Session management for ARC chat.
 
-Each session lives under ~/.sim2l/<session_id>/ and persists:
+Each session lives under ``$SIM2L_HOME`` (default ``~/.sim2l/code``) as
+``<session_id>/`` and persists:
   - artifacts/          ArtifactRegistry root
   - runs/               ResultsStore root
   - memory/             ProvenanceLog root
   - session.json        goal, iteration, current_artifact_id, run_history, target
 
-Sessions are identified by a short human-readable ID like 'bandgap-abc1'.
+Sessions are identified by a slug plus 48 random bits, e.g.
+'bandgap-3f9a1c2b7e41'. ``session.json`` updates go through
+:func:`update_session_meta`, which holds a per-session file lock.
 """
 from __future__ import annotations
 
@@ -14,8 +17,9 @@ import json
 import os
 import re
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from arc.utils.io import atomic_write_text
 
@@ -48,12 +52,48 @@ def _session_dir(session_id: str) -> Path:
     return path
 
 
+_SLUG_UNSAFE_RE = re.compile(r"[^a-z0-9-]+")
+
+
 def new_session_id(prefix: str = "") -> str:
-    short = uuid.uuid4().hex[:6]
-    if prefix:
-        slug = prefix.lower().replace(" ", "-")[:20].strip("-")
-        return f"{slug}-{short}"
-    return f"session-{short}"
+    """Return a fresh, unused session id like ``bandgap-3f9a1c2b7e41``.
+
+    The prefix is slugified to ``[a-z0-9-]`` so any user-supplied prefix
+    yields a valid id, and the random part is 48 bits; an id whose
+    directory already exists is never returned (so a new session can't
+    silently adopt an old one).
+    """
+    slug = _SLUG_UNSAFE_RE.sub("-", (prefix or "").lower())[:20].strip("-")
+    stem = slug or "session"
+    root = sim2l_home()
+    while True:
+        candidate = f"{stem}-{uuid.uuid4().hex[:12]}"
+        if not (root / candidate).exists():
+            return candidate
+
+
+@contextmanager
+def _meta_lock(session_id: str) -> Iterator[None]:
+    """Serialise read-modify-write of one session's ``session.json``.
+
+    Uses an advisory ``flock`` on a sidecar lock file, so concurrent writers
+    (UI jobs, API requests, a CLI chat) don't lose each other's updates.
+    ``atomic_write_text`` already prevents torn files; this prevents lost
+    updates. A no-op where ``fcntl`` is unavailable (Windows).
+    """
+    lock_path = _session_dir(session_id) / ".session.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - non-POSIX
+        yield
+        return
+    with lock_path.open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def list_sessions() -> list[dict[str, Any]]:
@@ -91,6 +131,44 @@ def _load_meta(session_id: str) -> dict[str, Any]:
     return {}
 
 
+_META_DEFAULTS: dict[str, Any] = {
+    "goal": "",
+    "iteration": 0,
+    "current_artifact_id": None,
+    "current_artifact_name": None,
+    "run_history": [],
+    "target": {},
+    "next_parameters": {},
+    "schema_registry": {},
+    "primary_goal": None,
+    "refinements": [],
+    "packages": {},
+    "agent_overrides": {},
+    "created": "",
+}
+
+
+def update_session_meta(session_id: str, **fields: Any) -> dict[str, Any]:
+    """Merge ``fields`` into ``session.json`` under the session lock.
+
+    Only known fields are accepted; unspecified ones keep their stored
+    value. Returns the written metadata.
+    """
+    unknown = set(fields) - set(_META_DEFAULTS)
+    if unknown:
+        raise TypeError(f"Unknown session fields: {sorted(unknown)}")
+    p = _meta_path(session_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with _meta_lock(session_id):
+        existing = _load_meta(session_id)
+        meta: dict[str, Any] = {"session_id": session_id}
+        for key, default in _META_DEFAULTS.items():
+            meta[key] = existing.get(key, default)
+        meta.update(fields)
+        atomic_write_text(p, json.dumps(meta, indent=2))
+    return meta
+
+
 def save_session_meta(
     session_id: str,
     goal: str | None,
@@ -107,30 +185,31 @@ def save_session_meta(
     packages: dict | None = None,
     agent_overrides: dict | None = None,
 ) -> None:
-    p = _meta_path(session_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    existing = _load_meta(session_id)
-    meta = {
-        "session_id": session_id,
-        "goal": goal or existing.get("goal", ""),
+    """Write the full session record (``None`` optionals keep stored values).
+
+    Prefer :func:`update_session_meta` for partial updates.
+    """
+    fields: dict[str, Any] = {
         "iteration": iteration,
         "current_artifact_id": current_artifact_id,
         "current_artifact_name": current_artifact_name,
         "run_history": run_history,
         "target": target,
         "next_parameters": next_parameters,
-        "schema_registry": schema_registry
-        if schema_registry is not None
-        else existing.get("schema_registry", {}),
-        "primary_goal": primary_goal if primary_goal is not None else existing.get("primary_goal"),
-        "refinements": refinements if refinements is not None else existing.get("refinements", []),
-        "packages": packages if packages is not None else existing.get("packages", {}),
-        "agent_overrides": agent_overrides
-        if agent_overrides is not None
-        else existing.get("agent_overrides", {}),
-        "created": created or existing.get("created", ""),
     }
-    atomic_write_text(p, json.dumps(meta, indent=2))
+    if goal:
+        fields["goal"] = goal
+    if created:
+        fields["created"] = created
+    optional = {
+        "schema_registry": schema_registry,
+        "primary_goal": primary_goal,
+        "refinements": refinements,
+        "packages": packages,
+        "agent_overrides": agent_overrides,
+    }
+    fields.update({k: v for k, v in optional.items() if v is not None})
+    update_session_meta(session_id, **fields)
 
 
 def load_session_meta(session_id: str) -> dict[str, Any]:

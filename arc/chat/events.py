@@ -281,3 +281,13 @@ def emit(kind: EventKind, text: str = "", **meta) -> None:
     if sink is None:
         return
     sink.handle(ChatEvent(kind=kind, text=text, meta=meta))
+
+
+def _emit_plan_skip(label: str) -> None:
+    emit("info", f"[plan-mode] skipped {label}", label=label)
+
+
+# Surface side effects skipped by ``arc.core.plan_mode.gated`` in the chat.
+from arc.core.plan_mode import set_skip_notifier  # noqa: E402
+
+set_skip_notifier(_emit_plan_skip)

@@ -49,7 +49,7 @@ class ChatState:
         # global flag (set earlier by the CLI ``--plan`` switch) is
         # respected. This avoids the bug where ``--plan`` is silently
         # disabled when ``chat_loop`` constructs a default ``ChatState``.
-        from arc.chat.plan_mode import is_plan_mode, set_plan_mode
+        from arc.core.plan_mode import is_plan_mode, set_plan_mode
         if self.permission_mode == "plan":
             set_plan_mode(True)
         elif is_plan_mode():
@@ -60,7 +60,7 @@ class ChatState:
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
         """Update permission mode and the global plan-mode flag."""
-        from arc.chat.plan_mode import set_plan_mode
+        from arc.core.plan_mode import set_plan_mode
         self.permission_mode = mode
         set_plan_mode(mode == "plan")
 
