@@ -635,11 +635,15 @@ class Sim2LRuntimeAdapter(RuntimeAdapterContract):
             # Validate via the subprocess sandbox so we don't touch this
             # process's sys.path / sys.modules just to check the artifact.
             # Review item #A5.
-            try:
+            def _validate() -> None:
                 source = wf_path.read_text()
                 check_workflow_source(source)
                 module_name = f"arc_artifact_validate_{artifact.artifact_id.replace('-', '_')}"
                 validate_workflow_import_timeout(source, module_name, str(wf_path))
+
+            try:
+                # Spawns and waits on a child — keep it off the event loop.
+                await asyncio.to_thread(_validate)
             except Exception as exc:
                 errors.append(f"workflow.py import error: {exc}")
 

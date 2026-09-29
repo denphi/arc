@@ -104,6 +104,32 @@ def load_simulate(
     return func
 
 
+def validate_workflow(
+    artifact_path: str,
+    artifact_id: str,
+    *,
+    allowed_imports: frozenset[str] | None = None,
+) -> None:
+    """Check an artifact's ``workflow.py`` without running it in this process.
+
+    Runs the AST safety lint, then imports the module in a spawned child
+    (with a timeout) to confirm it defines ``simulate``. Unlike
+    :func:`load_simulate` nothing from the workflow executes in the calling
+    process, so validation keeps the subprocess isolation the default
+    execution mode promises. Raises on failure.
+    """
+    wf_path = Path(artifact_path) / "workflow.py"
+    if not wf_path.exists():
+        raise FileNotFoundError(f"workflow.py not found at {wf_path}")
+    source = wf_path.read_text()
+    if allowed_imports is None:
+        check_workflow_source(source)
+    else:
+        check_workflow_source(source, allowed_imports=allowed_imports)
+    module_name = f"arc_local_artifact_{artifact_id.replace('-', '_')}"
+    validate_workflow_import_timeout(source, module_name, str(wf_path))
+
+
 # ── Subprocess worker ──────────────────────────────────────────────────
 
 

@@ -47,7 +47,10 @@ class DockerRuntimeAdapter(BaseSubmitPollAdapter):
         self.image = os.environ.get("ARC_DOCKER_IMAGE", "python:3.11-slim")
         self.network = os.environ.get("ARC_DOCKER_NETWORK", "none")
         self.cpus = os.environ.get("ARC_DOCKER_CPUS", "")
-        self.memory = os.environ.get("ARC_DOCKER_MEMORY", "")
+        # Bounded by default so a runaway workflow can't exhaust the host;
+        # set ARC_DOCKER_MEMORY="" / ARC_DOCKER_PIDS_LIMIT="" to lift.
+        self.memory = os.environ.get("ARC_DOCKER_MEMORY", "4g")
+        self.pids_limit = os.environ.get("ARC_DOCKER_PIDS_LIMIT", "256")
         self._docker = os.environ.get("ARC_DOCKER_COMMAND", "docker")
         # native_id (container name) -> staging dir, kept so _collect can
         # read the output the container wrote.
@@ -83,7 +86,20 @@ class DockerRuntimeAdapter(BaseSubmitPollAdapter):
             "-v", f"{staging / 'in'}:/arc/in:ro",
             "-v", f"{staging / 'out'}:/arc/out",
             "-v", f"{staging / 'runner.py'}:/arc/runner.py:ro",
+            # Least privilege: no Linux capabilities, no setuid escalation,
+            # read-only root fs (the only writable paths are /tmp and the
+            # mounted output dir).
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--read-only",
+            "--tmpfs", "/tmp",
         ]
+        if hasattr(os, "getuid"):
+            # Run as the invoking user so the container can write to the
+            # (0700) staging output dir without CAP_DAC_OVERRIDE.
+            cmd += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        if self.pids_limit:
+            cmd += ["--pids-limit", self.pids_limit]
         if self.cpus:
             cmd += ["--cpus", self.cpus]
         if self.memory:

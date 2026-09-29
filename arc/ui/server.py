@@ -26,7 +26,9 @@ from arc.api.research_loop_routes import router as research_loop_router
 from arc.api.routes import router as core_api_router
 from arc.api.session_state import load_state, save_state
 from arc.api.security import (
+    LoopbackHostGuard,
     load_security_config,
+    token_matches,
     require_api_token,
     validate_provider_base_url,
 )
@@ -64,6 +66,21 @@ CONFIG_KEYS: tuple[str, ...] = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
 )
+# Placeholder the UI shows (and sends back) for a secret that is set. The
+# server never returns secret values; a PUT carrying this placeholder leaves
+# the stored value unchanged.
+SECRET_MASK = "********"
+_SECRET_MARKERS = ("KEY", "TOKEN", "PASSWORD", "SECRET")
+
+
+def _is_secret_key(key: str) -> bool:
+    return any(marker in key for marker in _SECRET_MARKERS)
+
+
+def _masked(key: str, value: str) -> str:
+    return SECRET_MASK if value and _is_secret_key(key) else value
+
+
 STATE_KEYS = (
     "strategy_overrides",
     "active_recipe",
@@ -303,6 +320,8 @@ def create_app() -> FastAPI:
         version=__version__,
     )
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
+    # Without a token only loopback Host headers are served (DNS rebinding).
+    app.add_middleware(LoopbackHostGuard)
     app.include_router(core_api_router, prefix="/api/core")
     app.include_router(research_loop_router, prefix="/api/actions")
 
@@ -337,6 +356,8 @@ def create_app() -> FastAPI:
     @app.put("/api/config", dependencies=auth)
     def save_config(body: ConfigSaveRequest) -> dict[str, Any]:
         values = _clean_env_values(body.values)
+        # Unchanged secrets come back as the mask — keep the stored value.
+        values = {k: v for k, v in values.items() if v != SECRET_MASK}
         _write_env_values(_config_env_path(), values)
         for key, value in values.items():
             if value:
@@ -755,7 +776,7 @@ def _require_token_header_or_query(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             supplied = parts[1]
     supplied = supplied or token
-    if supplied != cfg.token:
+    if not token_matches(supplied, cfg.token):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -770,22 +791,19 @@ def _config_env_path() -> Path:
     configured = os.environ.get("ARC_UI_ENV_PATH")
     if configured:
         return Path(configured).expanduser()
-    cwd = Path.cwd()
-    for candidate in (cwd / ".env", cwd.parent / ".env"):
-        if candidate.exists():
-            return candidate
-    return cwd / ".env"
+    return Path.cwd() / ".env"
 
 
 def _config_snapshot() -> dict[str, Any]:
     path = _config_env_path()
     file_values = _read_env_values(path)
+    # Secrets are reported as set/unset only — never echoed back.
     values = {
-        key: file_values.get(key, os.environ.get(key, ""))
+        key: _masked(key, file_values.get(key, os.environ.get(key, "")))
         for key in CONFIG_KEYS
     }
     extra = {
-        key: value
+        key: _masked(key, value)
         for key, value in file_values.items()
         if key not in CONFIG_KEYS
     }
@@ -793,6 +811,7 @@ def _config_snapshot() -> dict[str, Any]:
         "path": str(path),
         "exists": path.exists(),
         "keys": list(CONFIG_KEYS),
+        "secret_mask": SECRET_MASK,
         "values": values,
         "extra": extra,
     }
@@ -841,8 +860,11 @@ def _clean_env_values(values: dict[str, str | None]) -> dict[str, str]:
     cleaned: dict[str, str] = {}
     for raw_key, raw_value in values.items():
         key = str(raw_key).strip()
-        if not ENV_KEY_RE.fullmatch(key):
-            raise HTTPException(status_code=400, detail=f"Invalid environment key: {raw_key}")
+        # Only the documented UI settings are writable. Arbitrary keys would
+        # let a caller set PYTHONPATH, LD_PRELOAD, ARC_*_COMMAND, … for every
+        # process ARC later spawns.
+        if key not in CONFIG_KEYS:
+            raise HTTPException(status_code=400, detail=f"Unsupported configuration key: {raw_key}")
         value = "" if raw_value is None else str(raw_value).strip()
         if "\n" in value or "\r" in value:
             raise HTTPException(status_code=400, detail=f"Invalid multiline value for {key}")

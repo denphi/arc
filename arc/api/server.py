@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from arc.api.research_loop_routes import router as research_loop_router
 from arc.api.routes import router
+from arc.api.security import LoopbackHostGuard
 from arc.core.kernel import Kernel
 from arc.version import __version__
 
@@ -30,7 +31,7 @@ async def lifespan(app: FastAPI):
     await _kernel.shutdown()
 
 
-def create_app(config_path: str = "arc.toml") -> FastAPI:
+def create_app() -> FastAPI:
     app = FastAPI(
         title="ARC-Sim2L",
         description="Agentic research framework using Sim2L artifacts",
@@ -39,6 +40,8 @@ def create_app(config_path: str = "arc.toml") -> FastAPI:
     )
     app.include_router(router)
     app.include_router(research_loop_router)
+    # Without a token only loopback Host headers are served (DNS rebinding).
+    app.add_middleware(LoopbackHostGuard)
 
     @app.get("/health")
     def health():

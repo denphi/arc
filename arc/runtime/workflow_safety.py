@@ -73,6 +73,16 @@ _BLOCKED_NAMES: frozenset[str] = frozenset({
     "__init_subclass__", "__loader__", "__spec__", "__file__", "__module__",
     "__base__", "__qualname__", "__name__",
     "mro", "bases", "subclasses",
+    # Frame / code / traceback introspection. These are not dunders, but
+    # they are the classic way out of an AST-restricted namespace: a
+    # generator's or traceback's frame exposes ``f_globals``/``f_builtins``
+    # (and through them ``__import__``) of the surrounding module.
+    "gi_frame", "gi_code", "gi_yieldfrom",
+    "cr_frame", "cr_code", "cr_await", "cr_origin",
+    "ag_frame", "ag_code", "ag_await",
+    "f_back", "f_globals", "f_locals", "f_builtins", "f_code", "f_trace",
+    "tb_frame", "tb_next", "tb_lasti",
+    "co_code", "co_consts", "co_names",
 })
 
 

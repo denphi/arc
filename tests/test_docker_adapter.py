@@ -98,6 +98,24 @@ def test_run_completes_via_submit_poll_collect(monkeypatch, tmp_path):
     assert result.metrics["backend"] == "docker"
 
 
+def test_container_runs_with_least_privilege(monkeypatch, tmp_path):
+    fake = _FakeDocker()
+    seen = []
+
+    def _run(cmd, **kwargs):
+        seen.append(cmd)
+        return fake.run(cmd, **kwargs)
+
+    _patch(monkeypatch, fake)
+    monkeypatch.setattr(_mod.subprocess, "run", _run)
+    adapter = _Adapter()
+    asyncio.run(adapter.run(_artifact(tmp_path), {"x": 1.0, "y": 2.0}))
+    run_cmd = next(cmd for cmd in seen if len(cmd) > 1 and cmd[1] == "run")
+    for flag in ("--cap-drop", "--read-only", "--pids-limit", "--memory"):
+        assert flag in run_cmd
+    assert run_cmd[run_cmd.index("--network") + 1] == "none"
+
+
 def test_not_runnable_without_daemon(monkeypatch, tmp_path):
     fake = _FakeDocker()
     _patch(monkeypatch, fake, which=False)   # docker not on PATH

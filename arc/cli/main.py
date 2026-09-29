@@ -117,12 +117,28 @@ if HAS_TYPER:
 
     @app.command()
     def serve(
-        host: str = typer.Option("0.0.0.0", "--host"),
-        port: int = typer.Option(8000, "--port"),
+        host: str = typer.Option(None, "--host", help="Bind address (default: [api].host, 127.0.0.1)"),
+        port: int = typer.Option(None, "--port", help="Port (default: [api].port, 8000)"),
         reload: bool = typer.Option(False, "--reload"),
     ):
-        """Start the ARC API server."""
+        """Start the ARC API server.
+
+        Binding beyond loopback requires ARC_API_TOKEN: the API can execute
+        artifact code.
+        """
         import uvicorn
+
+        from arc.api.security import InsecureBindError, check_bind_allowed
+        from arc.core.config import config_section
+
+        api_cfg = config_section("api")
+        host = host or str(api_cfg.get("host") or "127.0.0.1")
+        port = port or int(api_cfg.get("port") or 8000)
+        try:
+            check_bind_allowed(host)
+        except InsecureBindError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(2) from exc
         uvicorn.run("arc.api.server:app", host=host, port=port, reload=reload)
 
     @app.command()
@@ -132,9 +148,14 @@ if HAS_TYPER:
         reload: bool = typer.Option(False, "--reload", help="Reload on code changes"),
     ):
         """Start the standalone ARC browser UI."""
+        from arc.api.security import InsecureBindError
         from arc.ui.__main__ import run_server
 
-        run_server(host=host, port=port, reload=reload)
+        try:
+            run_server(host=host, port=port, reload=reload)
+        except InsecureBindError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(2) from exc
 
     @app.command()
     def info():

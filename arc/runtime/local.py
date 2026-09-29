@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
 from itertools import product
@@ -6,7 +8,7 @@ from typing import Any
 
 from arc.contracts.adapter import RuntimeAdapterContract
 from arc.runtime._adapter_common import filter_outputs, reconcile_inputs
-from arc.runtime.executor import execute_workflow, load_simulate
+from arc.runtime.executor import execute_workflow, validate_workflow
 from arc.schemas.artifact import ArtifactRecord, ValidationResult
 from arc.schemas.execution import ExecutionResult
 from arc.sim2l_schema import load_sim2l_schema
@@ -54,8 +56,12 @@ class LocalRuntimeAdapter(RuntimeAdapterContract):
 
         if (artifact_path / "workflow.py").exists():
             try:
-                # Loads + safety-lints workflow.py without running it.
-                load_simulate(str(artifact_path), artifact.artifact_id)
+                # Safety lint + import check in a child process; nothing
+                # from the workflow runs in the orchestrator. Off the event
+                # loop because it spawns and waits on a subprocess.
+                await asyncio.to_thread(
+                    validate_workflow, str(artifact_path), artifact.artifact_id,
+                )
             except Exception as exc:
                 errors.append(f"workflow.py import error: {exc}")
 

@@ -323,7 +323,10 @@ async function saveConfig(event) {
       method: "PUT",
       body: JSON.stringify({ values }),
     });
-    state.authToken = values.ARC_API_TOKEN || "";
+    // A masked token means "unchanged" — keep the one we already hold.
+    if (values.ARC_API_TOKEN !== (config.secret_mask || "********")) {
+      state.authToken = values.ARC_API_TOKEN || "";
+    }
     if (state.authToken) {
       window.sessionStorage.setItem("arc.ui.apiToken", state.authToken);
     } else {

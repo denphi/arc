@@ -26,6 +26,7 @@ We harden the surface in three layers:
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import os
 import socket
@@ -96,6 +97,13 @@ def load_security_config() -> SecurityConfig:
     )
 
 
+def token_matches(supplied: str | None, expected: str) -> bool:
+    """Constant-time comparison of a supplied bearer token."""
+    if not supplied:
+        return False
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
 def require_api_token(authorization: str | None = Header(default=None)) -> None:
     """FastAPI dependency: enforce the bearer token when one is configured.
 
@@ -109,7 +117,7 @@ def require_api_token(authorization: str | None = Header(default=None)) -> None:
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization required")
     parts = authorization.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer" or parts[1] != cfg.token:
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not token_matches(parts[1], cfg.token):
         # 401 even on bad scheme; clients shouldn't be probing the difference.
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -193,3 +201,100 @@ def validate_provider_base_url(base_url: str, allowlist: Iterable[str] | None = 
         )
 
     return cleaned
+
+
+# ── Bind + Host-header guards ──────────────────────────────────────────
+
+_LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def is_loopback_host(host: str) -> bool:
+    """True when ``host`` (a bind address or Host-header name) is loopback."""
+    host = (host or "").strip().lower()
+    if host in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+class InsecureBindError(RuntimeError):
+    """Raised when a server would listen beyond loopback with no token."""
+
+
+def check_bind_allowed(host: str) -> None:
+    """Refuse to expose an unauthenticated server beyond loopback.
+
+    Both HTTP surfaces can execute artifact code, so listening on a
+    non-loopback interface (``0.0.0.0``, a LAN address, …) requires
+    ``ARC_API_TOKEN`` / ``[api].token``. ``ARC_ALLOW_UNAUTHENTICATED_BIND=1``
+    is an explicit escape hatch for trusted, isolated networks.
+    """
+    if is_loopback_host(host):
+        return
+    if load_security_config().token:
+        return
+    if os.environ.get("ARC_ALLOW_UNAUTHENTICATED_BIND", "").lower() in {"1", "true", "yes"}:
+        return
+    raise InsecureBindError(
+        f"Refusing to listen on {host!r} without authentication: anyone who can "
+        "reach this port could run code. Set ARC_API_TOKEN (clients then send "
+        "'Authorization: Bearer <token>'), bind to 127.0.0.1, or set "
+        "ARC_ALLOW_UNAUTHENTICATED_BIND=1 if the network is trusted."
+    )
+
+
+def _allowed_host_names() -> set[str]:
+    extra = {
+        item.strip().lower()
+        for item in os.environ.get("ARC_ALLOWED_HOSTS", "").split(",")
+        if item.strip()
+    }
+    return _LOOPBACK_NAMES | extra
+
+
+def _host_from_header(value: str) -> str:
+    value = value.strip().lower()
+    if value.startswith("["):  # [::1]:8000
+        return value.split("]", 1)[0] + "]"
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+class LoopbackHostGuard:
+    """ASGI middleware: without a token, only serve loopback Host headers.
+
+    An unauthenticated server bound to 127.0.0.1 is still reachable from a
+    malicious web page via DNS rebinding — the browser sends the attacker's
+    hostname in ``Host``. When no API token is configured, requests whose
+    Host is not a loopback name (or listed in ``ARC_ALLOWED_HOSTS``) get
+    421. With a token configured, the bearer check protects the API and
+    any Host is accepted (the server may sit behind a proxy).
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") not in {"http", "websocket"} or load_security_config().token:
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for name, value in scope.get("headers") or []:
+            if name == b"host":
+                host = _host_from_header(value.decode("latin-1"))
+                break
+        if host and (host in _allowed_host_names() or is_loopback_host(host)):
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        body = b"Misdirected request: unauthenticated ARC only answers to localhost."
+        await send({
+            "type": "http.response.start",
+            "status": 421,
+            "headers": [(b"content-type", b"text/plain"),
+                        (b"content-length", str(len(body)).encode())],
+        })
+        await send({"type": "http.response.body", "body": body})

@@ -34,6 +34,8 @@ def run_server(
 ) -> None:
     import uvicorn
 
+    from arc.api.security import check_bind_allowed
+    check_bind_allowed(host)
     uvicorn.run(
         "arc.ui.server:app",
         host=host,
@@ -51,7 +53,11 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
 
-    run_server(host=args.host, port=args.port, reload=args.reload)
+    from arc.api.security import InsecureBindError
+    try:
+        run_server(host=args.host, port=args.port, reload=args.reload)
+    except InsecureBindError as exc:
+        parser.exit(2, f"error: {exc}\n")
 
 
 if __name__ == "__main__":
