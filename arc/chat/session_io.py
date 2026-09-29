@@ -24,7 +24,7 @@ Session state is split across two JSON files in the session directory:
   * ``session_state.json`` — strategy / recipe / build-context choices the user made
     during the session: ``strategy_overrides``, ``active_recipe``,
     ``recipe_applied``, ``recipe_suggested``. Written via
-    ``arc.api.session_state.save_state`` so the same file format
+    ``arc.session_state.save_state`` so the same file format
     backs the HTTP API.
 
 The split keeps the legacy schema stable while giving the new
@@ -37,8 +37,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from arc.api.session_state import load_state, save_state
 from arc.session import load_session_meta, save_session_meta
+from arc.session_state import load_state, save_state
 
 # Memory keys that live in ``session_state.json``. The chat reads the
 # whole subset on restore and writes it back on save; the API does the

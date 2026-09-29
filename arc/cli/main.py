@@ -64,7 +64,7 @@ def run(
         workflow_name=workflow_name,
     )
     if build_context:
-        workflow._context.memory["build_context_workflows"] = list(build_context)
+        workflow.set_build_context_workflows(list(build_context))
 
     async def _run():
         results = []

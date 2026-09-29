@@ -80,29 +80,12 @@ def _workflow(
         workflow_name=workflow_name,
     )
 
-    # Splice persisted strategy + recipe state into the workflow's
-    # context memory so the resolver picks them up. Without this, a
-    # client that called POST /strategies/{role} or /recipes/{n}/apply
-    # would see their choice silently ignored when /research/start ran
-    # the workflow with default agents. Best-effort: a missing or
-    # malformed state file falls through to defaults rather than
-    # raising — the API surface should degrade, not 500.
+    # Restore the session's persisted strategy/recipe/build-context choices,
+    # experiment record and package state so a client that called
+    # POST /strategies/{role} or /recipes/{n}/apply gets them honoured here.
+    # Best-effort: unreadable state falls back to defaults rather than 500.
     try:
-        from arc.api.session_state import load_state
-        from arc.session import load_session_meta
-
-        state = load_state(resolved_session) or {}
-        for key in ("strategy_overrides", "active_recipe",
-                    "recipe_applied", "recipe_suggested",
-                    "build_context_workflows"):
-            if key in state and state[key]:
-                workflow._context.memory[key] = state[key]
-        meta = load_session_meta(resolved_session) or {}
-        if meta.get("packages"):
-            workflow._context.memory["packages"] = meta["packages"]
-            refresh = getattr(workflow, "refresh_disabled_packages", None)
-            if callable(refresh):
-                refresh()
+        workflow.load_session_state()
     except Exception:  # noqa: BLE001 — state lookup is best-effort
         pass
     return workflow
@@ -136,9 +119,7 @@ def _file_workflow(session_id: str) -> ResearchWorkflow:
 
     workflow = _workflow(LLMConfig(), session_id=session_id)
     store = session_file_store(session_id, restrict_roots=not _files_trusted_local())
-    workflow.file_store = store
-    workflow._context.memory["files"] = store
-    workflow._context.memory["file_store"] = store
+    workflow.attach_file_store(store)
     return workflow
 
 
@@ -371,11 +352,11 @@ async def list_results(session_id: str | None = None):
 
 @router.post("/review/run")
 async def run_review(req: ReviewRequest) -> ReviewResult:
-    from arc.api.session_state import load_state
     from arc.contracts.agent import AgentContext
     from arc.core.config import load_arc_toml
     from arc.core.strategies import resolve_role as resolve_strategy_role
     from arc.session import load_session_meta
+    from arc.session_state import load_state
 
     target = dict(req.target)
     session_id = _optional_session_id(req.session_id) or "api"

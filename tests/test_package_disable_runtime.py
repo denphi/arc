@@ -336,35 +336,22 @@ def test_chat_loop_refreshes_after_restoring_disabled_packages(monkeypatch):
 def test_api_workflow_hydrates_packages_and_refreshes(monkeypatch):
     """API-created workflows hydrate persisted package state and refresh the
     already-built provider/adapter references."""
-    from types import SimpleNamespace
-
     from arc.api import routes
+    from arc.orchestrator.workflow import ResearchWorkflow
+    from arc.session import update_session_meta
+    from arc.session_state import save_state
 
     refresh_calls = []
-
-    class _FakeWorkflow:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.session_id = kwargs["session_id"]
-            self._context = SimpleNamespace(memory={})
-
-        def refresh_disabled_packages(self):
-            refresh_calls.append(dict(self._context.memory))
-
-    monkeypatch.setattr(routes, "ResearchWorkflow", _FakeWorkflow)
-
-    import arc.api.session_state as session_state
-    import arc.session as session_mod
-    monkeypatch.setattr(session_state, "load_state", lambda session_id: {
-        "strategy_overrides": {"planner": "mars_planner"},
-    })
-    monkeypatch.setattr(session_mod, "load_session_meta", lambda session_id: {
-        "packages": {"disabled": ["arc-mars"]},
-    })
+    monkeypatch.setattr(
+        ResearchWorkflow, "refresh_disabled_packages",
+        lambda self: refresh_calls.append(dict(self.memory)),
+    )
+    save_state("api-session", {"strategy_overrides": {"planner": "mars_planner"}})
+    update_session_meta("api-session", packages={"disabled": ["arc-mars"]})
 
     workflow = routes._workflow(routes.LLMConfig(), session_id="api-session")
 
-    assert workflow._context.memory["strategy_overrides"] == {"planner": "mars_planner"}
-    assert workflow._context.memory["packages"] == {"disabled": ["arc-mars"]}
+    assert workflow.memory["strategy_overrides"] == {"planner": "mars_planner"}
+    assert workflow.memory["packages"] == {"disabled": ["arc-mars"]}
     assert refresh_calls
     assert refresh_calls[0]["packages"] == {"disabled": ["arc-mars"]}

@@ -8,7 +8,7 @@ external client) can drive the same operations the REPL exposes:
   * ``/clusters``          — read failure-cluster snapshots
   * ``/skills``            — list / show / delete / export / import
 
-Every mutating route persists through :mod:`arc.api.session_state` so
+Every mutating route persists through :mod:`arc.session_state` so
 changes survive an HTTP server restart. Reads are tolerant of missing
 state (a brand-new session returns sensible empty payloads).
 
@@ -27,8 +27,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from arc.api.security import require_api_token
-from arc.api.session_state import load_state, save_state
 from arc.session import session_paths, validate_session_id
+from arc.session_state import load_state, save_state
 
 logger = logging.getLogger(__name__)
 

@@ -361,6 +361,114 @@ class ResearchWorkflow:
             self.adapter, registry=self.registry, disabled_packages=disabled,
         )
 
+    # ── Session state (public API for CLI / HTTP / UI front-ends) ──────────
+
+    # Keys persisted in ``session_state.json`` (strategy / recipe / build-context
+    # selections) and in ``session.json`` (the experiment record) respectively.
+    SESSION_STATE_KEYS = (
+        "strategy_overrides",
+        "active_recipe",
+        "recipe_applied",
+        "recipe_suggested",
+        "build_context_workflows",
+    )
+    SESSION_META_KEYS = (
+        "run_history",
+        "target",
+        "next_parameters",
+        "schema_registry",
+        "primary_goal",
+        "refinements",
+        "packages",
+        "agent_overrides",
+    )
+
+    @property
+    def memory(self) -> dict[str, Any]:
+        """The shared agent memory for this workflow's session.
+
+        Front-ends read and write session data through this (or the helpers
+        below) rather than reaching into ``_context``.
+        """
+        return self._context.memory
+
+    @property
+    def agent_context(self) -> AgentContext:
+        """The :class:`AgentContext` to construct agents with."""
+        return self._context
+
+    @property
+    def iteration(self) -> int:
+        return self._context.iteration
+
+    @iteration.setter
+    def iteration(self, value: int) -> None:
+        self._context.iteration = int(value)
+
+    def set_build_context_workflows(self, names: list[str]) -> None:
+        """Select the pre-build context workflows for this session."""
+        self.memory["build_context_workflows"] = list(names)
+
+    def attach_file_store(self, store: Any) -> None:
+        """Swap in a different session file store (e.g. a root-restricted one)."""
+        self.file_store = store
+        self.memory["files"] = store
+        self.memory["file_store"] = store
+
+    def load_session_state(self) -> None:
+        """Hydrate memory from the session's persisted state + metadata.
+
+        Restores strategy/recipe/build-context selections, the experiment
+        record (iteration, run history, target, …) and the current
+        artifact, then re-resolves the provider/adapter so a package the
+        session disabled isn't kept live. Missing files are a no-op.
+        """
+        from arc.session import load_session_meta
+        from arc.session_state import load_state
+
+        state = load_state(self.session_id) or {}
+        for key in self.SESSION_STATE_KEYS:
+            if state.get(key):
+                self.memory[key] = state[key]
+
+        meta = load_session_meta(self.session_id) or {}
+        if not meta:
+            return
+        self.iteration = meta.get("iteration", 0) or 0
+        for key in self.SESSION_META_KEYS:
+            if key in meta:
+                self.memory[key] = meta[key]
+        artifact_id = meta.get("current_artifact_id")
+        if artifact_id:
+            try:
+                self.memory["current_artifact"] = self.artifacts.get(artifact_id)
+            except Exception:  # noqa: BLE001 — a stale id just means no current artifact
+                pass
+        if (self.memory.get("packages") or {}).get("disabled"):
+            self.refresh_disabled_packages()
+
+    def save_session_state(self, goal: str | None = None, target: dict | None = None) -> None:
+        """Persist memory back to ``session.json`` + ``session_state.json``."""
+        from arc.session import update_session_meta
+        from arc.session_state import save_state
+
+        artifact = self.memory.get("current_artifact")
+        fields: dict[str, Any] = {
+            key: self.memory[key] for key in self.SESSION_META_KEYS if key in self.memory
+        }
+        fields.update(
+            iteration=self.iteration,
+            current_artifact_id=getattr(artifact, "artifact_id", None),
+            current_artifact_name=getattr(artifact, "name", None),
+        )
+        if goal:
+            fields["goal"] = goal
+            fields.setdefault("primary_goal", goal)
+        if target:
+            fields["target"] = target
+        update_session_meta(self.session_id, **fields)
+        save_state(self.session_id, {key: self.memory.get(key) for key in self.SESSION_STATE_KEYS})
+
     def _agent(self, agent_class):
         return agent_class(context=self._context)
 

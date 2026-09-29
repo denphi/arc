@@ -31,7 +31,6 @@ from arc.api.security import (
     token_matches,
     validate_provider_base_url,
 )
-from arc.api.session_state import load_state, save_state
 from arc.memory.artifact_registry import ArtifactRegistry
 from arc.memory.results_store import ResultsStore
 from arc.orchestrator.workflow import ResearchWorkflow
@@ -49,6 +48,7 @@ from arc.session import (
     update_session_meta,
     validate_session_id,
 )
+from arc.session_state import load_state
 from arc.ui import jobs
 from arc.version import __version__
 
@@ -82,14 +82,6 @@ def _is_secret_key(key: str) -> bool:
 def _masked(key: str, value: str) -> str:
     return SECRET_MASK if value and _is_secret_key(key) else value
 
-
-STATE_KEYS = (
-    "strategy_overrides",
-    "active_recipe",
-    "recipe_applied",
-    "recipe_suggested",
-    "build_context_workflows",
-)
 
 COMMANDS: list[dict[str, Any]] = [
     {
@@ -1132,67 +1124,12 @@ def _review_for_result(session_id: str, run_id: str) -> dict[str, Any]:
 
 
 def _save_workflow_meta(workflow: ResearchWorkflow, goal: str, target: dict[str, Any]) -> None:
-    memory = workflow._context.memory
-    artifact = memory.get("current_artifact")
-    save_session_meta(
-        session_id=workflow.session_id,
-        goal=goal,
-        iteration=workflow._context.iteration,
-        current_artifact_id=getattr(artifact, "artifact_id", None),
-        current_artifact_name=getattr(artifact, "name", None),
-        run_history=memory.get("run_history", []),
-        target=target or memory.get("target", {}),
-        next_parameters=memory.get("next_parameters", {}),
-        schema_registry=memory.get("schema_registry", {}),
-        primary_goal=memory.get("primary_goal", goal),
-        refinements=memory.get("refinements", []),
-        packages=memory.get("packages", {}),
-        agent_overrides=memory.get("agent_overrides", {}),
-    )
-    save_state(workflow.session_id, {key: memory.get(key) for key in STATE_KEYS})
+    workflow.save_session_state(goal=goal, target=target)
 
 
 def _hydrate_workflow_state(workflow: ResearchWorkflow) -> None:
     """Restore the pieces chat and HTTP actions persist between turns."""
-    memory = workflow._context.memory
-    state = load_state(workflow.session_id) or {}
-    for key in STATE_KEYS:
-        if state.get(key):
-            memory[key] = state[key]
-
-    meta = load_session_meta(workflow.session_id) or {}
-    if not meta:
-        return
-
-    workflow._context.iteration = meta.get("iteration", 0)
-    for key in (
-        "run_history",
-        "target",
-        "next_parameters",
-        "schema_registry",
-        "primary_goal",
-        "refinements",
-        "packages",
-        "agent_overrides",
-    ):
-        if key in meta:
-            memory[key] = meta[key]
-
-    artifact_id = meta.get("current_artifact_id")
-    if artifact_id:
-        try:
-            memory["current_artifact"] = workflow.artifacts.get(artifact_id)
-        except Exception:
-            pass
-
-    # The provider + runtime adapter are built in __init__, before this
-    # hydration loads the session's disabled-package set. Re-resolve them now
-    # so a provider/adapter from a disabled package isn't kept live for this
-    # request's workflow (review finding P2).
-    if memory.get("packages", {}).get("disabled"):
-        refresh = getattr(workflow, "refresh_disabled_packages", None)
-        if callable(refresh):
-            refresh()
+    workflow.load_session_state()
 
 
 def _save_session_fields(session_id: str, **updates: Any) -> None:
@@ -1767,13 +1704,13 @@ async def _handle_sweep_command(
     artifact = (
         _resolve_artifact(workflow.artifacts, artifact_ref)
         if artifact_ref
-        else workflow._context.memory.get("current_artifact")
+        else workflow.memory.get("current_artifact")
     )
     if artifact is None:
         raise HTTPException(
             status_code=400, detail="No artifact. Use /sweep <artifact_id_or_name>."
         )
-    plan = workflow._context.memory.get("current_plan")
+    plan = workflow.memory.get("current_plan")
     sweep = getattr(plan, "parameter_sweep", {}) if plan else {}
     if not sweep:
         raise HTTPException(
@@ -1829,7 +1766,7 @@ async def _handle_sweep_command(
     _save_workflow_meta(
         workflow,
         load_session_meta(session_id).get("goal", ""),
-        workflow._context.memory.get("target", {}),
+        workflow.memory.get("target", {}),
     )
     return f"Sweep completed with {len(rows)} runs.", {
         "artifact": artifact.model_dump(),
@@ -1851,22 +1788,22 @@ async def _handle_optimize_command(
         workflow_name=body.workflow_name,
     )
     _hydrate_workflow_state(workflow)
-    artifact = workflow._context.memory.get("current_artifact")
+    artifact = workflow.memory.get("current_artifact")
     if artifact is None:
         artifacts = workflow.artifacts.list_all()
         artifact = artifacts[-1] if artifacts else None
     if artifact is None:
         raise HTTPException(status_code=400, detail="No artifact. Run a goal before /optimize.")
 
-    target = body.target or workflow._context.memory.get("target", {}) or {}
+    target = body.target or workflow.memory.get("target", {}) or {}
     generations = _positive_int(argv[0], default=10) if argv else 10
     population = _positive_int(argv[1], default=8) if len(argv) > 1 else 8
 
     from arc.packages import resolve_role
 
-    workflow._context.memory["adapter"] = workflow.adapter
+    workflow.memory["adapter"] = workflow.adapter
     OptimizerAgent = resolve_role("optimizer", workflow)
-    result = await OptimizerAgent(context=workflow._context).run(
+    result = await OptimizerAgent(context=workflow.agent_context).run(
         artifact,
         target=target,
         max_generations=generations,

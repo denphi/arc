@@ -159,6 +159,12 @@ def test_ui_message_route_records_thread(monkeypatch):
             self.session_id = kwargs["session_id"]
             self._context = SimpleNamespace(memory={}, iteration=1)
 
+        def load_session_state(self):
+            pass
+
+        def save_session_state(self, goal=None, target=None):
+            pass
+
         async def run_once(self, goal):
             return {
                 "status": "completed",
