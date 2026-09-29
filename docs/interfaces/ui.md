@@ -5,12 +5,19 @@ and API. It does **not** import the terminal chat loop.*
 
 ```bash
 arc ui                                   # → http://127.0.0.1:8888
-python -m arc.ui --host 0.0.0.0 --port 8888
+ARC_API_TOKEN=... python -m arc.ui --host 0.0.0.0 --port 8888
 ```
 
 Binds `127.0.0.1:8888` by default. Open the explicit IPv4 address
 (`localhost` may resolve to IPv6). Host/port also read from `ARC_UI_HOST` /
-`ARC_UI_PORT`.
+`ARC_UI_PORT`. A non-loopback host requires `ARC_API_TOKEN`; without a token
+the UI only answers requests whose `Host` is a loopback name (DNS-rebinding
+protection — add names with `ARC_ALLOWED_HOSTS`).
+
+The settings dialog (`GET/PUT /api/config`) never returns secret values —
+keys containing `KEY`, `TOKEN`, `PASSWORD` or `SECRET` come back masked, and
+sending the mask back leaves the stored value unchanged. Only the listed
+provider/security keys can be written.
 
 ## What it offers
 

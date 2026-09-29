@@ -11,11 +11,12 @@ them.*
 1. an explicit `path` if it exists;
 2. `./arc.toml` in the current working directory, when no explicit path was
    passed;
-3. otherwise the bundled fallbacks — the repo-level `arc/arc.toml` is the
-   default package catalogue; the inner `arc/arc/arc.toml` is a documented
-   *pointer* with no independent package/extension lists.
+3. otherwise the bundled defaults, `arc/arc.toml` **inside the installed
+   `arc` package** (`bundled_config_path()`). It carries the bundled package
+   catalogue and extension defaults, so a plain `pip install` works outside a
+   source checkout.
 
-Project-local configs overlay the bundled repo-level config. In particular,
+A project config overlays the bundled defaults. In particular,
 `[packages].paths` is appended to the default package paths, so an external
 package project can add only its own path instead of copying ARC's whole
 package catalogue.
@@ -30,6 +31,9 @@ Helpers:
 - `filter_package_paths(paths, package_config)` — apply
   `[packages].enabled/disabled` (shared by the kernel and the orchestrator).
 - `package_name_for_path(dir)` — read a package's declared name.
+- `config_section(name)` — one table of the resolved config (`{}` when
+  absent); used for the `[runtime]`, `[provider]` and `[api]` defaults.
+  Environment variables always override these.
 
 ## `.env` loading
 

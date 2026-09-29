@@ -12,6 +12,15 @@ from typing import Awaitable, Callable
 
 from arc.contracts.agent import AgentContract
 from arc.core.env import env_flag
+from arc.runtime.coder_support import (
+    allowed_imports_from_env,
+    append_option,
+    artifact_description,
+    artifact_slug,
+    preflight_workflow,
+    schema_keys_from_yaml,
+    usage_limit_hit,
+)
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
@@ -81,8 +90,7 @@ class CodexApprovalAborted(CodexApprovalError):
 
 
 def _append_option(args: list[str], flag: str, value: str | None) -> None:
-    if value:
-        args.extend([flag, value])
+    append_option(args, flag, value)
 
 
 def _build_codex_args(interactive_approvals: bool = False) -> tuple[list[str], list[str]]:
@@ -149,54 +157,19 @@ def _progress_from_event(event: dict) -> str | None:
 
 def _preflight_workflow(workflow_path: Path) -> None:
     """Validate Codex output before registering it as an ARC artifact."""
-    from arc.runtime.workflow_safety import (
-        STRICT_ALLOWED_IMPORTS,
-        check_workflow_source,
-        validate_workflow_import_timeout,
-    )
-
-    source = workflow_path.read_text(encoding="utf-8")
-    check_workflow_source(source, allowed_imports=_codex_allowed_imports(STRICT_ALLOWED_IMPORTS))
-    module_name = f"arc_codex_preflight_{os.getpid()}_{abs(hash(str(workflow_path)))}"
-    validate_workflow_import_timeout(source, module_name, str(workflow_path))
+    preflight_workflow(workflow_path, extra_imports_env="ARC_CODEX_ALLOWED_IMPORTS")
 
 
 def _codex_allowed_imports(base: frozenset[str]) -> frozenset[str]:
-    extra = frozenset(
-        item.strip()
-        for item in os.environ.get("ARC_CODEX_ALLOWED_IMPORTS", "").split(",")
-        if item.strip()
-    )
-    return base | extra
+    return allowed_imports_from_env("ARC_CODEX_ALLOWED_IMPORTS", base)
 
 
 def _schema_keys_from_yaml(sim2l_path: Path, section: str) -> list[str]:
-    try:
-        import yaml
-
-        spec = yaml.safe_load(sim2l_path.read_text(encoding="utf-8")) or {}
-        values = spec.get(section, {}) or {}
-        return [str(key) for key in values.keys()]
-    except Exception:
-        return []
+    return schema_keys_from_yaml(sim2l_path, section)
 
 
 def _artifact_description(plan: ExperimentPlan, workflow_path: Path, sim2l_path: Path) -> str:
-    """Build a useful persisted artifact description from the goal and generated schema."""
-    objective = " ".join(plan.proposal.objective.split())
-    methodology = " ".join(plan.proposal.methodology.split())
-    outputs = _schema_keys_from_yaml(sim2l_path, "outputs")
-    inputs = _schema_keys_from_yaml(sim2l_path, "inputs")
-
-    parts = [objective[:180]]
-    if inputs:
-        parts.append("Inputs: " + ", ".join(inputs[:6]))
-    if outputs:
-        parts.append("Outputs: " + ", ".join(outputs[:8]))
-    elif methodology:
-        parts.append(methodology[:120])
-
-    return " | ".join(part for part in parts if part)[:500]
+    return artifact_description(plan, sim2l_path)
 
 
 class CodexCoderAgent(AgentContract):
@@ -254,7 +227,7 @@ class CodexCoderAgent(AgentContract):
         (workspace / "codex.stderr.txt").write_text(stderr or "", encoding="utf-8")
 
         output = (stderr or stdout or "").strip()
-        if "usage limit" in output.lower() or "purchase more credits" in output.lower():
+        if usage_limit_hit(output):
             raise RuntimeError(
                 "Codex usage limit reached. Purchase more credits at "
                 "https://chatgpt.com/codex/settings/usage or try again later."
@@ -471,12 +444,4 @@ class CodexCoderAgent(AgentContract):
         return Path(paths["artifacts"]).parent / "workspaces" / "arc-codex" / slug
 
     def _artifact_name(self, plan: ExperimentPlan) -> str:
-        import re
-
-        words = re.sub(r"[^a-z0-9 ]", " ", plan.proposal.objective.lower()).split()
-        stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by", "via"}
-        stem = "_".join([w for w in words if w not in stop][:4])[:40] or "codex_sim2l_artifact"
-        digest = hashlib.sha256(
-            json.dumps(plan.model_dump(), sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:8]
-        return f"{stem}_{digest}"
+        return artifact_slug(plan, "codex_sim2l_artifact")

@@ -105,22 +105,31 @@ See {doc}`../guides/sim2l-services`.
 
 | Section | Keys |
 |---|---|
-| `[arc]` | `name`, `version` |
+| `[arc]` | `name` |
 | `[packages]` | `paths`, `enabled`, `disabled` |
-| `[runtime]` | `adapter`, `workspace` |
-| `[provider]` | `name`, `base_url`, `model` (token via env) |
-| `[memory]` | `artifact_registry`, `results_store`, `provenance_log` |
-| `[api]` | `host`, `port`, `reload`, `provider_base_url_allowlist` |
+| `[runtime]` | `adapter` (default for `ARC_RUNTIME_ADAPTER`) |
+| `[provider]` | `name`, `base_url`, `model` — defaults for `ARC_PROVIDER` / `ARC_MODEL` / `OPENWEBUI_URL` (token via env) |
+| `[api]` | `host`, `port` (`arc serve` defaults), `token`, `provider_base_url_allowlist`, `allow_private_provider_hosts` |
 | `[strategies]` | `<role> = <strategy>` overrides |
 | `[workflows.build]` | `context` pre-build workflow names or tables. See {doc}`../core/build-context-workflows`. |
 | `[extensions.<name>]` | `enabled`, `entrypoint`/`path`, plus per-extension keys (mcp, openapi, vector-memory, docker/slurm/k8s-runtime, knowledge-graph) |
 
 ```{note}
 There is no `[extensions.web-ui]` block — the browser UI is a standalone app
-(`arc ui`), not an extension.
+(`arc ui`), not an extension. Session data always lives under `SIM2L_HOME`
+(default `~/.sim2l/code/<session_id>/`); there is no `[memory]` section.
 ```
+
+## Server security variables
+
+| Variable | Meaning |
+|---|---|
+| `ARC_API_TOKEN` | Bearer token required by the API and UI; also required to bind a non-loopback host. |
+| `ARC_ALLOWED_HOSTS` | Extra `Host` names an unauthenticated server answers (comma-separated). |
+| `ARC_ALLOW_UNAUTHENTICATED_BIND` | `1` to allow a non-loopback bind without a token (trusted networks only). |
+| `ARC_DOCKER_MEMORY` / `ARC_DOCKER_PIDS_LIMIT` | Docker adapter limits (defaults `4g` / `256`; empty lifts). |
+| `ARC_CLAUDE_CODE_ALLOWED_IMPORTS` | Extra modules the Claude Code preflight lint allows (like `ARC_CODEX_ALLOWED_IMPORTS`). |
 ```{note}
 This table is maintained by hand from the codebase (`grep os.environ`, the
-`.env.example`, and `arc.toml`). When you add a new knob, add it here too
-(`doc_todo.md` D3.3/D3.7).
+`.env.example`, and `arc.toml`). When you add a new knob, add it here too.
 ```

@@ -31,15 +31,16 @@ The design goal is a configurable research loop: use the MARS-style
 Ideate → Plan → Build → Validate → Execute → Review cycle, then compose the
 package set that fits the project instead of hard-coding one ideal agent stack.
 
-See [design/architecture.md](design/architecture.md) for the full layered diagram.
+See [ARCHITECTURE.md](ARCHITECTURE.md) and
+[docs/architecture/overview.md](docs/architecture/overview.md) for the full layered diagram.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install fastapi uvicorn pydantic pyyaml httpx python-dotenv
+# Install ARC (add [dev] for tests/linters, [anthropic]/[openai] for providers)
+pip install -e .
 
 # Copy and configure environment
 cp .env.example .env
@@ -48,10 +49,18 @@ cp .env.example .env
 # Run a single research iteration
 python3 -m arc.cli.main run "Explore how temperature affects material stability"
 
-# Start the API server
+# Start the API server (binds 127.0.0.1:8000 by default)
 python3 -m arc.cli.main serve
-# → http://localhost:8000/docs
+# → http://127.0.0.1:8000/docs
 ```
+
+The API and browser UI can execute artifact code, so they bind to loopback
+by default and refuse to listen on another interface unless `ARC_API_TOKEN`
+is set (clients then send `Authorization: Bearer <token>`). Without a token
+they also only answer requests addressed to `localhost`/`127.0.0.1`, which
+blocks DNS-rebinding attacks from web pages. `ARC_ALLOWED_HOSTS` adds extra
+Host names; `ARC_ALLOW_UNAUTHENTICATED_BIND=1` overrides the bind check on a
+trusted network.
 
 ---
 
@@ -129,8 +138,7 @@ delete to end of line, and `Ctrl+U` delete before cursor.
 ## API
 
 ```
-POST /research/start         Run a full research loop iteration
-POST /research/iterate       Run multiple iterations
+POST /research/start         Run one or more research iterations (`iterations` field)
 POST /artifact/create        Register a new artifact
 GET  /artifact/{id}          Fetch an artifact record
 GET  /artifact               List all artifacts
@@ -152,8 +160,8 @@ CLI and API (sessions, artifacts, results, the research workflow) — it does
 
 ```bash
 arc ui                              # → http://127.0.0.1:8888  (default port)
-# or directly, with overrides:
-python -m arc.ui --host 0.0.0.0 --port 8888
+# or directly, with overrides (a non-loopback host requires ARC_API_TOKEN):
+ARC_API_TOKEN=... python -m arc.ui --host 0.0.0.0 --port 8888
 ```
 
 It binds to `127.0.0.1:8888` by default (8080 is avoided — it commonly
@@ -163,6 +171,8 @@ and hit a different service. When exposed beyond localhost, set
 `ARC_API_TOKEN` to require a bearer token (the data + run endpoints are then
 gated; `/`, `/assets/*`, and `/api/health` stay open so the page can load and
 prompt for the token). Host/port also read from `ARC_UI_HOST` / `ARC_UI_PORT`.
+The settings dialog never shows stored secrets (API keys, tokens, passwords
+appear masked) and only edits the provider/security keys it lists.
 
 The UI offers a chat-style thread, a sessions drawer, an artifact/result
 inspector with a file viewer and schema-derived execution form, and live
@@ -231,9 +241,7 @@ pip install -r docs/requirements.txt
 sphinx-build -b html docs docs/_build/html   # → docs/_build/html/index.html
 ```
 
-The plan and page outline live in [doc_todo.md](doc_todo.md); the
-authoring source for the longer design topics is [design/](design/), which the
-docs site includes.
+The docs sources live in [docs/](docs/).
 
 ---
 
@@ -253,13 +261,13 @@ research workflow.
 
 | Document | Description |
 |---|---|
-| [design/architecture.md](design/architecture.md) | System architecture and component roles |
-| [design/requirements.md](design/requirements.md) | Functional and non-functional requirements |
-| [design/packages.md](design/packages.md) | Package system and composition model |
-| [design/coding-agents.md](design/coding-agents.md) | Codex/Claude Code package design and session selection |
-| [design/contracts.md](design/contracts.md) | Agent, skill, adapter, and provider interfaces |
-| [design/workflows.md](design/workflows.md) | Workflow YAML format and execution model |
-| [design/extensions.md](design/extensions.md) | Available extensions and how to add new ones |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Onboarding map of the `arc/` codebase |
+| [docs/architecture/overview.md](docs/architecture/overview.md) | System architecture and component roles |
+| [docs/architecture/security.md](docs/architecture/security.md) | Threat model and security defaults |
+| [docs/packages/manifest.md](docs/packages/manifest.md) | Package system and manifest format |
+| [docs/contracts/index.md](docs/contracts/index.md) | Agent, skill, adapter, and provider interfaces |
+| [docs/core/workflows.md](docs/core/workflows.md) | Workflow YAML format and execution model |
+| [docs/packages/extensions.md](docs/packages/extensions.md) | Available extensions and how to add new ones |
 
 ---
 
@@ -269,6 +277,7 @@ research workflow.
 2. Implement agents in `arc/packages/your-package/agents/`
 3. Define portable skills in `arc/packages/your-package/skills/<name>/SKILL.md`
 4. Add workflows in `arc/packages/your-package/workflows/*.yaml`
-5. Register in `arc.toml` under `[packages] paths`
+5. Register it in your project `arc.toml` under `[packages] paths` (paths are
+   appended to the bundled package list in `arc/arc.toml`)
 
-See [design/packages.md](design/packages.md) for the full manifest format.
+See [docs/packages/manifest.md](docs/packages/manifest.md) for the full manifest format.

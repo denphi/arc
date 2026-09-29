@@ -20,7 +20,9 @@ Before any generated `simulate()` runs, its source is statically checked:
   rejected.
 - **Dunder / attribute-walk rejection.** `Subscript` access to dunder strings
   and names beginning with `__` are rejected, blocking the classic
-  `().__class__.__bases__…` / `__globals__` escape walks.
+  `().__class__.__bases__…` / `__globals__` escape walks. Frame, traceback
+  and code-object attributes (`gi_frame`, `f_back`, `f_globals`,
+  `f_builtins`, `tb_frame`, `co_code`, …) are rejected too.
 - `check_workflow_source_safe(source)` returns `(ok, reason)`; the builder
   refuses to register an artifact whose code fails the check.
 
@@ -36,7 +38,11 @@ being removed; can deadlock under threaded servers). The worker:
   `os.killpg`).
 
 This is the path `LocalRuntimeAdapter` uses. The `Sim2LRuntimeAdapter` uses
-sim2l's own isolated executor.
+sim2l's own isolated executor. Validation (`validate_artifact`) also stays in
+a child process: it lints the source and imports it in a spawned worker, and
+never executes workflow code in the orchestrator. The parent reads the
+worker's result *before* joining it (`arc/runtime/_spawn.py`), so large
+outputs can't deadlock the pipe.
 
 ```{note}
 The subprocess + AST checks are a **safety** boundary against accidental or
@@ -46,14 +52,26 @@ untrusted workloads behind OS-level isolation (containers, seccomp) if your
 threat model requires it.
 ```
 
-## 3. API token + provider-URL guard (`arc/api/security.py`)
+## 3. API token, bind/Host guards, provider-URL guard (`arc/api/security.py`)
 
-The HTTP API and browser UI add three opt-in/always-on guards
-(`load_security_config()` reads these once, cached):
+Both HTTP surfaces can execute artifact code, so they are loopback-only
+unless authenticated (`load_security_config()` reads these once, cached):
 
-1. **Bearer token (optional, opt-in).** Set `ARC_API_TOKEN` to require an
-   `Authorization: Bearer <token>` header on data/run endpoints. Health and
-   static assets stay open so the page can load and prompt for the token.
+1. **Bearer token.** Set `ARC_API_TOKEN` (or `[api].token`) to require an
+   `Authorization: Bearer <token>` header on data/run endpoints (compared in
+   constant time). Health and static assets stay open so the page can load
+   and prompt for the token.
+   - **Bind guard.** `arc serve` / `arc ui` default to `127.0.0.1` and refuse
+     to bind any other interface without a token
+     (`ARC_ALLOW_UNAUTHENTICATED_BIND=1` overrides on a trusted network).
+   - **Host guard.** Without a token, `LoopbackHostGuard` answers only
+     requests whose `Host` header is a loopback name (plus
+     `ARC_ALLOWED_HOSTS`) and returns 421 otherwise. This stops a web page
+     from reaching the local server through DNS rebinding.
+   - **Config endpoint.** The UI's `/api/config` masks secrets and only
+     writes its listed provider/security keys, so it can't be used to read
+     API keys or to set variables such as `PYTHONPATH` for later
+     subprocesses.
 2. **`base_url` allow-list (always on for `openwebui`).** `/provider/models`
    and `/research/start` only accept provider base URLs on the allow-list
    (`[api].provider_base_url_allowlist` / `ARC_PROVIDER_ALLOWLIST`,

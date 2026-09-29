@@ -6,54 +6,6 @@ from arc.schemas.research import (  # noqa: F401 — needed at module level
 )
 
 
-def _search_catalog(catalog_url: str, keywords: list[str], limit: int = 5) -> list[dict]:
-    """Search the catalog service for simulations matching any of the keywords.
-    Returns an empty list if the service is unreachable."""
-    try:
-        import requests
-        query = " ".join(keywords[:4])
-        resp = requests.get(
-            f"{catalog_url.rstrip('/')}/simulations/search",
-            params={"query": query, "limit": limit, "status": "active"},
-            timeout=3,
-        )
-        if resp.status_code == 200:
-            return resp.json() or []
-    except Exception:
-        pass
-    return []
-
-
-def _search_results(results_url: str, sim_name: str, limit: int = 3) -> list[dict]:
-    """Fetch recent results for a simulation from the results service."""
-    try:
-        import requests
-        resp = requests.post(
-            f"{results_url.rstrip('/')}/search",
-            json={
-                "simulation_name": sim_name,
-                "input_filters": {},
-                "output_filters": {},
-                "limit": limit,
-            },
-            timeout=3,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("results", [])
-    except Exception:
-        pass
-    return []
-
-
-def _goal_keywords(goal_text: str) -> list[str]:
-    """Extract meaningful keywords from a goal string."""
-    import re
-    stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by",
-            "via", "with", "using", "that", "this", "is", "are", "be", "i", "want"}
-    words = re.sub(r"[^a-z0-9 ]", " ", goal_text.lower()).split()
-    return [w for w in words if w not in stop and len(w) > 2]
-
-
 def _retry_context_block(memory: dict) -> str:
     """Summarize recent rebuild reasons for ideation prompts."""
     notes = memory.get("retry_context") or []

@@ -13,6 +13,14 @@ from typing import Awaitable, Callable
 
 from arc.contracts.agent import AgentContract
 from arc.core.env import env_flag
+from arc.runtime.coder_support import (
+    append_option,
+    artifact_description,
+    artifact_slug,
+    preflight_workflow,
+    schema_keys_from_yaml,
+    usage_limit_hit,
+)
 from arc.schemas.artifact import ArtifactDraft
 from arc.schemas.research import ExperimentPlan
 from arc.session import session_paths
@@ -58,8 +66,7 @@ ProgressCallback = Callable[[str], None]
 
 
 def _append_option(args: list[str], flag: str, value: str | None) -> None:
-    if value:
-        args.extend([flag, value])
+    append_option(args, flag, value)
 
 
 def _build_claude_code_args(mcp_config_path: str | None = None) -> list[str]:
@@ -202,31 +209,17 @@ def _progress_from_event(
 
 
 def _schema_keys_from_yaml(sim2l_path: Path, section: str) -> list[str]:
-    try:
-        import yaml
+    return schema_keys_from_yaml(sim2l_path, section)
 
-        spec = yaml.safe_load(sim2l_path.read_text(encoding="utf-8")) or {}
-        values = spec.get(section, {}) or {}
-        return [str(key) for key in values.keys()]
-    except Exception:
-        return []
+
+def _preflight_workflow(workflow_path: Path) -> None:
+    """Validate Claude Code output before registering it as an ARC artifact
+    (same lint + timed import the Codex package applies)."""
+    preflight_workflow(workflow_path, extra_imports_env="ARC_CLAUDE_CODE_ALLOWED_IMPORTS")
 
 
 def _artifact_description(plan: ExperimentPlan, workflow_path: Path, sim2l_path: Path) -> str:
-    objective = " ".join(plan.proposal.objective.split())
-    methodology = " ".join(plan.proposal.methodology.split())
-    inputs = _schema_keys_from_yaml(sim2l_path, "inputs")
-    outputs = _schema_keys_from_yaml(sim2l_path, "outputs")
-
-    parts = [objective[:180]]
-    if inputs:
-        parts.append("Inputs: " + ", ".join(inputs[:6]))
-    if outputs:
-        parts.append("Outputs: " + ", ".join(outputs[:8]))
-    elif methodology:
-        parts.append(methodology[:120])
-
-    return " | ".join(part for part in parts if part)[:500]
+    return artifact_description(plan, sim2l_path)
 
 
 class ClaudeCodeCoderAgent(AgentContract):
@@ -281,12 +274,10 @@ class ClaudeCodeCoderAgent(AgentContract):
         (workspace / "claude-code.stdout.txt").write_text(stdout or "", encoding="utf-8")
         (workspace / "claude-code.stderr.txt").write_text(stderr or "", encoding="utf-8")
 
-        if stderr and (
-            "usage limit" in stderr.lower() or "purchase more credits" in stderr.lower()
-        ):
+        if usage_limit_hit(stderr):
             raise RuntimeError(
-                "Claude Code usage limit reached. Purchase more credits at "
-                "https://chatgpt.com/codex/settings/usage or try again later."
+                "Claude Code usage limit reached. Check your Claude plan or API "
+                "usage limits, or try again later."
             )
 
         workflow_path = workspace / "workflow.py"
@@ -296,6 +287,10 @@ class ClaudeCodeCoderAgent(AgentContract):
                 "Claude Code completed but did not create workflow.py and sim2l.yaml in "
                 f"{workspace}. stdout: {(stdout or '').strip()[:300]}"
             )
+        try:
+            _preflight_workflow(workflow_path)
+        except Exception as exc:
+            raise RuntimeError(f"Claude Code generated invalid workflow.py: {exc}") from exc
 
         args = _build_claude_code_args()
         description = _artifact_description(plan, workflow_path, sim2l_path)
@@ -572,14 +567,4 @@ class ClaudeCodeCoderAgent(AgentContract):
         return Path(paths["artifacts"]).parent / "workspaces" / "arc-claude-code" / slug
 
     def _artifact_name(self, plan: ExperimentPlan) -> str:
-        import re
-
-        words = re.sub(r"[^a-z0-9 ]", " ", plan.proposal.objective.lower()).split()
-        stop = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "at", "by", "via"}
-        stem = (
-            "_".join([w for w in words if w not in stop][:4])[:40] or "claude_code_sim2l_artifact"
-        )
-        digest = hashlib.sha256(
-            json.dumps(plan.model_dump(), sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:8]
-        return f"{stem}_{digest}"
+        return artifact_slug(plan, "claude_code_sim2l_artifact")

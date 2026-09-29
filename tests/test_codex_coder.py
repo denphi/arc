@@ -6,7 +6,7 @@ import pytest
 from arc.contracts.agent import AgentContext
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 
-codex_coder = importlib.import_module("arc.packages.arc-codex.agents.coder")
+codex_coder = importlib.import_module("arc.packages.arc_codex.agents.coder")
 
 
 def _plan() -> ExperimentPlan:

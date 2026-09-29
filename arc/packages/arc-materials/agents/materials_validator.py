@@ -18,10 +18,8 @@ energy near zero — neither stable nor unstable).
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import logging
-import sys
-from pathlib import Path
 from typing import Any
 
 from arc.packages.arc_sim2l.agents.validator import _BaseValidator
@@ -32,21 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 def _load_evaluator_module(filename: str):
-    """Load one of the arc-materials evaluator modules by file path.
+    """Import one of the arc-materials evaluator modules (e.g. ``bandgap.py``).
 
-    Bypasses ``arc.packages.arc-materials`` (which isn't a valid Python
-    identifier) by file-path loading, same trick the strategy resolver
-    uses for arc-mars.
+    Uses the package's canonical import name so evaluators share a single
+    module object with every other importer.
     """
-    mod_name = f"_arc_materials_eval_{filename.replace('.py', '').replace('/', '_')}"
-    if mod_name in sys.modules:
-        return sys.modules[mod_name]
-    path = Path(__file__).resolve().parent.parent / "evaluators" / filename
-    spec = importlib.util.spec_from_file_location(mod_name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = module
-    spec.loader.exec_module(module)
-    return module
+    stem = filename.removesuffix(".py").replace("/", ".")
+    return importlib.import_module(f"arc.packages.arc_materials.evaluators.{stem}")
 
 
 def _output_keys_present(outputs: dict[str, Any], candidates: tuple[str, ...]) -> bool:

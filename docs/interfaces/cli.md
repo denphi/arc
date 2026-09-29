@@ -56,9 +56,13 @@ ansi|jsonl|stdout-json|multi`. See {doc}`chat`.
 ## `arc serve` / `arc ui`
 
 ```bash
-arc serve --host 0.0.0.0 --port 8000      # → /docs
+arc serve                                  # → http://127.0.0.1:8000/docs ([api] host/port)
 arc ui    --host 127.0.0.1 --port 8888
+ARC_API_TOKEN=... arc serve --host 0.0.0.0 # non-loopback binds require a token
 ```
+
+Both commands refuse to listen beyond loopback without `ARC_API_TOKEN`
+(override with `ARC_ALLOW_UNAUTHENTICATED_BIND=1` on a trusted network).
 
 See {doc}`api` and {doc}`ui`.
 

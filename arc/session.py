@@ -2,6 +2,7 @@
 
 Each session lives under ``$SIM2L_HOME`` (default ``~/.sim2l/code``) as
 ``<session_id>/`` and persists:
+
   - artifacts/          ArtifactRegistry root
   - runs/               ResultsStore root
   - memory/             ProvenanceLog root

@@ -40,9 +40,6 @@ coverage.xml
 # macOS
 .DS_Store
 
-# Session data
-~/.sim2l/
-
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
@@ -50,6 +47,6 @@ coverage.xml
 # Local config / secrets
 arc.local.toml
 
-# Design documents
+# Local design notes (not published)
 design/
 docs/_build/

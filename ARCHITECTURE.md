@@ -4,7 +4,7 @@ This document captures the **current** shape of the `arc/` codebase. It
 is meant as an onboarding map, not an aspiration — every module shown
 exists and is wired up at the time of writing.
 
-Last updated: 2026-06-04.
+Last updated: 2026-09-29.
 
 ---
 
@@ -20,14 +20,20 @@ arc/
 ├── runtime/          Sim2L / local execution adapters
 ├── memory/           Artifact registry, results store, provenance log
 ├── schemas/          Pydantic models (Goal, Plan, Execution, Review…)
-├── packages/         Plug-in agent packages (arc-sim2l, arc-codex…)
-├── providers/        LLM provider clients (anthropic, openai, openwebui)
+├── packages/         Plug-in agent packages (arc-sim2l, arc-codex…);
+│                     imported as arc.packages.arc_sim2l… via the finder
+│                     in packages/__init__.py (one module per file)
+├── providers/        Core LLM provider (openwebui); anthropic/openai come
+│                     from the arc-providers package
 ├── agents/           Declarative YAML agent definitions (Phase 4)
 ├── skills/           Markdown skill files with YAML frontmatter
 ├── contracts/        Protocols shared by core ↔ packages
-├── extensions/       Optional extras (MCP, vector memory, web-UI…)
+├── ui/               Standalone browser UI (FastAPI + static assets)
+├── arc.toml          Bundled defaults: package catalogue, extensions,
+│                     [runtime]/[provider]/[api] defaults
 ├── services.py       Daemon manager for sim2l cache/catalog/results
-├── session.py        On-disk session store under ~/.sim2l/code/
+├── session.py        On-disk session store under $SIM2L_HOME (locked updates)
+├── session_state.py  Per-session strategy/recipe/build-context selections
 └── utils/            Cross-cutting helpers (atomic_write_text, …)
 ```
 
@@ -142,7 +148,7 @@ arc/
 | `chat/state.py` | `ChatState` dataclass — single source of truth for session data |
 | `chat/session_io.py` | `save_session` / `restore_session` (writes `session.json`) |
 | `chat/events.py` | `ChatEvent`, `AnsiSink` / `JsonlSink` / `StdoutJsonSink` / `MultiSink` |
-| `chat/plan_mode.py` | Global `--plan` flag, `check_plan_gate`, `@gated` decorator |
+| `chat/plan_mode.py` | Alias of `arc.core.plan_mode` (global `--plan` flag, `check_plan_gate`, `@gated`) |
 | `chat/check.py` | `arc chat --check` dry-run report builder |
 | `chat/check_render.py` | ANSI / JSON renderers for `CheckReport` |
 | `chat/skill_loader.py` | Markdown skills with YAML frontmatter + path-traversal validation |
@@ -408,11 +414,15 @@ hard-coded totals here; they change with every review pass.
   conventionally read-only.
 
 * **`ChatState`** is the single source of truth for session data within
-  the chat layer. It wraps `workflow._context.memory` by reference so
+  the chat layer. Other front-ends (CLI, API, UI) use the public
+  `ResearchWorkflow.memory` / `load_session_state()` /
+  `save_session_state()` API instead. `ChatState` wraps
+  `workflow._context.memory` by reference so
   writes through `state.primary_goal = ...` are visible to agents that
   still read `ctx.memory` directly.
 
-* **Plan mode** is a global flag (`arc.chat.plan_mode.is_plan_mode()`).
+* **Plan mode** is a global flag (`arc.core.plan_mode.is_plan_mode()`;
+  `arc.chat.plan_mode` is an alias).
   Side-effect call sites self-gate via `check_plan_gate(label)`.
   Currently enforced in `ArtifactRegistry.register`,
   `_register_artifact_with_sim2l`, and `ToolRegistry.dispatch`

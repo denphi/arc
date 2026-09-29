@@ -5,7 +5,7 @@ import pytest
 from arc.contracts.agent import AgentContext
 from arc.schemas.research import ExperimentPlan, ResearchProposal
 
-claude_coder = importlib.import_module("arc.packages.arc-claude-code.agents.coder")
+claude_coder = importlib.import_module("arc.packages.arc_claude_code.agents.coder")
 
 
 def _fresh_delta_state():
@@ -173,3 +173,29 @@ async def test_claude_requires_permission_callback_for_noninteractive_run(monkey
         await agent.run(_plan())
 
     assert "permission relay is not configured" in str(exc.value)
+
+
+def test_claude_preflight_rejects_unsafe_workflow(tmp_path):
+    """Claude Code output gets the same lint + import check as Codex output."""
+    workflow_path = tmp_path / "workflow.py"
+    workflow_path.write_text(
+        "import subprocess\ndef simulate(x=1.0):\n    return {'y': x}\n", encoding="utf-8",
+    )
+    with pytest.raises(Exception):
+        claude_coder._preflight_workflow(workflow_path)
+
+
+def test_claude_preflight_accepts_stdlib_workflow(tmp_path):
+    workflow_path = tmp_path / "workflow.py"
+    workflow_path.write_text(
+        "import math\ndef simulate(x=1.0):\n    return {'y': math.sqrt(x)}\n", encoding="utf-8",
+    )
+    claude_coder._preflight_workflow(workflow_path)
+
+
+def test_usage_limit_detection_is_shared():
+    from arc.runtime.coder_support import usage_limit_hit
+
+    assert usage_limit_hit("Error: Usage limit reached for this org")
+    assert not usage_limit_hit("all good")
+    assert not usage_limit_hit(None)

@@ -32,4 +32,3 @@ import `arc.*` for the API reference.
 - Markdown (MyST) for everything; `{eval-rst}` blocks only for autodoc.
 - Keep the build **warning-free** — run `sphinx-build -b html` before pushing.
 - New configuration knobs go in `docs/reference/configuration.md`.
-- The requirements/plan for the docs is `doc_todo.md` at the repo root.
