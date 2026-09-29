@@ -692,3 +692,41 @@ def test_ui_research_run_rejects_private_base_url(monkeypatch):
         "base_url": "http://169.254.169.254/latest/meta-data",
     })
     assert resp.status_code == 400
+
+
+def test_ui_exec_command_and_execution_endpoint_share_one_path(monkeypatch):
+    """``/exec`` used to 500 (NameError) after running the artifact."""
+    monkeypatch.delenv("ARC_API_TOKEN", raising=False)
+    monkeypatch.setenv("ARC_RUNTIME_ADAPTER", "local")
+    _reload_security()
+    client = TestClient(ui_server.create_app())
+    session_id = client.post("/api/sessions", json={"prefix": "exec"}).json()["session_id"]
+    workflow = "def simulate(x=1.0):\n    return {'y': x * 2}\n"
+    created = client.post(
+        f"/api/sessions/{session_id}/artifacts",
+        json={"name": "doubler", "files": {"workflow.py": workflow}},
+    )
+    assert created.status_code == 200
+    body = created.json()
+    artifact_id = body.get("artifact", body)["artifact_id"]
+
+    via_command = client.post(
+        "/api/commands/run",
+        json={"session_id": session_id, "command": f"/exec {artifact_id} x=3"},
+    )
+    assert via_command.status_code == 200, via_command.text
+    assert via_command.json()["payload"]["execution"]["outputs"] == {"y": 6}
+    assert via_command.json()["payload"]["inputs"] == {"x": 3}
+
+    via_endpoint = client.post(
+        "/api/executions/run",
+        json={"session_id": session_id, "artifact_id": artifact_id, "inputs": {"x": 4}},
+    )
+    assert via_endpoint.status_code == 200, via_endpoint.text
+    assert via_endpoint.json()["execution"]["outputs"] == {"y": 8}
+
+    missing = client.post(
+        "/api/executions/run",
+        json={"session_id": session_id, "artifact_id": "0" * 36, "inputs": {}},
+    )
+    assert missing.status_code == 404

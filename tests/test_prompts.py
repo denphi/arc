@@ -172,7 +172,7 @@ def _ctx(memory_overrides=None):
 def test_ideator_uses_materials_prompt_when_domain_is_materials():
     """``goal.domain='materials'`` → ideator prompt contains the
     materials template, not the generic fallback."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     provider = _RecordingProvider()
     ctx = _ctx({"provider": provider})
@@ -189,7 +189,7 @@ def test_ideator_uses_materials_prompt_when_domain_is_materials():
 def test_ideator_falls_back_to_default_when_domain_unknown():
     """Unknown domain → built-in template (which says "scientific research
     assistant"), not the materials one."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     provider = _RecordingProvider()
     ctx = _ctx({"provider": provider})
@@ -204,7 +204,7 @@ def test_ideator_falls_back_to_default_when_domain_unknown():
 def test_ideator_honours_runtime_prompt_override():
     """An override on ``memory["prompt_overrides"]`` wins over the
     materials template — even when domain=materials."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     provider = _RecordingProvider()
     ctx = _ctx({
@@ -224,7 +224,7 @@ def test_ideator_honours_runtime_prompt_override():
 def test_ideator_template_render_does_not_crash_on_minimal_goal():
     """A goal with no constraints/target shouldn't leave unfilled
     placeholders that confuse the LLM."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     provider = _RecordingProvider()
     ctx = _ctx({"provider": provider})

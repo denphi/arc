@@ -15,14 +15,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from arc.packages.arc_sim2l_agents.hypothesis import (
+from arc.packages.arc_sim2l.agents.hypothesis import (
     HypothesisCandidates,
     rank_candidates,
     score_candidate,
     select,
     stub_candidates,
 )
-from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 from arc.schemas.research import ResearchGoal, ResearchProposal
 
 pytestmark = pytest.mark.chat

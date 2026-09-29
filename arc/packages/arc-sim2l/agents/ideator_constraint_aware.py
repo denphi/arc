@@ -33,7 +33,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 from arc.schemas.research import ResearchGoal, ResearchProposal
 
 logger = logging.getLogger(__name__)

@@ -31,7 +31,7 @@ import logging
 from typing import Any
 
 from arc.contracts.agent import AgentContract
-from arc.packages.arc_sim2l_agents.optimizer import _fitness
+from arc.packages.arc_sim2l.agents.optimizer import _fitness
 from arc.schemas.artifact import ArtifactRecord
 
 logger = logging.getLogger(__name__)

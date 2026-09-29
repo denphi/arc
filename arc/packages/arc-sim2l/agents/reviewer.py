@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from arc.contracts.agent import AgentContract
 from arc.runtime.key_matching import (
-    fuzzy_keys_match as _keys_match,
-    registry_keys_match as _registry_keys_match,
+    best_output_key,
+    target_errors,
+)
+from arc.runtime.key_matching import (  # noqa: F401 — re-exported for callers
+    keys_match as _keys_match,
 )
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
@@ -54,32 +57,23 @@ def _check_target(
     """Deterministically compute approval and per-key % errors.
 
     Returns (approved, {matched_output_key: pct_error}).
-    approved=True only when ALL matched target keys are within threshold.
-    If no target keys match any output, returns (False, {}).
+    approved=True only when EVERY target key resolves to a numeric output
+    and all of them are within threshold. An unresolved target key fails
+    approval — it can't silently drop out of the check.
     """
     import logging
     _log = logging.getLogger(__name__)
 
-    errors: dict[str, float] = {}
-    for tk, tv in target.items():
-        matched_any = False
-        for ok, ov in outputs.items():
-            # Tier 0: schema registry canonical lookup (most reliable); fall back to fuzzy.
-            if _registry_keys_match(tk, ok, registry or {}) or _keys_match(tk, ok):
-                matched_any = True
-                if isinstance(ov, (int, float)) and ov is not None:
-                    pct = abs(ov - tv) / max(abs(tv), 1e-12)
-                    errors[ok] = round(pct * 100, 2)
-                break
-        if not matched_any:
-            _log.warning(
-                "Target key %r did not match any output key %s — "
-                "approval will fail. Add a synonym or rename the output.",
-                tk, list(outputs.keys()),
-            )
-
-    if not errors:
-        return False, {}
+    rel_errors, unmatched = target_errors(outputs, target, registry)
+    for tk in unmatched:
+        _log.warning(
+            "Target key %r did not match any numeric output key %s — "
+            "approval will fail. Add a synonym or rename the output.",
+            tk, list(outputs.keys()),
+        )
+    errors = {ok: round(err * 100, 2) for ok, err in rel_errors.items()}
+    if not errors or unmatched:
+        return False, errors
 
     approved = all(e <= threshold * 100 for e in errors.values())
     return approved, errors
@@ -128,11 +122,11 @@ def _build_context_acceptance(
         for metric in metrics:
             metric = str(metric)
             saw_criteria = True
-            matched_key = None
-            for key in outputs:
-                if _registry_keys_match(metric, key, registry or {}) or _keys_match(metric, key):
-                    matched_key = key
-                    break
+            # Prefer a numeric output (so a units/label key can't shadow the
+            # value), falling back to any output for presence-only checks.
+            matched_key = best_output_key(metric, outputs, registry) or best_output_key(
+                metric, outputs, registry, numeric_only=False,
+            )
             if matched_key is None:
                 checks[metric] = "missing output"
                 ok = False

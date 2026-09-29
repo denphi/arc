@@ -38,7 +38,7 @@ import math
 import os
 from typing import Any
 
-from arc.packages.arc_sim2l_agents.searcher import (
+from arc.packages.arc_sim2l.agents.searcher import (
     _BaseSearcher,
     fetch_catalog,
     fetch_prior_results,

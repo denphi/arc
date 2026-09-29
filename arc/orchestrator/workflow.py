@@ -32,6 +32,8 @@ from arc.schemas.review import ReviewResult
 from arc.session import session_paths
 from arc.runtime.backend import safe_backend_action
 
+logger = logging.getLogger(__name__)
+
 
 def _build_adapter(
     db_path: str | None = None,
@@ -47,7 +49,12 @@ def _build_adapter(
     built-in local adapter (review finding P3). Core adapters (local/sim2l/
     service) are never package-owned, so they're unaffected.
     """
-    adapter_name = os.environ.get("ARC_RUNTIME_ADAPTER", "local").lower()
+    from arc.core.config import config_section
+    adapter_name = (
+        os.environ.get("ARC_RUNTIME_ADAPTER")
+        or str(config_section("runtime").get("adapter") or "")
+        or "local"
+    ).lower()
     if adapter_name in {"local", "python"}:
         from arc.runtime.local import LocalRuntimeAdapter
         logger.info("Using LocalRuntimeAdapter")
@@ -139,7 +146,6 @@ def _instantiate_adapter(adapter_class, db_path: str | None = None, session_id: 
         except TypeError:
             return adapter_class()
 
-logger = logging.getLogger(__name__)
 
 
 def _default_registry() -> ComponentRegistry:
@@ -197,8 +203,16 @@ def _build_provider(
     selectable (review finding 1). Returns ``None`` (stub mode) when
     unset/unknown.
     """
+    from arc.core.config import config_section
     from arc.providers import build_provider
-    name = provider_name or os.environ.get("ARC_PROVIDER", "")
+
+    # Precedence: explicit argument > environment > arc.toml [provider].
+    cfg = config_section("provider")
+    name = provider_name or os.environ.get("ARC_PROVIDER") or str(cfg.get("name") or "")
+    if not model and not (os.environ.get("ARC_MODEL") or os.environ.get("OPENWEBUI_MODEL")):
+        model = cfg.get("model") or None
+    if not base_url and not os.environ.get("OPENWEBUI_URL"):
+        base_url = cfg.get("base_url") or None
     return build_provider(
         name, token=token, model=model, base_url=base_url, registry=registry,
         disabled_packages=disabled_packages,

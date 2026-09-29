@@ -1,5 +1,5 @@
 from arc.contracts.agent import AgentContract
-from arc.packages.arc_sim2l_agents.hypothesis import stub_candidates
+from arc.packages.arc_sim2l.agents.hypothesis import stub_candidates
 from arc.schemas.research import (  # noqa: F401 — needed at module level
     ResearchGoal,
     ResearchProposal,
@@ -254,7 +254,7 @@ class IdeatorAgent(AgentContract):
                 "structured proposals so the strongest can be selected."
             )
             try:
-                from arc.packages.arc_sim2l_agents.hypothesis import HypothesisCandidates
+                from arc.packages.arc_sim2l.agents.hypothesis import HypothesisCandidates
                 pool = await provider.complete_structured(multi_prompt, HypothesisCandidates)
                 candidates = [c for c in (pool.candidates or []) if isinstance(c, ResearchProposal)]
                 if candidates:
@@ -290,7 +290,7 @@ class IdeatorAgent(AgentContract):
         hypotheses are also indexed into durable memory via the loop's memory
         hooks when those extensions are enabled (item 1).
         """
-        from arc.packages.arc_sim2l_agents.hypothesis import select as _select
+        from arc.packages.arc_sim2l.agents.hypothesis import select as _select
 
         result = _select(candidates, goal)
         ranked = list(result["ranked"])

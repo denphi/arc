@@ -678,7 +678,7 @@ def _composite_base_for_role(role: str) -> type | None:
             description="Ordered composite searcher.",
         ))
     try:
-        from arc.packages.arc_sim2l_agents.composites import COMPOSITE_BY_ROLE
+        from arc.packages.arc_sim2l.agents.composites import COMPOSITE_BY_ROLE
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not load composite classes (%s)", exc)
         return None
@@ -693,29 +693,18 @@ def _find_spec(role: str, name: str) -> StrategySpec | None:
 
 
 def _load_spec(spec: StrategySpec) -> Any:
-    """Import the strategy class from its on-disk module path."""
+    """Import the strategy class from its package module.
+
+    Goes through :func:`arc.core.loader.import_module_file` so the resolver
+    shares module objects with the manifest loader and normal imports.
+    """
+    from arc.core.loader import import_module_file
+
     pkg_root = Path(__file__).resolve().parent.parent / "packages"
     full_path = Path(spec.file_path) if spec.file_path else pkg_root / spec.package_dir / spec.module_path
     if not full_path.exists():
         raise FileNotFoundError(f"Strategy module not found: {full_path}")
-    # Use a stable module name so repeated loads hit sys.modules cache.
-    pkg_token = spec.package_dir.replace("-", "_")
-    mod_name = f"arc_strategies.{pkg_token}.{spec.module_path.replace('/', '.').removesuffix('.py')}"
-    if mod_name in sys.modules:
-        module = sys.modules[mod_name]
-    else:
-        loader_spec = importlib.util.spec_from_file_location(mod_name, full_path)
-        module = importlib.util.module_from_spec(loader_spec)
-        sys.modules[mod_name] = module
-        try:
-            loader_spec.loader.exec_module(module)
-        except BaseException:
-            # Don't leave a half-initialised module cached — a later load of
-            # the same strategy would return the broken object instead of
-            # retrying. Drop it so the next call re-execs from scratch.
-            sys.modules.pop(mod_name, None)
-            raise
-    return getattr(module, spec.attr)
+    return getattr(import_module_file(full_path), spec.attr)
 
 
 def _ensure_package_strategies_loaded() -> None:

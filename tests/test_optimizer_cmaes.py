@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from arc.packages.arc_sim2l_agents.optimizer_cmaes import (
+from arc.packages.arc_sim2l.agents.optimizer_cmaes import (
     CMAESOptimizerAgent,
     _bounds_and_seed,
 )

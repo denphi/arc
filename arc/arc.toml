@@ -1,29 +1,110 @@
-# ── ARC fallback config (NOT the source of truth) ───────────────────────
+# ── ARC bundled defaults ────────────────────────────────────────────────
 #
-# The authoritative config is the repo-level `arc/arc.toml`. ``load_arc_toml``
-# (see arc/arc/core/config.py) resolves the repo-level file first and only
-# falls back to THIS file when that one is missing.
-#
-# To avoid two diverging package/extension lists (design/todo.md item 11),
-# this fallback intentionally declares NO package paths and NO extension
-# blocks — edit the repo-level `arc/arc.toml` for those. This file only
-# carries enough metadata to let the kernel start in a degraded, package-less
-# mode if the real config has been moved or deleted.
+# Ships inside the ``arc`` Python package, so a plain ``pip install`` finds
+# every bundled package. ``load_arc_toml`` reads this file first and then
+# overlays a project ``./arc.toml`` (if the current directory has one) on
+# top: ``[packages].paths`` lists are appended, every other key overrides.
+# Relative package paths here are resolved against THIS file's directory.
 
 [arc]
 name = "ARC-Sim2L"
-version = "0.1.0"
+
+[packages]
+paths = [
+  "packages/arc-sim2l",
+  "packages/arc-mars",
+  "packages/arc-materials",
+  "packages/arc-codex",
+  "packages/arc-claude-code",
+  "packages/arc-providers",
+  "packages/arc-mcp",
+  "packages/arc-openapi",
+  "packages/arc-vector-memory",
+  "packages/arc-coscientist",
+  "packages/arc-docker",
+  "packages/arc-slurm",
+  "packages/arc-k8s",
+  "packages/arc-knowledge-graph",
+]
 
 [runtime]
+# Default runtime adapter: local | sim2l | service | auto | docker | slurm | k8s.
+# ARC_RUNTIME_ADAPTER overrides it.
 adapter = "local"
-workspace = "workspace"
 
-[memory]
-artifact_registry = "workspace/artifacts"
-results_store = "workspace/runs"
-provenance_log = "workspace/memory/provenance.jsonl"
+[provider]
+# Default LLM provider (empty = deterministic stub mode). ARC_PROVIDER,
+# ARC_MODEL and the per-request/CLI options override these.
+name = ""
+model = ""
+base_url = ""
 
 [api]
-host = "0.0.0.0"
+# Defaults for `arc serve`; --host/--port override. Binding a non-loopback
+# host requires ARC_API_TOKEN (or [api].token) to be set.
+host = "127.0.0.1"
 port = 8000
-reload = false
+
+[extensions]
+# All extensions disabled by default. Enable individually below.
+
+[extensions.mcp]
+# Model Context Protocol tools as ARC skills (mcp::<app>::<tool>).
+# Implementation: arc-mcp package. Set enabled=true and configure either a
+# single server_url, or an `apps` list for multiple MCP servers (ext-apps).
+enabled = false
+# server_url = "http://localhost:8080/mcp"      # single-server shortcut
+# [[extensions.mcp.apps]]                         # …or multiple ext-apps:
+#   name = "files"
+#   transport = "stdio"
+#   command = "mcp-server-filesystem"
+#   args = ["--root", "."]
+# [[extensions.mcp.apps]]
+#   name = "search"
+#   transport = "http"
+#   url = "http://localhost:8080/mcp"
+
+[extensions.openapi]
+# Expose OpenAPI 3.x operations as skills (openapi::<spec>::<operationId>).
+# Implementation: arc-openapi package.
+enabled = false
+# spec_url = "https://api.example.com/openapi.json"   # single-spec shortcut
+# [[extensions.openapi.specs]]                          # …or multiple:
+#   name = "materials_project"
+#   url = "https://api.materialsproject.org/openapi.json"
+#   auth_env = "MP_API_KEY"
+
+[extensions.vector-memory]
+# Persistent semantic memory. Implementation: arc-vector-memory package.
+# "default" is a zero-dep JSON/TF-cosine store (works out of the box);
+# set backend = "chroma" (and `pip install chromadb`) for a real vector DB.
+enabled = false
+backend = "default"
+persist_path = "workspace/memory/vectors"
+
+[extensions.docker-runtime]
+# Registers the `docker` runtime adapter (arc-docker package) so a workflow
+# step can use `adapter: docker`. Also reachable via ARC_RUNTIME_ADAPTER=docker.
+enabled = false
+image = "python:3.11-slim"
+
+[extensions.slurm-runtime]
+# Registers the `slurm` runtime adapter (arc-slurm package).
+# Also reachable via ARC_RUNTIME_ADAPTER=slurm.
+enabled = false
+partition = "general"
+
+[extensions.k8s-runtime]
+# Registers the `k8s` runtime adapter (arc-k8s package).
+# Also reachable via ARC_RUNTIME_ADAPTER=k8s.
+enabled = false
+
+[extensions.knowledge-graph]
+# Relationships between experiments/artifacts/variables. Implementation:
+# arc-knowledge-graph package (zero-dep persistent directed graph).
+enabled = false
+persist_path = "workspace/memory/graph.json"
+
+# NOTE: there is no [extensions.web-ui] block. The browser UI is a
+# standalone FastAPI app, not an ExtensionContract — run it with
+# `python -m arc.ui` (or `arc ui`). See docs/packages/extensions.md.

@@ -34,12 +34,12 @@ from __future__ import annotations
 
 import json
 import logging
-import multiprocessing as mp
 import os
 import types
 from pathlib import Path
 from typing import Any
 
+from arc.runtime._spawn import run_spawned
 from arc.runtime.workflow_safety import (
     check_workflow_source,
     validate_workflow_import_timeout,
@@ -168,35 +168,20 @@ def run_in_subprocess(
     """
     try:
         timeout = _default_timeout_seconds() if timeout is None else timeout
-        ctx = mp.get_context("spawn")
-        queue = ctx.Queue()
-        proc = ctx.Process(target=_exec_worker, args=(source, filename, inputs, queue))
-        proc.start()
-        proc.join(timeout)
-        if proc.is_alive():
-            # Escalate: SIGTERM, then SIGKILL if the child ignores it, so a
-            # workflow that traps SIGTERM can't hang the parent forever.
-            proc.terminate()
-            proc.join(5)
-            if proc.is_alive():
-                proc.kill()
-                proc.join()
-            return {"ok": False, "error": f"simulate() timed out after {timeout}s"}
-        # The worker exited within the timeout. Read its result with a short
-        # blocking get rather than empty()+get(): the child may still be
-        # flushing the queue's feeder thread the instant join() returns, so a
-        # bare empty() check can race and report "no result" for a run that
-        # actually succeeded.
-        try:
-            return queue.get(timeout=_QUEUE_RESULT_TIMEOUT_SECONDS)
-        except Exception:  # noqa: BLE001 — genuinely empty / closed queue
-            pass
-        if proc.exitcode:
-            return {"ok": False, "error": f"worker exited with code {proc.exitcode}"}
-        return {"ok": False, "error": "worker produced no result"}
+        outcome = run_spawned(
+            _exec_worker, (source, filename, inputs),
+            timeout=timeout, result_grace=_QUEUE_RESULT_TIMEOUT_SECONDS,
+        )
     except Exception as exc:  # noqa: BLE001 — subprocess machinery failed
         logger.debug("subprocess execution failed, no result: %s", exc)
         return {"ok": False, "error": f"subprocess execution failed: {exc}"}
+    if outcome.timed_out:
+        return {"ok": False, "error": f"simulate() timed out after {timeout}s"}
+    if outcome.result is not None:
+        return outcome.result
+    if outcome.exitcode:
+        return {"ok": False, "error": f"worker exited with code {outcome.exitcode}"}
+    return {"ok": False, "error": "worker produced no result"}
 
 
 # ── In-process path ─────────────────────────────────────────────────────

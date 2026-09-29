@@ -61,7 +61,7 @@ def test_planner_composite_merges_designs_and_sweeps():
 
 
 def test_planner_composite_intersects_numeric_constraints():
-    from arc.packages.arc_sim2l_agents.composites import _merge_constraints
+    from arc.packages.arc_sim2l.agents.composites import _merge_constraints
     into: dict = {"x": {"min": 0.0, "max": 10.0}}
     _merge_constraints(into, {"x": {"min": 2.0, "max": 8.0}})
     assert into["x"] == {"min": 2.0, "max": 8.0}
@@ -84,7 +84,7 @@ def test_reviewer_composite_requires_all_to_approve():
 
 
 def test_reviewer_consensus_union_helper():
-    from arc.packages.arc_sim2l_agents.composites import _union
+    from arc.packages.arc_sim2l.agents.composites import _union
     assert _union([["a", "b"], ["b", "c"]]) == ["a", "b", "c"]
 
 
@@ -148,7 +148,7 @@ class _FakeOpt:
 
 
 def test_optimizer_composite_picks_global_best():
-    from arc.packages.arc_sim2l_agents.composites import CompositeOptimizerAgent
+    from arc.packages.arc_sim2l.agents.composites import CompositeOptimizerAgent
 
     comp = CompositeOptimizerAgent(context=_ctx())
     comp.strategy_names = ("a", "b")
@@ -168,7 +168,7 @@ def test_optimizer_composite_picks_global_best():
 def test_optimizer_composite_splits_budget_without_exceeding():
     """Total generations across components must not exceed max_generations
     (review finding C). Remainder goes to the first components."""
-    from arc.packages.arc_sim2l_agents.composites import CompositeOptimizerAgent
+    from arc.packages.arc_sim2l.agents.composites import CompositeOptimizerAgent
 
     comp = CompositeOptimizerAgent(context=_ctx())
     comp.strategy_names = ("a", "b", "c")
@@ -185,7 +185,7 @@ def test_optimizer_composite_splits_budget_without_exceeding():
 def test_optimizer_composite_skips_zero_budget_components():
     """More optimizers than the budget → the extras get 0 generations and
     are skipped, not floored to 1 (which would multiply the budget)."""
-    from arc.packages.arc_sim2l_agents.composites import CompositeOptimizerAgent
+    from arc.packages.arc_sim2l.agents.composites import CompositeOptimizerAgent
 
     comp = CompositeOptimizerAgent(context=_ctx())
     comp.strategy_names = ("a", "b", "c")

@@ -235,7 +235,7 @@ def test_summary_includes_fitness_and_improvement_numbers():
 
 
 def test_relative_improvement_handles_infinite_prior():
-    from arc.packages.arc_sim2l_agents.reviewer_comparative import (
+    from arc.packages.arc_sim2l.agents.reviewer_comparative import (
         _relative_improvement,
     )
     # No prior → any finite current counts as infinite improvement.
@@ -245,7 +245,7 @@ def test_relative_improvement_handles_infinite_prior():
 
 
 def test_relative_improvement_handles_zero_prior():
-    from arc.packages.arc_sim2l_agents.reviewer_comparative import (
+    from arc.packages.arc_sim2l.agents.reviewer_comparative import (
         _relative_improvement,
     )
     # Even at best_prior=0, we shouldn't divide by zero.

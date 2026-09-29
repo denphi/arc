@@ -39,7 +39,7 @@ import math
 from collections import defaultdict
 from typing import Any
 
-from arc.packages.arc_sim2l_agents.reflector import ReflectorAgent
+from arc.packages.arc_sim2l.agents.reflector import ReflectorAgent
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
 

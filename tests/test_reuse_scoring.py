@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from arc.contracts.agent import AgentContext  # noqa: E402
-from arc.packages.arc_sim2l_agents import reuse  # noqa: E402
+from arc.packages.arc_sim2l.agents import reuse  # noqa: E402
 from arc.schemas.research import ResearchGoal  # noqa: E402
 
 

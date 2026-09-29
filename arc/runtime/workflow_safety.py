@@ -26,7 +26,6 @@ import cmath
 import itertools
 import logging
 import math
-import multiprocessing as mp
 import types
 from typing import Any
 
@@ -446,29 +445,23 @@ def validate_workflow_import_timeout(source: str, module_name: str, filename: st
     ``WORKFLOW_IMPORT_TIMEOUT_SECONDS``, or ``ValueError`` on import failure.
     The error message includes captured stderr / a traceback when present.
     """
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=workflow_import_worker, args=(source, module_name, filename, queue))
-    proc.start()
-    proc.join(WORKFLOW_IMPORT_TIMEOUT_SECONDS)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
-        raise TimeoutError("workflow.py import timed out")
+    from arc.runtime._spawn import run_spawned
 
-    try:
-        result = queue.get(timeout=5.0)
-    except Exception:  # noqa: BLE001 — genuinely empty / closed queue
+    outcome = run_spawned(
+        workflow_import_worker, (source, module_name, filename),
+        timeout=WORKFLOW_IMPORT_TIMEOUT_SECONDS,
+    )
+    if outcome.timed_out:
+        raise TimeoutError("workflow.py import timed out")
+    result = outcome.result
+    if result is None:
         # Worker died before reporting back (e.g. segfault, hard crash) —
         # surface the exit code so users have something to investigate.
         result = {
             "ok": False,
             "error": (
                 f"workflow.py validator subprocess exited "
-                f"with code {proc.exitcode} before reporting status. "
+                f"with code {outcome.exitcode} before reporting status. "
                 "This usually indicates a crash (segfault, OOM, or a "
                 "fatal Python interpreter error)."
             ),
@@ -532,22 +525,15 @@ def run_simulate_with_timeout(
     Returns ``{"ok": True, "result": ...}`` on success or
     ``{"ok": False, "reason": ...}`` on any failure mode.
     """
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(
-        target=simulate_worker, args=(code, calls, allowed_modules, queue)
+    from arc.runtime._spawn import run_spawned
+
+    outcome = run_spawned(
+        simulate_worker, (code, calls, allowed_modules), timeout=timeout,
     )
-    proc.start()
-    proc.join(timeout)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
+    if outcome.timed_out:
         return {"ok": False, "reason": "simulate() timed out during validation"}
-    if not queue.empty():
-        return queue.get()
-    if proc.exitcode:
-        return {"ok": False, "reason": f"simulate() validation process exited {proc.exitcode}"}
+    if outcome.result is not None:
+        return outcome.result
+    if outcome.exitcode:
+        return {"ok": False, "reason": f"simulate() validation process exited {outcome.exitcode}"}
     return {"ok": False, "reason": "simulate() validation returned no result"}

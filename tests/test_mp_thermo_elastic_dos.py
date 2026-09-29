@@ -250,7 +250,7 @@ def _mp_hit_full(formula="Si", mp_id="mp-149"):
 
 
 def test_planner_splices_thermo_params():
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_full()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -262,7 +262,7 @@ def test_planner_splices_thermo_params():
 
 
 def test_planner_splices_elasticity_params():
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_full()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -275,7 +275,7 @@ def test_planner_splices_elasticity_params():
 
 
 def test_planner_splices_dos_params():
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_full()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -287,7 +287,7 @@ def test_planner_splices_dos_params():
 
 def test_planner_attribution_lists_each_contributing_block():
     """Each block that contributes a parameter logs one design step."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_full()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -302,7 +302,7 @@ def test_planner_attribution_lists_each_contributing_block():
 
 def test_planner_does_not_overwrite_existing_thermo_param():
     """LLM-supplied parameters survive a thermo splice."""
-    from arc.packages.arc_sim2l_agents.planner import (
+    from arc.packages.arc_sim2l.agents.planner import (
         _apply_mp_property_defaults, _fallback_plan,
     )
 
@@ -318,7 +318,7 @@ def test_planner_does_not_overwrite_existing_thermo_param():
 def test_planner_no_op_when_property_blocks_all_missing():
     """An MP hit without thermo/elastic/DOS blocks must not add any
     non-lattice keys."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     hit = {
         "id": "mp-1",
@@ -343,7 +343,7 @@ def test_planner_no_op_when_property_blocks_all_missing():
 
 def test_planner_handles_garbage_block_shape():
     """A metadata block that isn't a dict must not crash the splice."""
-    from arc.packages.arc_sim2l_agents.planner import (
+    from arc.packages.arc_sim2l.agents.planner import (
         _apply_mp_property_defaults, _fallback_plan,
     )
 
@@ -364,7 +364,7 @@ def test_search_then_plan_carries_all_axes(monkeypatch):
     """Search returns a Si record → planner has lattice, thermo,
     elastic, and DOS defaults."""
     from arc.core.strategies import resolve_role
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     monkeypatch.setenv("MP_API_KEY", "test-key")
 

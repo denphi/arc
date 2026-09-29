@@ -348,7 +348,7 @@ def test_package_validate_accepts_well_formed_strategy(tmp_path):
     target = tmp_path / "arc-good"
     (target / "agents").mkdir(parents=True)
     (target / "agents" / "ideator.py").write_text(
-        "from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent\n"
+        "from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent\n"
         "class GoodIdeator(IdeatorAgent):\n"
         "    name = 'good_ideator'\n",
         encoding="utf-8",

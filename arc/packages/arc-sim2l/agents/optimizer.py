@@ -16,7 +16,7 @@ import random
 from typing import Any
 
 from arc.contracts.agent import AgentContract
-from arc.runtime.key_matching import keys_match as _keys_match
+from arc.runtime.key_matching import format_pct_off, target_errors
 from arc.schemas.artifact import ArtifactRecord
 
 
@@ -32,19 +32,10 @@ def _fitness(outputs: dict[str, Any], target: dict[str, Any], registry: dict | N
         return float("inf")
 
     if target:
-        total = 0.0
-        matched = 0
-        for tk, tv in target.items():
-            for ok, ov in outputs.items():
-                if _keys_match(tk, ok, registry):
-                    if isinstance(ov, (int, float)) and ov is not None:
-                        err = (ov - tv) / max(abs(tv), 1e-12)
-                        total += err * err
-                        matched += 1
-                    break  # one output per target key
-        if matched == 0:
+        errors, _unmatched = target_errors(outputs, target, registry)
+        if not errors:
             return float("inf")  # no match → worst possible fitness, not 0
-        return total / matched
+        return sum(err * err for err in errors.values()) / len(errors)
 
     # No target: maximise sum of numeric outputs (return negative so lower=better)
     total = sum(v for v in outputs.values() if isinstance(v, (int, float)) and v is not None)
@@ -52,15 +43,7 @@ def _fitness(outputs: dict[str, Any], target: dict[str, Any], registry: dict | N
 
 
 def _pct_off(outputs: dict, target: dict, registry: dict | None = None) -> str:
-    parts = []
-    for tk, tv in target.items():
-        for ok, ov in outputs.items():
-            if _keys_match(tk, ok, registry):
-                if isinstance(ov, (int, float)):
-                    pct = abs(ov - tv) / max(abs(tv), 1e-12) * 100
-                    parts.append(f"{ok}={ov:.4g} ({pct:.1f}% off)")
-                break
-    return "  ".join(parts) if parts else "(no target key match)" if target else ""
+    return format_pct_off(outputs, target, registry)
 
 
 # ── GA operators ──────────────────────────────────────────────────────────────

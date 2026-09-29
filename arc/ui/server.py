@@ -467,39 +467,25 @@ def create_app() -> FastAPI:
     @app.post("/api/executions/run", dependencies=auth)
     async def run_execution(body: UIExecutionRequest) -> dict[str, Any]:
         session_id = _safe_session_id(body.session_id)
-        paths = session_paths(session_id)
-        registry = ArtifactRegistry(root=paths["artifacts"])
-        try:
-            artifact = registry.get(body.artifact_id, body.version or "0.1.0")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Artifact not found")
-
-        workflow = ResearchWorkflow(session_id=session_id, workflow_name=body.workflow_name)
-        await safe_backend_action(workflow.backend, "register_artifact", artifact)
-        # Full bookkeeping (audit phases + provenance + save/publish) — a
-        # blocking execution.before audit gates UI runs like chat/YAML runs.
-        from arc.runtime.audit import AuditBlockedError
-        try:
-            result = await workflow.execute_recorded(
-                artifact, body.inputs, action="ui_run",
-            )
-        except AuditBlockedError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
+        payload = await _execute_artifact(
+            session_id=session_id,
+            artifact_ref=body.artifact_id,
+            version=body.version,
+            inputs=body.inputs,
+            workflow_name=body.workflow_name,
+            exact=True,
+        )
+        execution = payload["execution"]
+        artifact = payload["artifact"]
         _append_thread(
             session_id,
             "tool",
-            f"Executed {artifact.name}. Status: {result.status}.",
+            f"Executed {artifact.get('name')}. Status: {execution.get('status')}.",
             title="Execution",
-            payload=result.model_dump(),
+            payload=execution,
         )
-        return {
-            "session_id": session_id,
-            "artifact": artifact.model_dump(),
-            "execution": result.model_dump(),
-            "session": _session_snapshot(session_id),
-        }
+        payload["session"] = _session_snapshot(session_id)
+        return payload
 
     # ── Phase 2 read routes ──────────────────────────────────────────────
 
@@ -1157,10 +1143,25 @@ async def _execute_artifact(
     version: str | None,
     inputs: dict[str, Any],
     workflow_name: str,
+    exact: bool = False,
 ) -> dict[str, Any]:
+    """Run an artifact with full bookkeeping — the single UI execution path
+    shared by ``POST /api/executions/run`` and the ``/exec`` command.
+
+    ``exact`` requires ``artifact_ref`` to be a full artifact id (404 when
+    missing); otherwise a unique id prefix or artifact name also resolves.
+    """
     workflow = ResearchWorkflow(session_id=session_id, workflow_name=workflow_name)
     _hydrate_workflow_state(workflow)
-    artifact = _resolve_artifact(workflow.artifacts, artifact_ref, version or "0.1.0")
+    if exact:
+        try:
+            artifact = workflow.artifacts.get(artifact_ref, version or "0.1.0")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    else:
+        artifact = _resolve_artifact(workflow.artifacts, artifact_ref, version or "0.1.0")
     await safe_backend_action(workflow.backend, "register_artifact", artifact)
     # Full bookkeeping (audit phases + provenance + save/publish); a
     # blocking execution.before audit gates UI runs like chat/YAML runs.
@@ -1172,7 +1173,7 @@ async def _execute_artifact(
     return {
         "session_id": session_id,
         "artifact": artifact.model_dump(),
-        "inputs": prepared,
+        "inputs": result.inputs,
         "execution": result.model_dump(),
         "session": _session_snapshot(session_id),
     }

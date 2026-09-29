@@ -33,7 +33,7 @@ pytestmark = pytest.mark.chat
 
 
 def test_noop_validator_passes_anything():
-    from arc.packages.arc_sim2l_agents.validator import NoopValidatorAgent
+    from arc.packages.arc_sim2l.agents.validator import NoopValidatorAgent
 
     agent = NoopValidatorAgent()
     report = asyncio.run(agent.validate({"band_gap": -99.0}))  # absurd
@@ -46,7 +46,7 @@ def test_noop_validator_passes_anything():
 
 def test_noop_validator_run_alias_accepts_outputs_dict():
     """``run({outputs, target})`` matches the AgentContract abstract method."""
-    from arc.packages.arc_sim2l_agents.validator import NoopValidatorAgent
+    from arc.packages.arc_sim2l.agents.validator import NoopValidatorAgent
 
     agent = NoopValidatorAgent()
     report = asyncio.run(agent.run({"outputs": {"x": 1}, "target": {"x": 1}}))

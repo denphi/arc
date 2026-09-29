@@ -118,7 +118,7 @@ def test_min_distance_finds_closest_neighbour():
 def _baseline_plan():
     """Construct a fresh fallback plan we can use as the starting point
     for sweep-rewrite tests, just like the agent does internally."""
-    from arc.packages.arc_sim2l_agents.planner import _fallback_plan
+    from arc.packages.arc_sim2l.agents.planner import _fallback_plan
     return _fallback_plan(_proposal())
 
 
@@ -224,7 +224,7 @@ def _resolve_agent():
 def test_cold_start_delegates_to_default_planner():
     """No history → return a plan that matches what the default planner
     would have produced (same parameter names)."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _context()
     default_plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -287,7 +287,7 @@ def test_warm_path_handles_malformed_history_entries():
 def test_warm_path_preserves_non_numeric_parameters():
     """If the LLM declared a string parameter, the AL sweep must not
     drop or rewrite it."""
-    from arc.packages.arc_sim2l_agents.planner_active_learning import (
+    from arc.packages.arc_sim2l.agents.planner_active_learning import (
         _apply_active_learning_sweep,
     )
     plan = _baseline_plan()
@@ -316,7 +316,7 @@ def test_run_returns_experiment_plan_shape():
 def test_no_op_when_no_history_after_default_planner_returns_plan_unchanged():
     """Cold start: AL planner returns *exactly* what the default
     produced — no rewrite, no attribution line."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _context()
     default_plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))

@@ -1,9 +1,8 @@
-"""arc.toml resolution + single source of truth (design/todo.md item 11).
+"""arc.toml resolution: bundled defaults + project overlay.
 
-Documents which file ``load_arc_toml()`` resolves in the repo tree, and
-pins that the fallback ``arc/arc/arc.toml`` no longer carries an
-independent package/extension list (so editing the wrong file can't
-silently mislead, and the two files can't diverge).
+The package list and extension defaults ship inside the ``arc`` package
+(``arc/arc.toml``) so a plain ``pip install`` works outside a checkout.
+A project ``./arc.toml`` only overlays it.
 """
 
 from __future__ import annotations
@@ -12,7 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from arc.core.config import build_context_workflow_specs, load_arc_toml, resolve_config_path
+from arc.core.config import (
+    build_context_workflow_specs,
+    bundled_config_path,
+    config_section,
+    load_arc_toml,
+    resolve_config_path,
+)
 
 try:
     import tomllib  # Python 3.11+
@@ -21,15 +26,34 @@ except ImportError:  # pragma: no cover - 3.10 fallback
 
 pytestmark = pytest.mark.chat
 
-_REPO = Path(__file__).resolve().parents[1]          # arc/
-_REPO_TOML = _REPO / "arc.toml"                       # authoritative
-_FALLBACK_TOML = _REPO / "arc" / "arc.toml"           # tiny fallback
+_REPO = Path(__file__).resolve().parents[1]
+_PROJECT_TOML = _REPO / "arc.toml"                    # checkout overlay
+_BUNDLED_TOML = _REPO / "arc" / "arc.toml"            # authoritative defaults
 
 
-def test_default_resolution_is_repo_level_arc_toml():
-    """No explicit path → repo-level arc.toml wins when cwd has no config."""
-    resolved = resolve_config_path(None)
-    assert resolved == _REPO_TOML
+def test_bundled_config_lives_inside_the_package():
+    assert bundled_config_path() == _BUNDLED_TOML.resolve()
+
+
+def test_bundled_config_carries_packages_and_extensions():
+    data = tomllib.loads(_BUNDLED_TOML.read_text())
+    assert "packages/arc-sim2l" in data["packages"]["paths"]
+    assert "extensions" in data
+
+
+def test_project_overlay_declares_no_second_package_catalogue():
+    data = tomllib.loads(_PROJECT_TOML.read_text())
+    assert not data.get("packages", {}).get("paths")
+    assert not data.get("extensions")
+
+
+def test_outside_a_project_the_bundled_config_is_used(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    resolved, config = load_arc_toml()
+    assert resolved == bundled_config_path()
+    paths = config["packages"]["paths"]
+    # Relative to the bundled file, so they resolve inside the package.
+    assert "packages/arc-sim2l" in paths
 
 
 def test_current_folder_arc_toml_wins_and_extends_defaults(tmp_path, monkeypatch):
@@ -55,31 +79,20 @@ builder = "codex"
     assert config.get("strategies", {}).get("builder") == "codex"
 
 
-def test_repo_level_carries_packages_and_extensions():
-    _path, config = load_arc_toml()
-    assert config.get("packages", {}).get("paths")        # authoritative list
-    assert "extensions" in config
+def test_missing_explicit_path_falls_back_to_bundled(tmp_path):
+    assert resolve_config_path(tmp_path / "nope.toml") == bundled_config_path()
 
 
-def test_fallback_has_no_independent_package_or_extension_lists():
-    """The fallback is a documented pointer, not a second config (item 11)."""
-    data = tomllib.loads(_FALLBACK_TOML.read_text())
-    assert not data.get("packages", {}).get("paths")
-    assert not data.get("extensions")
-
-
-def test_fallback_used_only_when_repo_level_missing(tmp_path, monkeypatch):
-    """If a non-existent path is requested, resolution falls back to the
-    bundled defaults (repo-level first), never to a stale parallel list."""
-    resolved = resolve_config_path(tmp_path / "nope.toml")
-    assert resolved in (_REPO_TOML, _FALLBACK_TOML)
-    # In a normal checkout the repo-level file exists, so it's chosen.
-    assert resolved == _REPO_TOML
+def test_config_section_reads_runtime_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert config_section("runtime").get("adapter") == "local"
+    assert config_section("api").get("host") == "127.0.0.1"
+    assert config_section("does-not-exist") == {}
 
 
 def test_no_web_ui_extension_block_anywhere():
-    """[extensions.web-ui] is removed from both files (item 9)."""
-    for toml_path in (_REPO_TOML, _FALLBACK_TOML):
+    """[extensions.web-ui] is not a thing — the UI is a standalone app."""
+    for toml_path in (_PROJECT_TOML, _BUNDLED_TOML):
         data = tomllib.loads(toml_path.read_text())
         assert "web-ui" not in (data.get("extensions") or {})
 

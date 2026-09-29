@@ -38,7 +38,7 @@ def _context(memory=None):
 
 
 def _baseline_plan():
-    from arc.packages.arc_sim2l_agents.planner import _fallback_plan
+    from arc.packages.arc_sim2l.agents.planner import _fallback_plan
     return _fallback_plan(_proposal())
 
 
@@ -46,7 +46,7 @@ def _baseline_plan():
 
 
 def test_lhs_shape():
-    from arc.packages.arc_sim2l_agents.planner_doe import latin_hypercube
+    from arc.packages.arc_sim2l.agents.planner_doe import latin_hypercube
     points = latin_hypercube(8, 3)
     assert len(points) == 8
     assert all(len(p) == 3 for p in points)
@@ -57,7 +57,7 @@ def test_lhs_shape():
 def test_lhs_stratification_one_sample_per_bin():
     """Each dimension's samples land in distinct bins — the defining
     property of Latin hypercube sampling."""
-    from arc.packages.arc_sim2l_agents.planner_doe import latin_hypercube
+    from arc.packages.arc_sim2l.agents.planner_doe import latin_hypercube
     points = latin_hypercube(10, 3)
     width = 1.0 / 10
     for d in range(3):
@@ -66,14 +66,14 @@ def test_lhs_stratification_one_sample_per_bin():
 
 
 def test_lhs_deterministic_with_seed():
-    from arc.packages.arc_sim2l_agents.planner_doe import latin_hypercube
+    from arc.packages.arc_sim2l.agents.planner_doe import latin_hypercube
     a = latin_hypercube(8, 3, seed=99)
     b = latin_hypercube(8, 3, seed=99)
     assert a == b
 
 
 def test_lhs_handles_zero_dimensions():
-    from arc.packages.arc_sim2l_agents.planner_doe import latin_hypercube
+    from arc.packages.arc_sim2l.agents.planner_doe import latin_hypercube
     assert latin_hypercube(8, 0) == []
     assert latin_hypercube(0, 3) == []
 
@@ -83,7 +83,7 @@ def test_lhs_handles_zero_dimensions():
 
 def test_factorial_returns_full_cube_below_seven_dims():
     """2-level full factorial: 2^n corners."""
-    from arc.packages.arc_sim2l_agents.planner_doe import fractional_factorial
+    from arc.packages.arc_sim2l.agents.planner_doe import fractional_factorial
     for n_dims in (1, 2, 3, 4, 5, 6):
         corners = fractional_factorial(n_dims, include_centre=False)
         assert len(corners) == 2 ** n_dims
@@ -93,14 +93,14 @@ def test_factorial_returns_full_cube_below_seven_dims():
 
 
 def test_factorial_includes_centre_point():
-    from arc.packages.arc_sim2l_agents.planner_doe import fractional_factorial
+    from arc.packages.arc_sim2l.agents.planner_doe import fractional_factorial
     corners = fractional_factorial(3, include_centre=True)
     assert [0.5, 0.5, 0.5] in corners
 
 
 def test_factorial_caps_high_dimensions():
     """Beyond 6 dims we use a fractional design; the result is bounded."""
-    from arc.packages.arc_sim2l_agents.planner_doe import fractional_factorial
+    from arc.packages.arc_sim2l.agents.planner_doe import fractional_factorial
     corners = fractional_factorial(8, include_centre=False)
     # 2^8 = 256 corners; the fractional fallback caps it well below.
     assert len(corners) <= 64
@@ -110,7 +110,7 @@ def test_factorial_caps_high_dimensions():
 
 
 def test_sobol_shape():
-    from arc.packages.arc_sim2l_agents.planner_doe import sobol_sequence
+    from arc.packages.arc_sim2l.agents.planner_doe import sobol_sequence
     points = sobol_sequence(16, 4)
     assert len(points) == 16
     assert all(len(p) == 4 for p in points)
@@ -119,7 +119,7 @@ def test_sobol_shape():
 
 
 def test_sobol_deterministic():
-    from arc.packages.arc_sim2l_agents.planner_doe import sobol_sequence
+    from arc.packages.arc_sim2l.agents.planner_doe import sobol_sequence
     a = sobol_sequence(16, 4)
     b = sobol_sequence(16, 4)
     assert a == b
@@ -127,7 +127,7 @@ def test_sobol_deterministic():
 
 def test_sobol_handles_more_dims_than_directions():
     """Beyond the 8 hand-coded direction sets we cycle — must not crash."""
-    from arc.packages.arc_sim2l_agents.planner_doe import sobol_sequence
+    from arc.packages.arc_sim2l.agents.planner_doe import sobol_sequence
     points = sobol_sequence(4, 12)
     assert all(len(p) == 12 for p in points)
 
@@ -137,7 +137,7 @@ def test_sobol_better_uniformity_than_random_on_2d():
     confirm the Sobol sample touches more cells than a fixed-seed
     uniform sample for the same point count."""
     import random
-    from arc.packages.arc_sim2l_agents.planner_doe import sobol_sequence
+    from arc.packages.arc_sim2l.agents.planner_doe import sobol_sequence
 
     n = 16
     sobol = sobol_sequence(n, 2)
@@ -154,7 +154,7 @@ def test_sobol_better_uniformity_than_random_on_2d():
 
 
 def test_apply_scheme_lhs_rewrites_sweep():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     rewritten = _apply_scheme(plan, scheme="lhs", sweep_size=6)
     assert rewritten
@@ -165,7 +165,7 @@ def test_apply_scheme_lhs_rewrites_sweep():
 
 
 def test_apply_scheme_factorial_uses_corner_count():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     rewritten = _apply_scheme(plan, scheme="factorial")
     assert rewritten
@@ -181,7 +181,7 @@ def test_apply_scheme_factorial_uses_corner_count():
 
 
 def test_apply_scheme_sobol_size_matches_sweep_size():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     rewritten = _apply_scheme(plan, scheme="sobol", sweep_size=10)
     for name in rewritten:
@@ -189,7 +189,7 @@ def test_apply_scheme_sobol_size_matches_sweep_size():
 
 
 def test_apply_scheme_first_column_becomes_nominal():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     rewritten = _apply_scheme(plan, scheme="lhs", sweep_size=8)
     for name in rewritten:
@@ -197,14 +197,14 @@ def test_apply_scheme_first_column_becomes_nominal():
 
 
 def test_apply_scheme_rejects_unknown_scheme():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     with pytest.raises(ValueError, match="Unknown DoE scheme"):
         _apply_scheme(plan, scheme="not_real")
 
 
 def test_apply_scheme_returns_empty_when_no_numeric_params():
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     plan.parameters = {"label": "non-numeric"}
     plan.parameter_constraints = {}
@@ -213,7 +213,7 @@ def test_apply_scheme_returns_empty_when_no_numeric_params():
 
 def test_apply_scheme_respects_parameter_bounds():
     """Every generated sweep value must fall within the constraint band."""
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     rewritten = _apply_scheme(plan, scheme="sobol", sweep_size=16)
     for name in rewritten:
@@ -225,7 +225,7 @@ def test_apply_scheme_respects_parameter_bounds():
 
 def test_apply_scheme_preserves_non_numeric_parameters():
     """An LLM-declared string parameter must survive a DoE rewrite."""
-    from arc.packages.arc_sim2l_agents.planner_doe import _apply_scheme
+    from arc.packages.arc_sim2l.agents.planner_doe import _apply_scheme
     plan = _baseline_plan()
     plan.parameters["material_name"] = "silicon"
     _apply_scheme(plan, scheme="lhs")

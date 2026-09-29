@@ -332,69 +332,42 @@ def _load_resource(
 def _import_class(entrypoint: str):
     """Import a class from a dotted entrypoint string like 'module.path:ClassName'.
 
-    Package manifests historically use distribution-style names with hyphens
-    (e.g. ``arc.packages.arc-sim2l.agents.ideator``). ``importlib`` accepts
-    these on CPython today because the directories exist, but the resulting
-    modules are not importable through normal ``import`` statements. To keep
-    the manifest format stable while making the modules first-class
-    importables, this helper falls back to a filesystem-based loader that
-    registers the module under an underscored alias (``arc_sim2l.agents.…``)
-    when the dotted path contains hyphens.
+    Package manifests use distribution-style names with hyphens
+    (``arc.packages.arc-sim2l.agents.ideator``). Bundled packages are
+    importable under the underscored name (``arc.packages.arc_sim2l…``) via
+    the finder in :mod:`arc.packages`, so a hyphenated entrypoint resolves to
+    the *same* module object as a normal ``import`` of that name.
     """
-    import sys
-    from importlib.util import module_from_spec, spec_from_file_location
-
     module_path, class_name = entrypoint.rsplit(":", 1)
-
-    if "-" not in module_path:
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-
-    # Hyphenated path: resolve via the filesystem.
-    underscored = module_path.replace("-", "_")
-    if underscored in sys.modules:
-        return getattr(sys.modules[underscored], class_name)
-
-    # Walk the path components to find the .py file.
-    parts = module_path.split(".")
-    here = Path(__file__).resolve().parents[2]  # arc/ repo root
-    candidate = here / "/".join(parts[:-1]) / f"{parts[-1]}.py"
-    if not candidate.exists():
-        # Last resort — try CPython's behaviour for compatibility.
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-
-    spec = spec_from_file_location(underscored, candidate)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module from {candidate}")
-    module = module_from_spec(spec)
-    sys.modules[underscored] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        # Don't leave a half-initialised module cached on failure — a later
-        # import of the same path would return the broken object.
-        sys.modules.pop(underscored, None)
-        raise
+    module = importlib.import_module(module_path.replace("-", "_"))
     return getattr(module, class_name)
 
 
-def _import_from_file(module_file: Path, attr: str, module_name: str | None = None):
-    """Import ``attr`` from a Python file.
+def import_module_file(module_file: Path, module_name: str | None = None):
+    """Import a Python file under its one canonical module name.
 
-    Local ARC packages can live outside ``arc.packages`` and therefore may
-    not have a dotted import path. Their manifests use ``path`` + ``class`` or
-    ``path`` + ``function`` declarations instead.
+    Files inside the bundled ``arc/packages`` tree import through their
+    package name; files from local packages elsewhere get a stable name
+    derived from their resolved path. Either way repeated imports of the
+    same file — from the manifest loader or the strategy resolver — return
+    the same module object.
     """
+    from arc.packages import canonical_module_name
+
+    canonical = canonical_module_name(module_file)
+    if canonical is not None:
+        return importlib.import_module(canonical)
     import sys
     from importlib.util import module_from_spec, spec_from_file_location
 
     if not module_file.exists():
-        raise ImportError(f"Cannot load {attr!r}; file does not exist: {module_file}")
+        raise ImportError(f"Cannot load module; file does not exist: {module_file}")
     if module_name is None:
         token = "_".join(module_file.with_suffix("").parts[-4:]).replace("-", "_")
         digest = hashlib.sha256(str(module_file.resolve()).encode("utf-8")).hexdigest()[:12]
         module_name = f"arc_local_package_{token}_{digest}"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
     spec = spec_from_file_location(module_name, module_file)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load module from {module_file}")
@@ -403,9 +376,17 @@ def _import_from_file(module_file: Path, attr: str, module_name: str | None = No
     try:
         spec.loader.exec_module(module)
     except BaseException:
+        # Don't leave a half-initialised module cached on failure.
         sys.modules.pop(module_name, None)
         raise
-    return getattr(module, attr)
+    return module
+
+
+def _import_from_file(module_file: Path, attr: str, module_name: str | None = None):
+    """Import ``attr`` from a Python file (see :func:`import_module_file`)."""
+    if not module_file.exists():
+        raise ImportError(f"Cannot load {attr!r}; file does not exist: {module_file}")
+    return getattr(import_module_file(module_file, module_name), attr)
 
 
 def _declared_attr_name(definition: dict[str, Any], *keys: str) -> str | None:
@@ -432,13 +413,7 @@ def _import_declared(
     if not rel_path or not attr:
         raise ValueError("Manifest entry needs either entrypoint or path plus class/function")
 
-    module_file = package_dir / str(rel_path)
-    module_token = (
-        "arc_local_package_"
-        f"{package_dir.name.replace('-', '_')}_"
-        f"{str(rel_path).replace('/', '_').replace('-', '_').removesuffix('.py')}"
-    )
-    return _import_from_file(module_file, attr, module_token)
+    return _import_from_file(package_dir / str(rel_path), attr)
 
 
 def _strategy_spec_from_manifest(package_dir: Path, pkg_name: str, strategy_def: dict[str, Any]):

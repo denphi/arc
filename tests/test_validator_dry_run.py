@@ -210,7 +210,7 @@ def test_handles_artifact_without_metadata():
 
 def test_handles_no_context():
     """Constructed with the default context (no memory) — must not crash."""
-    from arc.packages.arc_sim2l_agents.validator_dry_run import (
+    from arc.packages.arc_sim2l.agents.validator_dry_run import (
         DryRunValidatorAgent,
     )
     agent = DryRunValidatorAgent()  # default AgentContext

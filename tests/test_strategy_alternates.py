@@ -48,7 +48,7 @@ def _context(memory=None):
 
 def test_mars_planner_cold_start_delegates_to_default():
     """No history → returns the same plan the default planner would."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
     from arc.core.strategies import resolve_role
     MARSPlannerAgent = resolve_role("planner", overrides={"planner": "mars_planner"})
 
@@ -214,7 +214,7 @@ def stub_catalog():
 
 
 def test_keyword_searcher_returns_search_result(stub_catalog):
-    from arc.packages.arc_sim2l_agents.searcher import KeywordSearcherAgent
+    from arc.packages.arc_sim2l.agents.searcher import KeywordSearcherAgent
 
     ctx = _context()
     goal = ResearchGoal(goal="silicon nanowire bandgap 1.1 eV", domain="materials")
@@ -227,7 +227,7 @@ def test_keyword_searcher_returns_search_result(stub_catalog):
 
 def test_embedding_searcher_reranks_by_similarity(stub_catalog):
     """The polymer hit shouldn't beat the silicon hit when the goal is about silicon."""
-    from arc.packages.arc_sim2l_agents.searcher import EmbeddingSearcherAgent
+    from arc.packages.arc_sim2l.agents.searcher import EmbeddingSearcherAgent
 
     ctx = _context()  # no provider → falls back to TF cosine
     goal = ResearchGoal(
@@ -242,7 +242,7 @@ def test_embedding_searcher_reranks_by_similarity(stub_catalog):
 
 def test_embedding_searcher_uses_provider_embed_when_available(stub_catalog):
     """If provider exposes embed(text), the searcher prefers it over TF."""
-    from arc.packages.arc_sim2l_agents.searcher import EmbeddingSearcherAgent
+    from arc.packages.arc_sim2l.agents.searcher import EmbeddingSearcherAgent
 
     seen_texts: list[str] = []
 
@@ -263,7 +263,7 @@ def test_embedding_searcher_uses_provider_embed_when_available(stub_catalog):
 
 def test_keyword_searcher_handles_empty_catalog():
     """When the catalog returns [] the searcher still returns a valid shape."""
-    from arc.packages.arc_sim2l_agents.searcher import KeywordSearcherAgent
+    from arc.packages.arc_sim2l.agents.searcher import KeywordSearcherAgent
 
     class _Resp:
         status_code = 200
@@ -339,7 +339,7 @@ def test_ideator_delegates_catalog_lookup_to_searcher_strategy(stub_catalog):
     ideation now returns the top-*ranked* candidate — item 2 — so the
     objective is no longer the verbatim goal; this test pins the searcher
     delegation, which is what it's actually exercising.)"""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
     from arc.schemas.research import ResearchProposal
 
     ctx = _context()
@@ -354,7 +354,7 @@ def test_ideator_delegates_catalog_lookup_to_searcher_strategy(stub_catalog):
 
 def test_ideator_honours_runtime_searcher_override(stub_catalog):
     """``/strategy searcher embeddings`` makes the ideator re-rank hits."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     ctx = _context({"strategy_overrides": {"searcher": "embeddings"}})
     asyncio.run(IdeatorAgent(context=ctx).run(
@@ -366,7 +366,7 @@ def test_ideator_honours_runtime_searcher_override(stub_catalog):
 
 def test_ideator_swallows_searcher_failure_and_continues():
     """If the searcher raises, the ideator must still produce a proposal."""
-    from arc.packages.arc_sim2l_agents.ideator import IdeatorAgent
+    from arc.packages.arc_sim2l.agents.ideator import IdeatorAgent
 
     def _boom(*a, **kw):
         raise RuntimeError("network down")

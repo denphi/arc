@@ -42,7 +42,7 @@ import os
 import re
 from typing import Any
 
-from arc.packages.arc_sim2l_agents.searcher import _BaseSearcher
+from arc.packages.arc_sim2l.agents.searcher import _BaseSearcher
 from arc.schemas.research import ResearchGoal, SearchResult
 
 logger = logging.getLogger(__name__)

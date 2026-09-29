@@ -47,26 +47,26 @@ def _run_opt(cls, **kw):
 
 
 def test_genetic_optimizer_clamps_zero_pop():
-    from arc.packages.arc_sim2l_agents.optimizer import GeneticOptimizerAgent
+    from arc.packages.arc_sim2l.agents.optimizer import GeneticOptimizerAgent
     result = _run_opt(GeneticOptimizerAgent)
     assert "best_inputs" in result
     assert result["generations_run"] >= 1
 
 
 def test_bayes_optimizer_clamps_zero_pop():
-    from arc.packages.arc_sim2l_agents.optimizer_bayes import BayesOptOptimizerAgent
+    from arc.packages.arc_sim2l.agents.optimizer_bayes import BayesOptOptimizerAgent
     result = _run_opt(BayesOptOptimizerAgent)
     assert "best_inputs" in result
 
 
 def test_cmaes_optimizer_clamps_zero_pop():
-    from arc.packages.arc_sim2l_agents.optimizer_cmaes import CMAESOptimizerAgent
+    from arc.packages.arc_sim2l.agents.optimizer_cmaes import CMAESOptimizerAgent
     result = _run_opt(CMAESOptimizerAgent)
     assert "best_inputs" in result
 
 
 def test_llm_optimizer_clamps_zero_pop():
-    from arc.packages.arc_sim2l_agents.optimizer_llm import LLMGuidedOptimizerAgent
+    from arc.packages.arc_sim2l.agents.optimizer_llm import LLMGuidedOptimizerAgent
     # No provider in ctx → falls back to its non-LLM sampling, still must run.
     result = _run_opt(LLMGuidedOptimizerAgent)
     assert "best_inputs" in result

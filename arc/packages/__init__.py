@@ -14,24 +14,64 @@ example) keep working unchanged.
 from __future__ import annotations
 
 
+import importlib
+import importlib.abc
 import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
 
-
-def _load_from_path(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+# ── Canonical import names for hyphenated package directories ──────────
+#
+# Bundled packages live in distribution-style directories (``arc-sim2l``)
+# that are not valid Python identifiers. This finder makes each of them
+# importable under exactly one name, ``arc.packages.<name_with_underscores>``
+# (``arc.packages.arc_sim2l.agents.builder``), so the manifest loader, the
+# strategy resolver and ordinary ``import`` statements all share a single
+# module object per file — no symlinks, no per-caller aliases.
 
 
 def _pkg_dir() -> Path:
     return Path(__file__).parent
+
+
+class _HyphenatedPackageFinder(importlib.abc.MetaPathFinder):
+    _PREFIX = __name__ + "."
+
+    def find_spec(self, fullname, path=None, target=None):
+        if not fullname.startswith(self._PREFIX):
+            return None
+        leaf = fullname[len(self._PREFIX):]
+        if "." in leaf or "_" not in leaf:
+            return None
+        directory = _pkg_dir() / leaf.replace("_", "-")
+        init = directory / "__init__.py"
+        if not init.is_file():
+            return None
+        return importlib.util.spec_from_file_location(
+            fullname, init, submodule_search_locations=[str(directory)],
+        )
+
+
+if not any(isinstance(f, _HyphenatedPackageFinder) for f in sys.meta_path):
+    sys.meta_path.append(_HyphenatedPackageFinder())
+
+
+def canonical_module_name(module_file: Path) -> str | None:
+    """Importable dotted name for a file inside a bundled package, else None."""
+    try:
+        rel = Path(module_file).resolve().relative_to(_pkg_dir().resolve())
+    except ValueError:
+        return None
+    parts = list(rel.with_suffix("").parts)
+    if not parts or parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return None
+    parts[0] = parts[0].replace("-", "_")
+    if not all(part.isidentifier() for part in parts):
+        return None
+    return ".".join([__name__, *parts])
 
 
 # ── Strategy-aware lookup ───────────────────────────────────────────────
@@ -79,35 +119,28 @@ def resolve_role(role: str, workflow: Any = None) -> Any:
 
 
 def load_ideator():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "ideator.py"
-    return _load_from_path("arc_sim2l.agents.ideator", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.ideator")
 
 
 def load_planner():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "planner.py"
-    return _load_from_path("arc_sim2l.agents.planner", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.planner")
 
 
 def load_builder():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "builder.py"
-    return _load_from_path("arc_sim2l.agents.builder", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.builder")
 
 
 def load_reviewer():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "reviewer.py"
-    return _load_from_path("arc_sim2l.agents.reviewer", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.reviewer")
 
 
 def load_reflector():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "reflector.py"
-    return _load_from_path("arc_sim2l.agents.reflector", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.reflector")
 
 
 def load_optimizer():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "optimizer.py"
-    return _load_from_path("arc_sim2l.agents.optimizer", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.optimizer")
 
 
 def load_curator():
-    path = _pkg_dir() / "arc-sim2l" / "agents" / "curator.py"
-    return _load_from_path("arc_sim2l.agents.curator", path)
+    return importlib.import_module(f"{__name__}.arc_sim2l.agents.curator")

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from arc.packages.arc_sim2l_agents.optimizer_llm import (
+from arc.packages.arc_sim2l.agents.optimizer_llm import (
     LLMGuidedOptimizerAgent,
     _lhs_candidates,
     _parse_candidates,

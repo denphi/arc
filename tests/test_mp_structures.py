@@ -180,7 +180,7 @@ def _mp_hit_with_lattice(formula="Si", mp_id="mp-149"):
 
 
 def test_planner_splices_lattice_when_top_hit_is_mp():
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -194,7 +194,7 @@ def test_planner_splices_lattice_when_top_hit_is_mp():
 
 def test_planner_constraints_match_lattice_units():
     """Lattice lengths get ``angstrom`` units, angles get ``degrees``."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -205,7 +205,7 @@ def test_planner_constraints_match_lattice_units():
 
 def test_planner_constraints_band_lengths_around_default():
     """Lattice-length constraints should band ±10% around the value."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -218,13 +218,13 @@ def test_planner_constraints_band_lengths_around_default():
 def test_planner_does_not_overwrite_existing_parameter():
     """If the LLM (or fallback) already produced ``lattice_a``, the MP
     splice must not stomp on it."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     # Pre-seed a parameter under the same name.
     agent = PlannerAgent(context=ctx)
     # Bypass run() to control plan shape exactly.
-    from arc.packages.arc_sim2l_agents.planner import (
+    from arc.packages.arc_sim2l.agents.planner import (
         _apply_mp_lattice_defaults, _fallback_plan,
     )
     plan = _fallback_plan(_proposal())
@@ -239,7 +239,7 @@ def test_planner_does_not_overwrite_existing_parameter():
 def test_planner_no_op_when_top_hit_is_not_mp():
     """A non-MP catalog hit (regular sim2l catalog entry) must not
     trigger the lattice splice."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     non_mp_hit = {
         "name": "some_local_artifact",
@@ -252,7 +252,7 @@ def test_planner_no_op_when_top_hit_is_not_mp():
 
 
 def test_planner_no_op_when_no_catalog_hits():
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -262,7 +262,7 @@ def test_planner_no_op_when_no_catalog_hits():
 def test_planner_no_op_when_lattice_metadata_missing():
     """An MP hit without ``metadata.lattice`` is fine — most MP hits
     will have it, but missing must not crash."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     hit_no_lattice = {
         "name": "Si_mp-149",
@@ -275,7 +275,7 @@ def test_planner_no_op_when_lattice_metadata_missing():
 
 def test_planner_tags_experimental_design_with_mp_attribution():
     """The user should see in the plan that defaults came from MP."""
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
 
     ctx = _planner_context(catalog_hits=[_mp_hit_with_lattice()])
     plan = asyncio.run(PlannerAgent(context=ctx).run(_proposal()))
@@ -287,7 +287,7 @@ def test_planner_tags_experimental_design_with_mp_attribution():
 
 def test_planner_skips_malformed_lattice_entries():
     """A lattice dict with non-numeric values must be silently dropped."""
-    from arc.packages.arc_sim2l_agents.planner import _apply_mp_lattice_defaults, _fallback_plan
+    from arc.packages.arc_sim2l.agents.planner import _apply_mp_lattice_defaults, _fallback_plan
 
     hit = _mp_hit_with_lattice()
     hit["metadata"]["lattice"] = {"lattice_a": "wat", "lattice_b": 5.43}
@@ -307,7 +307,7 @@ def test_search_then_plan_carries_lattice_into_parameters(monkeypatch):
     from unittest.mock import patch
 
     from arc.core.strategies import resolve_role
-    from arc.packages.arc_sim2l_agents.planner import PlannerAgent
+    from arc.packages.arc_sim2l.agents.planner import PlannerAgent
     from arc.schemas.research import ResearchGoal
 
     monkeypatch.setenv("MP_API_KEY", "test-key")

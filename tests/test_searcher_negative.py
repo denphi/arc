@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from arc.packages.arc_sim2l_agents.searcher_negative import (
+from arc.packages.arc_sim2l.agents.searcher_negative import (
     NegativeResultsSearcherAgent,
     _annotate_failures,
     _is_failed_run,

@@ -711,8 +711,8 @@ async def test_build_context_workflow_rejects_invalid_output(monkeypatch):
 @pytest.mark.asyncio
 async def test_reviewer_uses_build_context_acceptance_and_reflector_records_failure():
     from arc.contracts.agent import AgentContext
-    from arc.packages.arc_sim2l_agents.reflector import ReflectorAgent
-    from arc.packages.arc_sim2l_agents.reviewer import ReviewerAgent
+    from arc.packages.arc_sim2l.agents.reflector import ReflectorAgent
+    from arc.packages.arc_sim2l.agents.reviewer import ReviewerAgent
 
     memory = {
         "build_contexts": [

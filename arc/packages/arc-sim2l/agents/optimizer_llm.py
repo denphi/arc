@@ -50,9 +50,9 @@ import re
 from typing import Any
 
 from arc.contracts.agent import AgentContract
-from arc.packages.arc_sim2l_agents.optimizer import _fitness  # reuse the GA's metric
-from arc.packages.arc_sim2l_agents.optimizer_bayes import _bounds_from_schema
-from arc.packages.arc_sim2l_agents.planner_doe import latin_hypercube
+from arc.packages.arc_sim2l.agents.optimizer import _fitness  # reuse the GA's metric
+from arc.packages.arc_sim2l.agents.optimizer_bayes import _bounds_from_schema
+from arc.packages.arc_sim2l.agents.planner_doe import latin_hypercube
 from arc.schemas.artifact import ArtifactRecord
 
 logger = logging.getLogger(__name__)

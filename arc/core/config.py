@@ -14,21 +14,17 @@ from pathlib import Path
 from typing import Any
 
 
-def _arc_toml_search_paths() -> tuple[Path, ...]:
-    """Bundled fallbacks: the repo-root and package-root arc.toml files."""
-    return (
-        Path(__file__).resolve().parents[2] / "arc.toml",
-        Path(__file__).resolve().parents[1] / "arc.toml",
-    )
+def bundled_config_path() -> Path:
+    """The ``arc.toml`` shipped inside the ``arc`` package (always present)."""
+    return Path(__file__).resolve().parents[1] / "arc.toml"
 
 
 def resolve_config_path(path: str | Path | None = None) -> Path:
     """Find the arc.toml to load.
 
     1. If ``path`` is given and exists, use it.
-    2. If no path is given and ``./arc.toml`` exists, use it.
-    3. Otherwise, fall back to the bundled defaults.
-    4. If none exist, return the requested path (caller decides what to do).
+    2. If no path is given and ``./arc.toml`` exists, use it (project config).
+    3. Otherwise use the bundled defaults inside the package.
     """
     if path is not None:
         candidate = Path(path)
@@ -38,12 +34,7 @@ def resolve_config_path(path: str | Path | None = None) -> Path:
         project = Path.cwd() / "arc.toml"
         if project.exists():
             return project
-
-    for bundled in _arc_toml_search_paths():
-        if bundled.exists():
-            return bundled
-
-    return Path(path) if path is not None else _arc_toml_search_paths()[0]
+    return bundled_config_path()
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -62,9 +53,9 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
     dict is empty and ``config_path`` is whatever ``resolve_config_path``
     returned (which may not actually exist on disk).
 
-    A project-local config overlays the bundled repo-level config so a project
-    can add an external package path without copying ARC's whole package
-    catalogue. For ``[packages].paths`` the lists are appended and de-duped;
+    A project config overlays the bundled defaults (``arc/arc.toml``, shipped
+    inside the package) so a project can add an external package path
+    without copying ARC's whole package catalogue. For ``[packages].paths`` the lists are appended and de-duped;
     other local keys override the bundled defaults recursively.
 
     The returned dict is a fresh ``deepcopy`` of the cache entry — review
@@ -75,7 +66,7 @@ def load_arc_toml(path: str | Path | None = None) -> tuple[Path, dict[str, Any]]
     if not config_path.exists():
         return config_path, {}
     config = copy.deepcopy(_cached_load_toml(str(config_path), config_path.stat().st_mtime_ns))
-    bundled = _arc_toml_search_paths()[0].resolve()
+    bundled = bundled_config_path().resolve()
     if config_path.resolve() != bundled and bundled.exists():
         base = copy.deepcopy(_cached_load_toml(str(bundled), bundled.stat().st_mtime_ns))
         _absolutize_package_paths(base, bundled)
@@ -258,3 +249,17 @@ def build_context_workflow_specs(config: dict[str, Any]) -> list[dict[str, Any]]
             "inputs": dict(inputs),
         })
     return specs
+
+
+def config_section(name: str) -> dict[str, Any]:
+    """Return one table from the resolved ``arc.toml`` (``{}`` when absent).
+
+    Best-effort: a missing or unparseable config yields ``{}`` so callers
+    fall back to their built-in defaults.
+    """
+    try:
+        _path, config = load_arc_toml()
+    except Exception:  # noqa: BLE001 — config is optional
+        return {}
+    section = config.get(name) if isinstance(config, dict) else None
+    return dict(section) if isinstance(section, dict) else {}

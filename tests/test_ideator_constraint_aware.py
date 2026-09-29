@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from arc.packages.arc_sim2l_agents.ideator_constraint_aware import (
+from arc.packages.arc_sim2l.agents.ideator_constraint_aware import (
     _domain_to_package_dir,
     _load_vocab_yaml,
     _render_vocabulary_block,
@@ -295,7 +295,7 @@ def test_run_promotes_target_property_in_prompt():
 def test_vocab_wrapper_exposes_underlying_provider_attributes():
     """The provider wrapper must forward arbitrary attribute lookups so
     code that does ``provider.model`` etc. still works."""
-    from arc.packages.arc_sim2l_agents.ideator_constraint_aware import (
+    from arc.packages.arc_sim2l.agents.ideator_constraint_aware import (
         _VocabWrappedProvider,
     )
 
@@ -314,7 +314,7 @@ def test_vocab_wrapper_exposes_underlying_provider_attributes():
 
 def test_vocab_wrapper_prepends_to_complete_calls():
     """Both ``complete`` and ``complete_structured`` get the prepend."""
-    from arc.packages.arc_sim2l_agents.ideator_constraint_aware import (
+    from arc.packages.arc_sim2l.agents.ideator_constraint_aware import (
         _VocabWrappedProvider,
     )
 

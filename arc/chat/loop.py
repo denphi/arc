@@ -67,9 +67,6 @@ from arc.chat.plan_mode import is_plan_mode
 from arc.chat.research.targets import (
     pct_off as _pct_off,
 )
-from arc.chat.research.targets import (
-    registry_keys_match as _registry_km,
-)
 
 # ── ANSI colours / UI helpers (extracted to arc.chat.ui) ──────────────────
 # Re-imported here so existing module-level references keep working.
@@ -345,21 +342,15 @@ async def _post_approval_menu(workflow, artifact, result, target: dict):
 
     if choice == "1":
         # Rank all runs by distance to target.
-        from arc.packages import load_reviewer
-        _km = load_reviewer()._keys_match
+        from arc.runtime.key_matching import target_errors
         registry = ctx.memory.get("schema_registry", {})
         rows = []
         for r in run_history:
             outs = r.get("outputs", {})
             ins  = r.get("inputs", {})
             if target:
-                errors = []
-                for tk, tv in target.items():
-                    for ok_k, ov in outs.items():
-                        if _km(tk, ok_k) or (registry and _registry_km(tk, ok_k, registry)):
-                            if isinstance(ov, (int, float)):
-                                errors.append(abs(ov - tv) / max(abs(tv), 1e-12) * 100)
-                            break
+                rel, _unmatched = target_errors(outs, target, registry)
+                errors = [err * 100 for err in rel.values()]
                 fitness = sum(errors) / len(errors) if errors else float("inf")
             else:
                 fitness = -sum(v for v in outs.values() if isinstance(v, (int, float)))
@@ -1072,7 +1063,7 @@ async def run_research(
         catalog_artifact = None
 
         if catalog_hits and not rebuild_for_refinement:
-            from arc.packages.arc_sim2l_agents.reuse import (
+            from arc.packages.arc_sim2l.agents.reuse import (
                 reuse_threshold,
                 score_fit,
             )

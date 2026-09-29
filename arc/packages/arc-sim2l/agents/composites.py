@@ -106,7 +106,7 @@ class CompositeIdeatorAgent(_CompositeBase):
             cls = resolve_role("ideator", overrides={"ideator": "default"})
             return await cls(context=self.context).run(goal)
 
-        from arc.packages.arc_sim2l_agents.hypothesis import select as _select
+        from arc.packages.arc_sim2l.agents.hypothesis import select as _select
         result = _select(candidates, goal)
         primary = result["primary"] or candidates[0]
         self.context.memory["ideator_candidates"] = [

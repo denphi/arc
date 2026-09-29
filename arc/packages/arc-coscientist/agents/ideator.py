@@ -178,7 +178,7 @@ Return JSON matching this schema:
     def _select_and_record(
         self, candidates: list[ResearchProposal], goal: ResearchGoal,
     ) -> ResearchProposal:
-        from arc.packages.arc_sim2l_agents.hypothesis import select as _select
+        from arc.packages.arc_sim2l.agents.hypothesis import select as _select
 
         result = _select(candidates, goal)
         ranked = list(result["ranked"])

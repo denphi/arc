@@ -29,7 +29,7 @@ import logging
 from typing import Any
 
 from arc.contracts.agent import AgentContract
-from arc.runtime.key_matching import keys_match as _keys_match
+from arc.runtime.key_matching import target_errors
 from arc.schemas.execution import ExecutionResult
 from arc.schemas.review import ReviewResult
 
@@ -67,16 +67,8 @@ def _distance_to_target(
     """
     if not target or not outputs:
         return float("inf")
-    matched = 0
-    total = 0.0
-    for tk, tv in target.items():
-        for ok, ov in outputs.items():
-            if _keys_match(tk, ok, registry):
-                if isinstance(ov, (int, float)) and ov is not None:
-                    total += abs((ov - tv) / max(abs(tv), 1e-12))
-                    matched += 1
-                break
-    return total / matched if matched else float("inf")
+    errors, _unmatched = target_errors(outputs, target, registry)
+    return sum(errors.values()) / len(errors) if errors else float("inf")
 
 
 def _relative_improvement(current: float, best_prior: float) -> float:

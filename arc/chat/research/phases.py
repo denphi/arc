@@ -194,29 +194,21 @@ class ExecutionPhase:
         # Distance-to-target diagnostic (kept here because it depends on
         # the freshly-computed outputs).
         if state.target and execution.outputs:
-            from arc.packages import load_reviewer
-            _keys_match = load_reviewer()._keys_match
+            from arc.runtime.key_matching import match_targets
+
+            outputs = execution.outputs
             diffs = []
             unmatched_targets = []
-            for tk, tv in state.target.items():
-                matched = False
-                for ok_name, ov in execution.outputs.items():
-                    if _keys_match(tk, ok_name):
-                        matched = True
-                        # ``bool`` is an int subclass — exclude it so a
-                        # boolean output (e.g. converged) isn't treated as a
-                        # number. Guard the arithmetic too: the target value
-                        # may be a string the user typed.
-                        if (
-                            isinstance(ov, (int, float)) and not isinstance(ov, bool)
-                            and isinstance(tv, (int, float)) and not isinstance(tv, bool)
-                        ):
-                            pct = abs(ov - tv) / max(abs(tv), 1e-12) * 100
-                            diffs.append(
-                                f"{ok_name}={ov:.4g}  target={tv}  ({pct:.1f}% off)"
-                            )
-                if not matched:
+            for tk, ok_name in match_targets(outputs, state.target).items():
+                tv = state.target[tk]
+                if ok_name is None:
                     unmatched_targets.append(tk)
+                    continue
+                ov = outputs[ok_name]
+                # The target value may be a string the user typed.
+                if isinstance(tv, (int, float)) and not isinstance(tv, bool):
+                    pct = abs(ov - tv) / max(abs(tv), 1e-12) * 100
+                    diffs.append(f"{ok_name}={ov:.4g}  target={tv}  ({pct:.1f}% off)")
             if diffs:
                 step("vs target", "")
                 for d in diffs:
